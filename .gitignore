@@ -1,0 +1,22 @@
+# Session-scoped Caiman artifacts: generated brief, resolved state.
+# Regenerated per session; never committed. See CLAUDE.md I-3.
+.caiman/
+
+# The materialized corpus and blob cache live at configured paths outside this
+# repo. If either is ever pointed inside, this catches it. See CLAUDE.md I-3.
+caiman-corpus/
+*.caiman-corpus/
+.caiman-cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS
+.DS_Store
