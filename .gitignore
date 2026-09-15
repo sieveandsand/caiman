@@ -2,10 +2,10 @@
 # Regenerated per session; never committed. See CLAUDE.md I-3.
 .caiman/
 
-# The materialized corpus and blob cache live at configured paths outside this
+# The materialized documents and blob cache live at configured paths outside this
 # repo. If either is ever pointed inside, this catches it. See CLAUDE.md I-3.
-caiman-corpus/
-*.caiman-corpus/
+caiman-documents/
+*.caiman-documents/
 .caiman-cache/
 
 # Python

@@ -2,47 +2,34 @@
 
 Instructions for AI agents working in this repository.
 
-Read this file, then `docs/VISION.md` and `docs/ARCHITECTURE.md` before making
-non-trivial changes. `docs/DECISIONS.md` records what is settled, what is still
-open, and what was retired — do not silently resolve an open decision in code.
+**This file owns the invariants.** Everything else is a pointer.
+
+| Before you | Read |
+|---|---|
+| Make any non-trivial change | This file, then `docs/ARCHITECTURE.md` |
+| Touch `store/`, `ingest/`, or `materialize/` | `docs/STORAGE.md` |
+| Touch anything label-, compartment-, or agent-related | `docs/SECURITY-MODEL.md` |
+| Resolve something that looks undecided | `docs/DECISIONS.md` — settled, open, and retired. Do not silently resolve an open decision in code |
 
 ---
 
 ## What Caiman is
 
-Caiman supplies the three kinds of context coding agents lack in firmware work:
+Caiman supplies three kinds of context coding agents lack in firmware work:
+**descriptive** (what the hardware does), **structural** (what this design is),
+and **normative** (what this program must do). `VISION.md` §2 has the failure
+mode each one prevents; the normative layer is where the unserved problem is, and
+the first two are substrate to build competently rather than inventively.
 
-1. **Descriptive** — what the hardware does. Datasheets, reference manuals,
-   errata. Failure mode: *wrong fact*. Fails on the bench in hours.
-2. **Structural** — what this design is. Board, parts in roles, links, silicon
-   revisions, board version. Failure mode: *right fact, wrong board*. Costs a
-   review cycle; the work is thrown away rather than repaired.
-3. **Normative** — what this program must do. Customer specifications, required
-   features, program deviations, the frozen specification release. Failure mode:
-   *correct and non-compliant*. Works on the bench, survives review, surfaces at
-   the customer's acceptance test months later.
+Three framing facts that constrain most changes:
 
-   *Normative* is used here in the standards sense — ISO and AUTOSAR documents
-   mark binding requirement clauses **normative** and explanatory material
-   **informative**. A datasheet states a fact about the world; a specification
-   states an obligation imposed by a contract. Getting a fact wrong breaks the
-   build; getting an obligation wrong produces working, non-conforming firmware.
-
-The first two are necessary substrate and are increasingly well served by others
-(`VISION.md`, Adjacent work) — build them competently, not inventively. **The
-normative layer is where the unserved problem is.**
-
-**Caiman is a layer, not a platform.** `sync` writes files into a worktree and
-gets out of the way. The agent is whichever you already use; the harness is
-whichever you already run. Session orchestration and hardware-in-the-loop test
-execution are permanently somebody else's job (S-01).
-
-Caiman does **not** convert PDFs (S-08), and there is **no server** in the MVP —
-the filesystem is the interface (S-18).
-
-Key entities: a **Board** is hardware. A **Project** is what a session is about —
-a board version plus a customer specification set, a feature set, a precedence
-order, and compartments. See `docs/ARCHITECTURE.md`.
+- **Caiman is a layer, not a platform.** `sync` writes files into a worktree and
+  gets out of the way. Session orchestration and hardware-in-the-loop execution
+  are permanently somebody else's job (S-01).
+- **The filesystem is the interface.** No server, no index, no process between
+  the agent and the documents (S-18).
+- **A Board is hardware; a Project is a program** — a board version plus a
+  customer specification set, features, precedence, and compartments (S-13).
 
 ---
 
@@ -52,42 +39,39 @@ A change that violates one of these is a bug even if every test passes.
 
 ### I-1. Fail closed on labels
 
-A chunk, document, or artifact that is neither asserted **public** nor carries a
-**compartment** is unreachable. The default `AccessLabel` is the empty set with
-`is_public=False`. If either label is lost anywhere in the ingest → chunk →
-materialize chain, the affected content must become unreachable, not
-world-readable.
+Content that is neither asserted **public** nor carries a **compartment** is
+unreachable. The default `AccessLabel` is the empty set with `is_public=False`.
+If either label is lost anywhere in ingest → store → materialize, the affected
+content must become unreachable, not world-readable.
 
-The two failure paths are distinct and are tested separately: a record with no
-labels at all, and a record whose compartment was dropped while other fields
-survived.
+Two distinct failure paths, tested separately: no labels at all, and a
+compartment dropped while other fields survived.
 
 The same rule covers agent profiles. An agent name absent from
 `~/.config/caiman/agents.toml` resolves to nothing — `sync` fails and
-materializes no documents at all. Never default an unknown agent to `public`;
-refuse.
+materializes nothing. Never default an unknown agent to `public`; refuse.
 
 ### I-2. One function generates both write-time and filter-time labels
 
-The strings written into a chunk's access list and the strings used to decide
-what materializes MUST come from the same prefixing code, over `is_public` and
+The strings written into an access list and the strings used to decide what
+materializes MUST come from the same prefixing code, over `is_public` and
 compartments alike. If they diverge, the filter silently under- or over-matches
 and nobody notices. Never hand-roll a label string at a call site.
 
 ### I-3. Compartmented documents never enter git
 
-The blob cache, the materialized corpus, and the session's `.caiman/` directory
-are gitignored **and** guarded by a pre-commit hook. Git history is permanent; an
-accidental `git add .` that commits a customer's specification is unrecoverable
-and is a commercial event, not just an embarrassment.
+The blob cache, the materialized documents, and the session's `.caiman/`
+directory are gitignored **and** guarded by a pre-commit hook. Git history is
+permanent; an accidental `git add .` that commits a customer's specification is
+unrecoverable and is a commercial event.
 
 Do not weaken either guard, do not add exceptions "just for testing", and do not
-commit fixture documents that came from a real vendor or a real customer. Use the
-synthetic fixtures in `fixtures/`, including the synthetic specification sets,
-which exist precisely so this never comes up (D-08).
+commit fixture documents from a real vendor or a real customer. Use the synthetic
+fixtures in `fixtures/`, including the synthetic specification sets, which exist
+precisely so this never comes up (D-08).
 
-Note: `docs/` at the repo root is Caiman's *own* design documentation and is
-committed normally. The corpus lives elsewhere. Do not conflate them.
+`docs/` at the repo root is Caiman's *own* design documentation and is committed
+normally. Materialized documents live elsewhere. Do not conflate them.
 
 ### I-4. Pin digests, not tags
 
@@ -100,30 +84,28 @@ reproducibility bug. A session resolves once, at sync, and holds the digest.
 ### I-5. Never guess a hardware or requirement fact
 
 Every returned fact carries `(document identity, document version, locator)`.
-All three are required. Locator by document kind:
+All three are required.
 
-- **Requirement-structured documents** (customer specs): the **requirement ID**.
-- **Everything else**: a **heading path**, which is the floor.
+- **Requirement-structured documents** (customer specs): the requirement ID.
+- **Everything else**: a heading path, which is the floor.
 - A page number rides alongside when the conversion supplied one, never instead
   of a locator.
 
-Corollary at ingest: a chunk with no resolvable locator is rejected, not stored
-without one. For a document declared requirement-structured, chunks lacking
-requirement IDs are rejected.
+Corollary at ingest: content with no resolvable locator is rejected, not stored
+without one. A document declared requirement-structured is rejected if
+requirement IDs are absent.
 
 ### I-6. The brief is metadata only
 
 The project brief is open — always, including for projects whose documentation is
 entirely compartmented — because existence is structure and detail is content.
-That guarantee only holds if the brief generator **cannot see document text**. It
-reads the project and board artifacts and the document manifest: roles, part
-numbers, silicon revisions, links, feature names, document identities, versions,
-digests.
+That holds only if the generator **cannot see document content**. It reads
+manifests: roles, part numbers, silicon revisions, links, feature names, document
+identities, versions, digests.
 
-Never give the brief generator access to chunk content, not even to produce a
+Never give the brief generator access to document text, not even to produce a
 helpful summary. The brief names the program by **codename only**; customer
-identity stays in the registry. There are property tests asserting that neither
-document body text nor customer identity appears in a generated brief.
+identity stays in the compartmented project manifest.
 
 ### I-7. Version labels are opaque
 
@@ -133,8 +115,8 @@ matching. Version semantics vary per company; encoding one convention breaks
 every other.
 
 On the normative side this is not a modelling preference: a program is
-contractually frozen at a specification release, so "newer" is not "better" and
-silently resolving to latest is a compliance failure, not a convenience.
+contractually frozen at a specification release, so "newer" is not "better", and
+silently resolving to latest is a compliance failure.
 
 Corollary: a bare board or project name never resolves to a version. It returns
 the list.
@@ -153,21 +135,21 @@ naming the requirement IDs, and `grep` surfaces both together.
 The same applies to compartments: membership is declared at ingest and at project
 registration, never derived from content, filename, or directory.
 
-### I-9. The corpus must be complete and greppable
+### I-9. The document set must be complete and greppable
 
-Everything downstream depends on `grep` over the materialized corpus returning
-the whole truth. So:
+Everything downstream depends on `grep` over the materialized documents returning
+the whole truth.
 
-- **Never symlink a directory into the corpus.** Ripgrep does not follow symlinks
-  without `-L`, and `grep -r` does not follow symlinked directories encountered
-  during traversal. The agent would search, get results, and have no indication
-  part of the corpus was skipped. Silent incompleteness is the worst failure this
-  system can have — there is no error to notice.
+- **Never symlink a directory into the documents tree.** Ripgrep does not follow
+  symlinks without `-L`, and `grep -r` does not follow symlinked directories. The
+  agent would search, get results, and have no indication part of the set was
+  skipped. Silent incompleteness is the worst failure this system can have —
+  there is no error to notice.
 - **Key the blob cache by compartment.** Hardlinks share an inode, so mode lives
   on the inode; linking a compartmented blob out of a shared cache leaves it
   reachable by the cache path.
-- **Blobs and the corpus are read-only** (`0444`). An in-place edit propagates
-  through every hardlink and poisons the cache for every session.
+- **Blobs and materialized documents are read-only** (`0444`). An in-place edit
+  propagates through every hardlink and poisons the cache for every session.
 - **A partial materialization is an error, not a warning.** If any pinned
   document cannot be written, `sync` fails and says which.
 
@@ -180,26 +162,14 @@ the whole truth. So:
 - **Prefer boring dependencies.** Operational surface is the scarcest resource
   here (D-04). Adding a service needs a written reason — and "no server" is a
   settled decision, not a default.
-- **Do not add abstraction for hypothetical multi-tenancy.** Compartments are not
-  multi-tenancy; they are one engineer holding several counterparties' secrets.
-- **Tests before gates.** Security behavior is specified by a failing test first
-  — especially negative tests.
+- **Compartments are not multi-tenancy.** They are one engineer holding several
+  counterparties' secrets. Do not add abstraction for hypothetical tenants.
+- **Tests before gates.** Security behavior is specified by a failing test first,
+  especially negative tests — the ones asserting something is *not* reachable,
+  *not* present, or *not* inferred. The three test lists are
+  `SECURITY-MODEL.md` §10, `ARCHITECTURE.md` §13, and `STORAGE.md` §11. They do
+  not overlap; add to the one that owns the behavior.
 - **Ask before resolving an open decision.**
-
-### Negative tests are first-class
-
-- an unlabeled chunk is materialized nowhere and returned to nobody
-- a chunk that lost its compartment fails independently of one that lost all
-  labels
-- nothing from one compartment appears in another's materialized corpus
-- syncing with a `public` agent profile materializes no compartmented document
-- syncing with an unknown agent name materializes nothing at all
-- a document carrying two compartments does not appear for a session holding one
-- no document body text and no customer identity appear in a generated brief
-- a chunk with no resolvable locator is not ingestible
-- a bare project or board name does not resolve to a version
-
-Write these before the mechanism they test.
 
 ---
 
@@ -210,38 +180,35 @@ caiman/
   cli/            # sync, brief, ingest, board, project — the command surface
   project/        # project model, versions, features, precedence, brief rendering
   board/          # board model, versions, part instances, links
-  ingest/         # chunking, locators, labels, generated maps
-  store/          # artifact store client, manifest, resolution, blob cache
+  ingest/         # splitting, locators, labels, generated maps
+  store/          # blobs, manifests, refs, resolution — see docs/STORAGE.md
   materialize/    # workspace assembly, linking, agent-profile filtering
   fixtures/       # synthetic documents and synthetic spec sets ONLY
-  docs/           # project design documentation (VISION, ARCHITECTURE, …)
+  docs/           # design documentation
 ```
 
-No `server/`. If semantic fallback is ever built (S-18), it arrives as one tool
+No `server/`. If semantic fallback is ever built (S-18) it arrives as one tool
 behind one server, and not before grep plus generated maps has demonstrably
-failed on a real query.
+failed on real queries.
 
 ---
 
 ## What not to do
 
-- Do not build session/worktree orchestration or HIL test execution. Permanently
-  out of scope (S-01). Others are competing there; Caiman is a layer.
-- Do not add an MCP server, a retrieval service, or any process between the agent
-  and the corpus (S-18).
-- Do not build a PDF → markdown converter, or add one as a dependency (S-08).
-- Do not track compliance status. A feature declares `required` or `not-used`;
-  `in-progress`, `implemented`, and `verified` are ALM's job (S-14). This is the
-  likeliest place for scope to creep and the answer is already recorded.
-- Do not build conflict detection between specifications, in any form (S-15, I-8).
-- Do not host or model licensed standards content — ISO, AUTOSAR, MISRA (S-17).
-- Do not treat Caiman as an enforcement boundary. The human picks the agent;
-  Caiman makes the choice consequential (S-19). Do not add checks that pretend
-  otherwise — a gate with no substance invites false confidence.
-- Do not reintroduce a repo-side `caiman.lock`. Selection is per session (S-07).
-- Do not fuse Board and Project. The same hardware ships to more than one
-  customer, and fusing puts customer identity into the hardware model where it
-  cannot be compartmented (S-13).
-- Do not implement content-inspection–based classification. Labels come from
-  provenance, never from text.
-- Do not treat an annotation as an access control. Annotations are labels.
+`VISION.md` §8 explains why for each; this is the operational form.
+
+| Do not | Decision |
+|---|---|
+| Build session/worktree orchestration or HIL execution | S-01 |
+| Add an MCP server, retrieval service, or any process between agent and documents | S-18 |
+| Build a PDF → markdown converter, or add one as a dependency | S-08 |
+| Track compliance status — a feature declares `required` or `not-used`; `in-progress`, `implemented`, `verified` are ALM's job | S-14 |
+| Build conflict detection between specifications, in any form | S-15, I-8 |
+| Host or model licensed standards content (ISO, AUTOSAR, MISRA) | S-17 |
+| Add checks that pretend Caiman is an enforcement boundary — a gate with no substance invites false confidence | S-19 |
+| Reintroduce a repo-side `caiman.lock` — selection is per session | S-07 |
+| Fuse Board and Project — the same hardware ships to more than one customer, and fusing puts customer identity where it cannot be compartmented | S-13 |
+| Implement content-inspection–based classification — labels come from provenance, never from text | S-03 |
+| Treat an annotation as an access control — annotations are labels | — |
+
+S-14 is the likeliest place for scope to creep. The answer is already recorded.

@@ -1,67 +1,79 @@
-# Security model
+# Security Model
 
-## What this document is for
-
-Caiman handles vendor and customer documentation under NDA. This file states
-what the system defends against, what it does not, and where enforcement
-actually lives. Being precise about the limits is more useful than claiming
-broad protection — a control that feels enforced but isn't is worse than no
-control.
-
-The short version: **the human picks the agent, and Caiman makes that choice
-consequential.** There is no software boundary here, by design. What there is
-instead is a decision made at the moment the human actually knows what the work
-is, and a materialization step that makes a wrong choice surface as a missing
-file rather than as a silent disclosure.
+**Purpose:** What the system defends against, what it does not, and where
+enforcement actually lives.
+**Owns:** The threat model, the classification scheme, the agent-selection
+control, and the security test list.
+**Related:** `ARCHITECTURE.md` §11 (what the architecture contributes),
+`STORAGE.md` §9 (what the layout enforces), `harness.md` (measured residue).
 
 ---
 
-## The asymmetry that shapes everything
+## 1. Summary
 
-Two kinds of document arrive under something called an NDA, and treating them
-the same forces the expensive treatment onto the cheap case.
+**The human picks the agent, and Caiman makes that choice consequential.** There
+is no software boundary here, by design.
 
-**Chip vendor documentation** — reference manuals, datasheets, errata from NXP,
-TI, and the rest — is nominally confidential and practically semi-public.
-Click-through agreements, wide mirroring, hundreds of suppliers holding
-identical copies, and every frontier model has almost certainly seen the family
-already. Gating it is expensive and buys close to nothing.
+What exists instead is a decision made at the moment the human knows what the
+work is, plus a materialization step that makes a wrong choice surface as a
+missing file rather than a silent disclosure. Both error directions fail safe.
 
-**Customer specifications** — an OEM's requirements for secure boot, secure
-onboard communication, flashing, diagnostics, and the program deviations that
-amend them — are genuinely closely held. A handful of suppliers have them, the
-contents identify whose they are, and the agreement is with the party whose
-business you are trying to keep. A leak here is a commercial event.
-
-So: **vendor documentation is treated as public. Customer material is
-compartmented.** This is a deliberate prioritization, not an oversight. If a
-genuinely restricted vendor document ever arrives, the compartment mechanism
-handles it with no new machinery — nothing is foreclosed by deprioritizing it
-now.
+Being precise about the limits matters more than claiming broad protection. A
+control that feels enforced but is not is worse than no control, because it
+invites false confidence.
 
 ---
 
-## Classification: public, or compartmented
+## 2. Threat Model
 
-There is no tier scale. There are two things a document can be.
+### 2.1 What is being defended
 
-**Public.** Asserted at ingest. Materialized for any session, readable by any
-model.
+Two kinds of document arrive under something called an NDA, and treating them the
+same forces the expensive treatment onto the cheap case.
 
-**Compartmented.** Carries one or more compartment labels naming *whose secret
-it is*.
+| | Chip vendor documentation | Customer specifications |
+|---|---|---|
+| Examples | Reference manuals, datasheets, errata | Requirements for secure boot, SecOC, flashing, diagnostics; program deviations |
+| Who holds it | Hundreds of suppliers, click-through agreements, widely mirrored | A handful of suppliers |
+| Identifiable as whose? | No | Yes, from the contents |
+| Likely already in model training data | Yes | No |
+| Cost of a leak | Low | Commercial event with the party whose business you are keeping |
+| **Treatment** | **Public** | **Compartmented** |
 
-A compartment is borrowed from how classified material is actually handled,
-where clearance and compartment are separate ideas. Clearance is a scale —
-higher sees more, and the ordering is total. A compartment is a category: being
-read into one tells you nothing about another, and two things can be equally
-sensitive and mutually invisible.
+This is a deliberate prioritization. If a genuinely restricted vendor document
+arrives, the compartment mechanism handles it with no new machinery.
 
-That distinction is the one Caiman needs. OEM Alpha's specification and OEM
-Beta's specification are both confidential, both at the same sensitivity, and
-must be mutually unreachable. A sensitivity number cannot express that, because
-whatever numbers you assign, one is greater than or equal to the other and sees
-it.
+### 2.2 The failure being prevented
+
+The realistic failure is accidental, not adversarial: six sessions in flight, one
+quietly pulls a customer specification into a frontier-model request, and nobody
+notices for a week. Making that require a deliberate act is worth engineering.
+
+### 2.3 Out of scope
+
+| Not defended | Reason |
+|---|---|
+| A determined local operator | Every control here is defeatable in minutes by someone with admin access to their own machine — which is the machine's owner |
+| A human pasting a specification into a chat window | Always a deliberate act; outside the model by design, not by concession |
+| Anything after the agent reads a file | Caiman controls what is available, not what is done with it |
+| Harness residue | Documented in §7.3. Real, measured, and outside the store's reach |
+
+If the requirement is genuinely "cannot leak", the control is physical: a machine
+with no route to any model API. That is what air-gapped chip teams do. Everything
+else is contract plus diligence, with software raising the friction.
+
+---
+
+## 3. Classification
+
+There is no sensitivity scale. A document is either **public** or carries one or
+more **compartments** naming whose secret it is.
+
+A sensitivity scale cannot express what this data needs. Two customers'
+specifications are equally confidential and must be mutually invisible; whatever
+numbers you assign, one is greater than or equal to the other and sees it.
+Compartments are categories, not levels — membership in one tells you nothing
+about another.
 
 | Document | Label |
 |---|---|
@@ -70,107 +82,95 @@ it.
 | Falcon program deviations | `compartment:oem-alpha`, `compartment:falcon` |
 | OEM Beta spec set 2.0 | `compartment:oem-beta` |
 
-A project declares its compartments; a session inherits them from its project.
-A document is visible when its compartments are a **subset** of the session's.
-A Falcon session holds `oem-alpha` and `falcon`, so it sees the first three rows
-and never the fourth — not because the fourth is more secret, but because it
-belongs to someone else.
+A project declares its compartments; a session inherits them from its project. A
+document is visible when its compartments are a **subset** of the session's. A
+Falcon session holds `oem-alpha` and `falcon`, so it sees rows one through three
+and never row four — not because row four is more secret, but because it belongs
+to someone else.
 
-**Default to per-counterparty**, because that is how the NDA is written and it
-lets a base spec be shared naturally across that customer's programs. Add a
-program compartment only to documents that need the tighter scope, as in row
-three. Nothing has to be migrated if you start simple and tighten later.
+**Default to per-counterparty.** That is how the agreement is written, and it
+lets a base specification be shared across that customer's programs. Add a
+program compartment only to documents needing tighter scope, as in row three.
+Nothing needs migrating if you start simple and tighten later.
 
-**Missing metadata is neither public nor compartmented, and stays unreachable.**
-That is invariant I-1, and it is unchanged by any of this. Both labels are
-assigned at ingest from provenance, never inferred from content, and never
-widened by a downstream stage.
+**Missing labels mean unreachable.** Neither public nor compartmented is not a
+third state; it is invisible (I-1). Both labels are assigned at ingest from
+provenance, never inferred from content, and never widened downstream.
 
 ---
 
-## The primary control: the human picks the agent
+## 4. Why Content Inspection Cannot Work
 
-Every mechanism this project considered and rejected — a server that refuses, a
-kernel that returns `EACCES`, a filter that excludes — acts at the moment of
-*read*. At read time nobody knows what the work is for.
+Commercial AI gateways classify by inspecting content — PII, PHI, credentials,
+regulated identifiers. None of those detectors fires on a register offset. There
+is no classifier for "confidential hardware specification", and there will not
+be, because confidentiality here is a property of *where the text came from*, not
+what it looks like.
 
-At **session start**, the human knows exactly: "I'm adding a diagnostic routine
-for Falcon" or "I'm fixing a CAN driver bug." That is the moment the decision is
-cheap, informed, and unambiguous, and it is a moment the harness already
-interrupts them at to ask which project they are on. Asking one more question
-costs nothing.
+Chunking makes it worse: confidentiality is contextual, and a fragment stripped
+of its document is unclassifiable on its face.
 
-So the philosophy is explicit: **the engineer is responsible for picking the
-right agent for the task.** Generic work starts a session with a frontier
-harness. Work that touches customer material starts a session with a local
-model. Caiman does not adjudicate that choice; it makes it consequential.
+Hence provenance-carried labels. The label is deterministic and is the actual
+control. Content inspection, if ever added, is a second net and never the first.
 
-## The fail-safe: differential materialization
+---
 
-Human routing on its own would be a policy in a document. What makes it a
-control is that Caiman materializes different corpora for different agents, so
-the choice has physical effect.
+## 5. The Control
 
-Consider both ways the human can get it wrong:
+### 5.1 Why the decision sits with the human
 
-- **Picked a frontier agent, work turns out to need OEM specs.** The specs are
-  not in the worktree. The agent cannot find them, and the brief has told it to
-  stop and say so rather than improvise. The engineer restarts the session
-  sealed. Loud, harmless, self-correcting.
-- **Picked a local agent, work turns out to be generic.** A weaker model did
-  work it did not need to. That is the whole cost.
+Every mechanism considered and rejected — a server that refuses, a kernel that
+returns `EACCES`, a filter that excludes — acts at the moment of *read*. At read
+time nothing knows what the work is for.
 
-Both error directions fail safe. That is the property the design is buying, and
-it comes from keeping differential materialization even after dropping
-enforcement.
+At session start the human knows exactly: "I'm adding a diagnostic routine for
+Falcon" or "I'm fixing a CAN driver bug." The harness is already interrupting
+them to ask which project. Asking which agent costs nothing.
 
-### Caiman owns the agent map
+There is also no alternative. **Model identity cannot be verified.** A process
+cannot tell which model is behind a caller; there is no attestation and no signed
+model identity. A check of the form "only allow self-hosted models" is the caller
+asserting its own identity, which is not a control.
+
+### 5.2 Differential materialization makes it consequential
+
+Human routing alone would be a policy in a document. What makes it a control is
+that Caiman materializes a different document set per agent profile.
+
+| Mistake | Consequence |
+|---|---|
+| Picked a public-only agent; work needs specifications | Material is absent. The agent reports it and the engineer restarts sealed. Loud, harmless, self-correcting |
+| Picked a sealed agent; work was generic | A local model did work it did not need to. Slower; no disclosure |
+
+### 5.3 Caiman owns the agent map
 
 ```toml
 # ~/.config/caiman/agents.toml
-# Which agents may receive compartmented material.
-
 [agent.claude-code]
 receives = "public"      # sends prompts to a third party
-
-[agent.cursor]
-receives = "public"
 
 [agent.codex-local]
 receives = "all"         # self-hosted model, no egress
 ```
 
-The harness passes the agent's **name**, not a policy decision:
+The harness passes an agent **name**, not a policy decision. Caiman resolves the
+name, filters, materializes, and states the resulting session mode in the brief.
 
-```
-caiman sync --project falcon --version B-sample \
-            --agent claude-code --into .caiman/
-```
+Four reasons the map lives here rather than in the harness:
 
-Caiman resolves the project version, looks up the agent, filters the document
-set, materializes it, and writes a brief stating the session mode.
-
-Caiman holds this map rather than the harness for four reasons:
-
-1. **One place to answer the question.** "What could a Claude Code session on
-   Falcon see?" is a config file and a `--dry-run`, not an audit across however
-   many harnesses get tried.
-2. **An unknown agent fails closed.** A name Caiman has never heard of is
-   refused, not guessed at. Adding a backend is a deliberate one-line edit to a
-   file that shows up in a diff — exactly the friction that decision deserves.
-   If the harness owned the policy, an unconfigured agent would receive whatever
-   the harness happened to say.
+1. **One place to answer "what could this session see"** — a config file and
+   `caiman sync --dry-run`, not an audit across however many harnesses get tried.
+2. **An unknown agent fails closed.** A name Caiman has not seen is refused, not
+   guessed at. Adding a backend becomes a deliberate one-line edit visible in a
+   diff. If the harness owned policy, an unconfigured agent would receive
+   whatever the harness happened to assert.
 3. **Policy survives harness changes.** Two or three harnesses will get tried.
-   The map should not be re-entered each time, or drift between them.
-4. **The brief can state the session mode truthfully**, because the same code
+4. **The brief can state session mode truthfully,** because the same code
    computed it.
 
-The harness keeps what it is better at: knowing which backends exist, asking the
-human, and running the session.
+### 5.4 The agent is told, not merely constrained
 
-### The agent is told, not merely constrained
-
-The brief for a public-only session carries this:
+A public-only session's brief carries:
 
 ```markdown
 ## Session mode: open
@@ -180,221 +180,219 @@ session — do not infer, approximate, or work around a specification you
 cannot read.
 ```
 
-Twenty tokens, and it turns the agent into a participant in the discipline
-rather than something to be contained. It catches precisely the case where the
-human misjudged the task, which is the case differential materialization alone
-would leave as a confusing absence.
+Twenty tokens, and it makes the agent a participant rather than something to be
+contained. It catches the case differential materialization alone would leave as
+a confusing absence.
+
+Nothing enforces it. An agent can still guess, and a guess about a customer
+requirement is precisely the failure this system exists to prevent. That is a
+residual risk of the model, not a defect to be fixed.
+
+### 5.5 The brief is open, and that is safe
+
+The brief describes parts, roles, links, mandated features, and the frozen
+specification release. It is public for every project, including those whose
+documentation is entirely compartmented.
+
+The reasoning is that existence is structure and detail is content. That a board
+contains a secure element, and that a program requires SecOC, are facts about the
+design. What the part's register map and the customer's specification *say* are
+facts from confidential documents.
+
+This buys one brief instead of two, and an agent that knows the restricted parts
+and features exist rather than being unaware of components on its own board —
+a different and arguably worse failure than knowing the wrong thing about them.
+
+Two obligations follow:
+
+**The generator cannot read document content** (I-6). It reads manifests only:
+names, versions, labels, digests. It cannot quote a register name, a timing
+value, or a requirement, because it cannot see them. Structural, not a filter —
+a filter can be bypassed by a later feature; a missing capability cannot.
+
+**The customer appears only by codename.** "We are building for OEM X" is
+frequently itself under NDA, and the customer *is* structure, so the reasoning
+above would wave it straight through. Programs have codenames precisely so people
+can discuss them. The legal identity stays in a compartmented project manifest.
+
+A residual case: if the existence of a program is secret to the point that a
+codename in a shared repository is too much, this model does not cover it. That
+would mean compartmenting the registry's listing, not just its contents. Not in
+scope; recorded so it is a decision rather than an oversight.
 
 ---
 
-## Enforcement points, honestly ranked
+## 6. Enforcement Points, Ranked Honestly
 
-1. **Human agent selection (primary, not enforced).** The real decision. Made
-   with full knowledge of the task, at the only moment that knowledge exists.
-2. **Differential materialization (strong for accidents).** A property of what
-   exists on disk, not a claim any caller makes. An agent cannot read a file
-   that was never written into its worktree.
-3. **Retrieval and label correctness (strong for correctness).** Public and
-   compartment labels are generated by one function for both write and filter
-   paths (I-2), fail closed on absence (I-1). This is what stops the wrong
-   document reaching a legitimate session; it does nothing about a session that
-   goes around Caiman.
-4. **Filesystem hardening (optional).** See below. Not the design; available if
-   the accident rate ever justifies it.
+| # | Point | What it is | Strength |
+|---|---|---|---|
+| 1 | Human agent selection | The real decision, made with full knowledge of the task | Not enforced. It is a choice |
+| 2 | Differential materialization | A property of what exists on disk, not a claim any caller makes | Strong against accidents. An agent cannot read a file that was never written |
+| 3 | Store permissions | Compartments are separate trees at mode `0700` | Enforced by the kernel. A process without access fails at `open()` |
+| 4 | Label correctness | One generator for write-time and filter-time (I-2); fail closed on absence (I-1) | Strong for correctness. Does nothing about a session bypassing Caiman |
 
-## What does not work, and is not attempted
+There are exactly three fail-closed points, and they are distinct failure paths
+tested separately:
 
-**Model identity cannot be verified.** A process cannot tell which model is
-behind a caller. There is no attestation and no signed model identity. Any check
-of the form "only allow self-hosted models" is the caller asserting its own
-identity, which is not a control. Building it would produce the shape of a gate
-with none of the substance, which is worse than no gate because it invites false
-confidence. This is a large part of why the decision moved to the human.
-
-**Localhost is not a boundary.** A listener on 127.0.0.1 is reachable by every
-process on the host, including a frontier harness with full internet access.
-This mattered when a server was in the design; it is noted here because it is
-the reason a server would not have helped.
-
-**Derived answers still carry the secret.** If a local model reads a
-specification and returns a requirement, a confidential *fact* has moved even
-though no confidential *document* has. This is why the rule is **no hybrid
-session**: a task either touches customer material and runs entirely on the
-local model, or it does not and runs normally. A "sanitized channel" that lets
-customer facts reach a frontier model in derived form is the design hardest to
-reason about and easiest to get quietly wrong.
-
-That rule is unchanged from earlier drafts. What changed is that it is now
-carried entirely by human discipline rather than by a mechanism. It should be
-read that way, and it is stated here rather than implied to be enforced.
+1. Unknown agent name → `sync` writes nothing
+2. Unlabeled content → materialized nowhere, for any agent
+3. Content labeled for a compartment the project does not hold → not materialized
 
 ---
 
-## Optional hardening
+## 7. Known Gaps
 
-Not part of the design. Available if the accident rate ever warrants it, and
-noted so the option is not rediscovered from scratch.
+### 7.1 No hybrid session
 
-**Separate OS user.** Compartmented corpus materialized to a path owned by a
-second uid, mode `0700`. A normal session gets `EACCES` from the kernel rather
-than a refusal it could be argued out of; a sealed session runs as that uid and
-its ordinary file reads simply work. Strong, and genuinely painful on macOS —
-separate home directory, separate credentials, separate shell config, and
-`sudo -u` for every sealed session. Give the sealed session its own worktree
-rather than sharing one across two uids; shared trees mean group-writable
-permissions, which is where mistakes live.
+If a local model reads a specification and returns a requirement, a confidential
+*fact* has moved even though no confidential *document* has. The rule is
+therefore: a task either touches customer material and runs entirely on the local
+model, or it does not and runs normally.
 
-**Encrypted disk image (macOS).** `hdiutil create -encryption AES-256 -type
-SPARSEBUNDLE`, mounted only for sealed work, key in Keychain. Detached, the
-corpus is not merely unreadable but ciphertext. This sidesteps the multi-user
-pain entirely, and "did I unmount" is a much easier discipline than "am I
-running as the right user." The better option on this platform.
+A "sanitized channel" that lets customer facts reach a frontier model in derived
+form is the design hardest to reason about and easiest to get quietly wrong.
 
-**Egress control.** Point a harness at a self-hosted gateway and block direct
-egress to model APIs at the firewall. An existing product category — provider
-selection, path blocking, and audit logging are shipped features. Relevant only
-if human routing proves insufficient in practice.
+This rule is carried entirely by human discipline. It is stated here rather than
+implied to be enforced.
 
-## Honest limits
+The brief is not an exception. It carries no confidential facts — only the
+structure of the board and program — which is exactly why it goes to any session.
 
-**This stops accidents, not a determined operator.** It always did. Even the
-kernel-level options above are defeatable in minutes by someone with admin on
-their own machine. That is not a weak goal: the realistic failure mode is
-precisely the accidental one — six sessions in flight, one quietly pulls a
-customer specification into a frontier request, and nobody notices for a week.
-Making that require a deliberate act is worth real engineering. Making it
-impossible is not achievable in software you control.
+### 7.2 Conversion happens outside Caiman
 
-**Nothing stops a human pasting a specification into a chat window.** That was
-always a deliberate act and always outside the threat model. It is now outside
-it by design rather than by admitted limitation.
+Caiman ingests already-converted markdown (S-08). **Handing a confidential PDF to
+a hosted conversion service is a disclosure, and Caiman cannot prevent it.** By
+the time markdown reaches ingest, the document has already been wherever it was
+going to go.
 
-**If the requirement is genuinely "cannot leak," the control is physical:** a
-machine or VM with no route to any model API. That is what air-gapped chip teams
-already do. Everything else is contract plus diligence, with software raising the
-friction.
+This matters more for customer specifications than vendor manuals, per §2.1: a
+leaked reference manual is the vendor's widely-held document; a leaked
+specification is identifiable as that customer's.
 
----
+What Caiman does: **provenance records the converter**, identity and version, so
+"which documents went through which converter" is answerable; and **ingest lints
+on a mismatch**, flagging a compartmented document ingested with a converter
+identity known to be hosted. A lint, not a gate — Caiman cannot reliably know
+what is hosted.
 
-## Conversion happens outside Caiman
-
-Since S-08, Caiman ingests already-converted markdown. This moves a real risk
-outside the system's control and it must be stated plainly.
-
-**Handing a confidential PDF to a hosted conversion service is a disclosure, and
-Caiman cannot prevent it.** By the time markdown arrives at ingest, the document
-has already been wherever it was going to go. No downstream control undoes that.
-
-This matters far more for customer specifications than for vendor manuals, for
-exactly the asymmetry described at the top: a leaked reference manual is the
-vendor's widely-held document, while a leaked specification is identifiable as
-that customer's and covered by an agreement with them.
-
-What Caiman does about it:
-
-- **Provenance records the converter**, identity and version, on the artifact.
-  This makes "which documents went through which converter" answerable, which is
-  what you need when you discover one was hosted, or when a conversion turns out
-  to have dropped content.
-- **Ingest lints on a mismatch.** Ingesting a compartmented document with a
-  converter identity known to be hosted should say so loudly. A lint, not a gate
-  — Caiman has no reliable way to know what is hosted.
-
-The operating rule is human: **convert compartmented documents locally.** Put it
+The operating rule is human: convert compartmented documents locally. It belongs
 in the ingest checklist, not in the list of enforced controls.
 
+### 7.3 Harness residue
+
+`harness.md` records measured evidence that session harnesses write plaintext
+copies of every file an agent reads into an append-only transcript under `$HOME`,
+which persists after documents are re-materialized.
+
+Consequences:
+
+- **Materialization is not reversible.** The revocation procedure in §8 removes
+  the copy Caiman controls, not the transcript.
+- The gap is bounded for `public`-only profiles, because there is nothing
+  compartmented to copy. It is **not** bounded for any agent with
+  `receives = "all"`.
+
+Whether the procedure in §8 should be extended to cover harness paths is an open
+policy question. `harness.md` proposes options; none is adopted here.
+
 ---
 
-## Reclassification and revocation
+## 8. Reclassification and Revocation
 
-Content-addressed artifacts freeze their labels with their digest. If a document
-is reclassified — made compartmented when it was public, or moved into a
-different compartment — pushing a new artifact does nothing about content
-already materialized into live worktrees.
+Content-addressed artifacts freeze their labels with their digest, so changing a
+label produces a new document identity over unchanged bytes (`STORAGE.md` §6.1).
+That is the signal this procedure triggers on.
 
-A **compartment correction** is the likeliest hand-entry mistake and the one with
-the worst consequence: a document ingested against the wrong customer. Treat it
-exactly as a reclassification.
+A **compartment correction** — a document ingested against the wrong customer —
+is the likeliest hand-entry error and the one with the worst consequence. Treat
+it exactly as a reclassification.
 
-Required:
-
-1. **Corpus re-materialization**, so on-disk copies are removed from sessions
-   that should no longer hold them. Note this cannot reach a running session's
-   already-read context — only a new session is genuinely clean, and that should
-   be said out loud rather than papered over.
-2. **Cache eviction** for the affected digests, in every compartment cache.
-3. **Brief regeneration.** A brief lists documents and shows what is available in
-   the session. A stale brief will tell an agent that material is on disk and
-   greppable when it is not, which is both wrong and a confusing failure to
+1. Re-ingest with corrected labels into the correct compartment. Blobs are
+   byte-identical; the manifest digest is new.
+2. Repoint the ref.
+3. Update every board and project version that pinned the old digest. Because
+   versions are immutable this creates **new** versions; it is not an edit. This
+   is a real cost and the honest consequence of immutability.
+4. Re-materialize affected workspaces. **Incomplete** — see §7.3, and note it
+   also cannot reach a running session's already-read context. Only a new session
+   is genuinely clean.
+5. Evict the affected digests from every compartment cache.
+6. Regenerate briefs. A brief lists what is available; a stale one tells an agent
+   that material is on disk when it is not, which is both wrong and confusing to
    debug.
-4. **Index purge**, if a semantic index has been built by then.
+7. Delete the incorrectly-placed objects from the wrong compartment, verifying
+   first that no manifest there still references those blobs.
 
-Design this while it is a paragraph. After three projects have live sessions it
+Design this while it is a procedure. After three projects have live sessions it
 is a migration.
 
 ---
 
-## Audit
+## 9. Audit
 
-Its role has changed. It is no longer detection backing up imperfect prevention;
-it is **the record that makes human routing reviewable**.
+Its role is **making human routing reviewable**, not backing up imperfect
+prevention.
 
 Every `sync` logs: timestamp, project and project version, agent name and
 resolved profile, compartments materialized, and the document digests written.
 
-This is cheap, deterministic, and honest in a way tool-call logging never was: it
-does not depend on the agent cooperating. A log of what a server was asked
-captures only the accesses that went through the server. A log of what was
-materialized captures the session's entire reachable set whether or not anything
-was read.
+This is deterministic and honest in a way tool-call logging is not: it does not
+depend on the agent cooperating. A log of what a server was asked captures only
+accesses that went through the server; a log of what was materialized captures
+the session's entire reachable set whether or not anything was read.
 
-The granularity is document-level rather than line-level, and for the question
-that actually gets asked — "which of our specifications did your engineers'
-sessions have access to" — document-level and provably complete is a better
-answer than line-level and conditional on cooperation.
+Granularity is document-level rather than line-level. For the question that
+actually gets asked — "which of our specifications did your engineers' sessions
+have access to" — document-level and provably complete beats line-level and
+conditional on cooperation.
 
 ---
 
-## Test fixtures
+## 10. Test Fixtures and Security Tests
 
-Security behavior is specified by negative tests, using **synthetic fixtures
-only**. Never commit real vendor or customer documents, not even for testing —
-see `CLAUDE.md` I-3.
+**Synthetic fixtures only.** Never commit real vendor or customer documents, not
+even for testing (I-3).
 
-The sample-project plan (`DECISIONS.md` D-08) uses open hardware with freely
-available specifications. The normative half has no open-source analogue and real
-OEM specifications can never be committed, so it uses **synthetic specification
-sets** — invented requirement IDs, a few features, a deviation document amending
-a handful of requirements. Two of them, for two fictional customers, so
-compartment isolation is exercised with zero NDA exposure. Synthetic is better
-than borrowed here: the negative tests can assert exact behavior against content
-you control.
+The sample project (`DECISIONS.md` D-08) uses open hardware with freely available
+specifications. The normative half has no open-source analogue and real
+specifications can never be committed, so it uses **synthetic specification
+sets** — invented requirement IDs, a few features, a deviation amending a handful
+of requirements. Two of them, for two fictional customers, so compartment
+isolation is exercised with zero exposure. Synthetic beats borrowed here: the
+tests can assert exact behavior against content you control.
 
-Write these before the mechanism they test:
+Write these before the mechanism they test.
 
-1. A chunk that is neither marked public nor carries a compartment is returned
-   to nobody and materialized nowhere.
-2. A chunk whose compartment label was lost is returned to nobody — tested
-   separately from (1), because absence of a label and absence of the whole
-   record fail through different paths.
-3. Nothing from compartment A appears in a corpus materialized for a project in
-   compartment B.
-4. Syncing with an agent whose profile is `public` materializes no compartmented
-   document, for any project.
-5. Syncing with an agent name absent from the map fails, and materializes
-   nothing at all.
-6. A document carrying two compartments does not appear for a session holding
-   only one of them.
-7. Write-time and filter-time label generation agree, property-tested across
-   generated inputs.
-8. A brief generated for a project with compartmented documents contains no text
-   from any document body — property-tested against generated chunk content.
-9. A generated brief does not contain the customer's identity, only the program
-   codename.
-10. A reclassified or compartment-corrected document is gone from a
-    re-materialized corpus and from every compartment cache, and the brief that
-    listed it is regenerated.
-11. A chunk with no resolvable locator is rejected at ingest rather than stored
-    without one, and a document declared requirement-structured is rejected if
-    its chunks lack requirement IDs.
-12. A bare project or board name does not resolve to a version.
+| ID | Test | Asserts |
+|---|---|---|
+| S-T1 | A record neither marked public nor carrying a compartment | Returned to nobody, materialized nowhere |
+| S-T2 | A record whose compartment label was lost, other fields intact | Same — tested separately from S-T1, because the two fail through different paths |
+| S-T3 | Materialize for a project in compartment B | Nothing from compartment A appears |
+| S-T4 | Materialize with a `public` agent profile | No compartmented document, for any project |
+| S-T5 | Materialize with an agent name absent from the map | Nothing written at all |
+| S-T6 | A document carrying two compartments, session holds one | Not materialized |
+| S-T7 | Write-time and filter-time label generation, property-tested | Identical output across generated inputs |
+| S-T8 | Generate a brief for a project with compartmented documents | No document body text appears |
+| S-T9 | Generate a brief; search for the customer string from the project manifest | Absent |
+| S-T10 | Reclassify or compartment-correct a document | Gone from re-materialized documents and every cache; brief regenerated |
+| S-T11 | Ingest content with no resolvable locator; ingest a requirement-structured document with no requirement IDs | Both rejected |
+| S-T12 | Resolve a bare project or board name | Returns the version list; resolves nothing |
+
+Architecture-level tests are in `ARCHITECTURE.md` §13; storage-level tests are in
+`STORAGE.md` §11. These three lists do not overlap.
+
+---
+
+## 11. Optional Hardening
+
+Not part of the design. Available if the accident rate warrants it; recorded so
+the options are not rediscovered.
+
+| Option | Mechanism | Assessment |
+|---|---|---|
+| **Separate OS user** | Compartmented documents materialized to a path owned by a second uid, mode `0700`. A normal session gets `EACCES` from the kernel; a sealed session runs as that uid and its ordinary file reads work | Strong, and genuinely painful on macOS: separate home directory, credentials, and shell config, plus `sudo -u` per session. Give the sealed session its own worktree rather than sharing one across uids |
+| **Encrypted disk image (macOS)** | `hdiutil create -encryption AES-256 -type SPARSEBUNDLE`, mounted only for sealed work, key in Keychain | Detached, the documents are ciphertext rather than merely unreadable. Sidesteps the multi-user pain; "did I unmount" is easier discipline than "am I the right user". The better option on this platform |
+| **Egress control** | Point the harness at a self-hosted gateway; block direct egress to model APIs at the firewall | An existing product category. Relevant only if human routing proves insufficient in practice |
+
+Note that none of these reaches harness residue (§7.3), which lives under `$HOME`
+rather than in the document tree.
