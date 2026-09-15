@@ -1,0 +1,17 @@
+{
+  "board": "example-board",
+  "version": "Rev A",
+  "parts": [
+    {
+      "role": "application-mcu",
+      "part": "example/example-mcu",
+      "documents": [
+        {
+          "ref": "example/example-mcu/reference-manual/Rev%20A",
+          "compartment": "public"
+        }
+      ]
+    }
+  ],
+  "links": []
+}

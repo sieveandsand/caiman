@@ -1,0 +1,263 @@
+# Board and project configuration
+
+The TUI and editable JSON files use the same draft model and validation rules.
+Registration stores a complete, immutable snapshot. Document and board references
+resolve to digests before review; registration verifies those pins again without
+following updated tags. This implements S-28.
+
+## Access groups
+
+The TUI calls confidentiality boundaries **access groups**. Usually, create one
+per customer, such as `oem-alpha`. Public documents need no group. For private
+documents, a project must include **every** group assigned to the document.
+Add a separate project group only when some information needs tighter sharing.
+
+The config keys `compartments` and `compartment`, and the CLI flag
+`--compartment`, retain their existing spelling. They refer to these same access
+groups; existing files and commands remain compatible. Architecture and storage
+documents also use the internal term *compartment*.
+
+## First launch
+
+```bash
+caiman
+```
+
+Caiman guides you through setting up a board and a project before ingesting
+documents. Start with the board's identity, version, and hardware part; then
+declare the project's codename, version, customer, access groups, and specification
+set, using the selected board. Review before registering. Manuals and
+specifications can be added later: the initial document lists may be empty.
+Existing configurations can be selected instead of recreated.
+
+`caiman ingest manual.md` also runs setup when needed, then continues with that
+file. Subsequent launches reuse the saved authoring context. Catalog access-group
+choices are remembered locally; you can explicitly select additional access groups
+to find other projects. Caiman does not discover private projects by scanning
+undeclared access groups. These authoring preferences do not select an agent
+session mode.
+
+During ingestion, choose an existing project or board and its part to reuse
+declared metadata. You can create a new board or project from the same flow and
+return to the document form without losing entered values. Program and
+access-group information come from the selected project; issuer and part identity
+come from the selected board part. A project's customer name is context, not an
+assumed document publisher identifier. Manual identity entry is also available.
+Always explicitly choose and review document access before registration.
+
+Selecting a configuration supplies metadata; it does not add the new document to
+an existing immutable snapshot. Use the configuration editor to adopt its digest
+into the board or project's document set. See S-29 for the setup decision.
+
+## Open a configuration editor directly
+
+```bash
+caiman board configure
+caiman project configure
+```
+
+Enter the top-level fields in the form. Edit parts and links (boards), or
+documents, precedence, and features (projects), in the JSON collection editors.
+Use **Refresh catalog** to see registered documents and copy exact references or
+digest pins. A board sees public documents; a project catalog uses the explicitly
+entered access groups in addition to public documents.
+
+Select **Review**, inspect the identities, access groups, resolved pins, and
+declared relationships, then **Register**. **Back to edit** invalidates the
+previous review. Cancellation before registration writes nothing to the store.
+The complete resolved JSON is available in an expandable review panel.
+
+The home screen is the primary human interface. Its grid offers document
+ingestion and browsing, plus board/project creation, selection, viewing, editing,
+JSON import, export, validation, and templates. Direct commands remain available
+for scripts and agent tooling; interactive commands still require a terminal.
+
+### Keyboard navigation
+
+On the dashboard, **h/j/k/l** move left/down/up/right; **Enter** opens the tile,
+and **q** quits.
+In forms, **h/k** move to the previous control and **j/l** to the next.
+**Enter** or **i** starts editing a text field; **Escape** returns to navigation.
+While editing, letters including `hjkl` are ordinary text. Clicking a text field
+also starts editing. The mode hint beneath the form shows the available keys.
+In navigation mode, **q** returns to the parent menu using the form's cancel/close
+action. It closes an open dropdown first. While editing, **q** types normally;
+press Escape first to use it for navigation. Leaving a form does not register
+unsubmitted changes, and cannot interrupt a registration already being written.
+In dropdown menus, **j/k** move through choices, **Enter/l** selects, and
+**Escape/h** closes the menu. Tab and Shift+Tab also move between controls.
+Ctrl+R reviews a configuration; Ctrl+Q cancels or closes.
+
+The shared terminal theme uses a pure black canvas, warm orange accents, muted
+secondary text, and clearly outlined fields with a subtle fill and orange
+focus borders. Labels sit directly above their fields; a divider separates the
+form from its navigation buttons. The future native macOS app can reuse the
+same core without importing terminal widgets.
+
+## Work with a config file
+
+```bash
+caiman board template --output .caiman/board.json
+caiman project template --output .caiman/project.json
+```
+
+Fill out the JSON draft in an editor, then validate or open it in the TUI:
+
+```bash
+caiman board validate .caiman/board.json
+caiman board configure .caiman/board.json
+caiman project validate .caiman/project.json
+caiman project configure .caiman/project.json
+```
+
+`validate` checks the draft and resolves pins without writing a version. It prints
+the resolved configuration. `configure` loads the draft into the form and requires
+review before registration; it does not modify the source config file. Duplicate
+JSON keys, unknown fields, and invalid relationships are errors rather than being
+silently discarded.
+
+Templates are intentionally incomplete drafts. They must be filled in before
+validation succeeds. Template/export files are created with mode `0600`, and an
+existing file is never overwritten. `.caiman/` is gitignored; keep private project
+drafts there or outside the firmware repository.
+
+Every store-backed command accepts `--store /absolute/path/to/store`. Without
+it, the normal Caiman store configuration applies. Nothing here commits or pushes.
+
+## Board fields
+
+| Field | Meaning |
+|---|---|
+| `board`, `version` | Board identifier and opaque version label |
+| `parts` | Nonempty list of parts identified by unique `role` |
+| `parts[].part` | Document-compatible part identity, `issuer/part` |
+| `parts[].documents` | Document selectors; may be empty when no documents have been selected |
+| `silicon_revision`, `refdes` on a part | Optional declared silicon revision and schematic reference |
+| `links` | Named links using either `between` or `from`/`to` endpoints |
+| `derives_from`, `relation` | Optional pair: predecessor label and human explanation |
+
+Endpoints name a declared role or `role.PERIPHERAL`. A part's document must match
+its issuer/part identity. If both document applicability and a part's silicon
+revision are supplied, they must agree; Caiman does not infer missing revisions.
+Boards contain no customer or project fields and may pin only public documents.
+
+## Project fields
+
+| Field | Meaning |
+|---|---|
+| `project`, `version` | Program codename and opaque version label |
+| `customer`, `compartments` | Customer identity and a nonempty set of access groups (usually one per customer) |
+| `board` | Explicit board `name` and `version`, with an optional existing `digest` pin |
+| `spec_set` | Human-declared frozen specification release |
+| `documents` | Selected specification documents |
+| `precedence` | Document selectors in human-declared governing order; optional `note` |
+| `features` | Named features with `scope` of `required` or `not-used` |
+| `features[].governed_by` | Selected document references, optionally with requirement-ID strings |
+| `features[].realized_on` | Roles that exist on the pinned board |
+| `features[].related` | Existing feature names paired with a human-written `relation` |
+| `derives_from`, `relation` | Optional predecessor and explanation |
+
+Feature governing documents must belong to the project's documents or precedence
+set. Requirement IDs and ranges are preserved as declarations, not expanded or
+interpreted as obligations by Caiman. Precedence is preserved, not inferred, and
+feature implementation status is not tracked.
+
+A document's complete compartment set must be included in the project's set.
+Project manifests remain in their named compartments; they never enter the public
+store. Public board manifests can be shared by multiple customer projects.
+
+## Document selectors
+
+List exact available selectors with:
+
+```bash
+caiman documents
+caiman documents --compartment example-customer
+```
+
+For example, after registering the README's synthetic manual:
+
+```json
+{
+  "ref": "example/example-mcu/reference-manual/Rev%20A",
+  "compartment": "public"
+}
+```
+
+Alternatively, supply a full `sha256:…` manifest digest. If both `ref` and
+`digest` are present, the digest is authoritative; the ref is diagnostic metadata.
+References use the encoded paths shown by the catalog, so opaque labels with
+spaces or slashes cannot become filesystem traversal.
+
+Review resolves a selector into `digest` and `compartment`. Ambiguous references
+require an explicit compartment or digest. Feature selectors bind to the already
+selected project pins. Loading or registering a prepared snapshot never silently
+adopts a newer document or board revision.
+
+## Inspect, export, and derive versions
+
+### Board cards and Vim editing
+
+**View board** opens a grid of registered board versions. Each card has a dotted
+name/version logo and the complete parts list, including declared silicon
+revisions, schematic references, and document counts. The current pinned board
+remains visible even if its version label has since moved. Narrow terminals use
+one column; Page Up/Down scroll cards with long parts lists.
+
+Use `hjkl` to select a card and **Enter** or **e** to open its JSON configuration
+in Vim. Caiman releases the terminal while Vim is running. Edit the temporary
+draft and use **`:wq`** to return to Caiman for validation and a changes review.
+**Register changes** writes the reviewed snapshot; **Edit in Vim** reopens the
+same draft. Invalid JSON or configuration data can be corrected without losing
+the edited text. Use **`:cq`** to cancel Vim editing, or **q** from the Caiman
+review to discard the draft and return to the board grid.
+
+Vim must be installed on `PATH`. The editor receives a temporary copy, never a
+stored object. Updating the same name/version repoints that label only after
+review; existing project digest pins keep their original board. To save a new
+version, edit the version label and declare any desired lineage in the draft.
+
+### Configuration forms and direct commands
+
+Use the home screen's board or project **Edit** action to modify the selected
+configuration. Choose a new version label and explain its relationship to the
+previous version, or explicitly choose to replace the selected version's ref.
+The editor opens the complete snapshot, including its existing digest pins.
+Review the changes before registering. Editing a board does not automatically
+adopt that board into an existing project; edit the project separately when
+that adoption is intended.
+
+```bash
+caiman board show example-board
+caiman board show example-board --version 'Rev A'
+caiman board export example-board --version 'Rev A' --output .caiman/exported-board.json
+caiman board new-version example-board --from-version 'Rev A' --version 'Rev B' \
+  --relation 'Adds a second serial peripheral'
+```
+
+Omitting the version on `show` lists labels; it never chooses a latest version.
+`new-version` starts the TUI with a complete copy of the selected snapshot and
+the supplied lineage. Existing pins carry forward until explicitly edited. The
+old snapshot remains resolvable after registration.
+
+Project reads require explicit compartments; repeat `--compartment` when the
+project requires multiple compartments:
+
+```bash
+caiman project show example-program --version Prototype --compartment example-customer
+caiman project export example-program --version Prototype \
+  --compartment example-customer --output .caiman/exported-project.json
+```
+
+The same `new-version` flow works for projects. Human version labels are mutable
+refs: registering the same name/version can repoint that ref, but cannot change
+previous digest-pinned snapshots.
+
+## Current limits
+
+This slice registers and inspects configuration; it does not materialize session
+workspaces, generate briefs, synchronize Git remotes, or automate cascaded
+document adoption. Nested editing currently uses JSON collections rather than a
+dedicated row editor for every domain object. Multi-compartment publication is
+atomic per ref, not an all-or-nothing transaction across compartments. Local
+access checks assume an authorized caller; they are not process isolation.

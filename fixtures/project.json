@@ -1,0 +1,13 @@
+{
+  "project": "example-program",
+  "version": "Prototype",
+  "customer": "Synthetic Example Customer",
+  "compartments": ["example-customer"],
+  "board": {"name": "example-board", "version": "Rev A"},
+  "spec_set": "Synthetic specification release 1",
+  "documents": [],
+  "precedence": [],
+  "features": [
+    {"name": "ota-update", "scope": "not-used"}
+  ]
+}

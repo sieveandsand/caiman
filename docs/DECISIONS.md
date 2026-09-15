@@ -33,7 +33,7 @@ platform is the better bet is unsettled. See `VISION.md` §5.
 Git's model — one version is HEAD, the rest is history — cannot express "many
 silicon revisions are simultaneously live". Content-addressed artifacts can.
 
-### S-03. Labels come from provenance, assigned at ingest
+### S-03. Labels come from provenance, assigned to whole documents at ingest
 
 Never inferred from content. There is no classifier for "confidential hardware
 specification" and there will not be one, because confidentiality is a property
@@ -72,7 +72,13 @@ What is **not** relaxed is document identity and version. A citation reading "th
 S32K3 manual says" without a version is worthless — and on the normative side
 worse than worthless, because a program is contractually frozen at a release.
 
-*Settled 2026-08-20; extended with requirement-ID locators 2026-08-20.*
+All input documents require usable headings, including requirement-structured
+documents; the latter additionally require matching requirement IDs. S-25 and
+`ARCHITECTURE.md` §6.4.2 define admission. Line numbers aid navigation but do not
+replace the heading or requirement-ID locator.
+
+*Settled 2026-08-20; extended with requirement-ID locators 2026-08-20;
+whole-file heading admission clarified 2026-09-15 by S-25.*
 
 ### S-07. A project version is the complete pin set; there is no repo-side lockfile
 
@@ -91,12 +97,12 @@ releases, so `project @ version` resolves everything transitively.
 
 ### S-08. PDF → markdown conversion is out of scope
 
-Caiman ingests already-converted markdown plus asserted provenance including
-converter identity and version. The conversion category is competitive and
+Caiman ingests already-converted Markdown plus document metadata. Original-source
+and converter provenance are optional (S-26). The conversion category is competitive and
 improving monthly; maintaining another parser is not where the gap is.
 
-Two consequences are load-bearing: converter identity is provenance
-(`ARCHITECTURE.md` §6.4.1), and converting a confidential document through a
+Converter identity, when supplied, is useful provenance
+(`ARCHITECTURE.md` §6.4.1). Converting a confidential document through a
 hosted service is a disclosure outside Caiman's control, which becomes a
 documented user responsibility (`SECURITY-MODEL.md` §7.2).
 
@@ -252,8 +258,8 @@ both halves greppable, a retrieval service adds a round-trip to do worse than
 `grep` while its tool schemas occupy context on every turn.
 
 What a service would genuinely add is the concept-known, identifier-unknown
-query. Generated per-document maps cover part of that without an embedding model
-or a process (`ARCHITECTURE.md` §6.4.3).
+query. The MVP relies on existing source headings and selective reading; it
+generates no maps (S-25, `ARCHITECTURE.md` §6.4.3).
 
 **The published evidence is mixed and should not be cherry-picked.** Anthropic
 reports agentic search outperforming RAG substantially for code, on precision,
@@ -273,12 +279,12 @@ the subject of the question. Their gains also concentrated in large codebases.
 
 One factor does not. The oblique-reference query exists here too — "how do I stop
 the watchdog resetting during flash programming" contains no identifier — and
-maps are a weaker instrument than embeddings against it. So the deferred tool is
+existing headings may not give the agent the vocabulary it needs. So the deferred tool is
 **more likely to be needed than this decision's framing suggests**, and the
 trigger is specific:
 
-> Build it when concept-known, identifier-unknown queries defeat both grep and
-> the generated maps, observed more than occasionally in real use. Log the
+> Build it when concept-known, identifier-unknown queries defeat search and
+> selective reading of source documents more than occasionally in real use. Log the
 > misses; do not decide from intuition.
 
 If the trigger fires, `ByteAsk-Embedded-MCP` (MIT) is a plausible starting point:
@@ -286,29 +292,47 @@ an MCP server for page-cited firmware retrieval whose corpus and engine sit
 behind a pluggable `SearchBackend` seam, which is the shape needed to point it at
 Caiman-materialized documents.
 
-*Settled 2026-08-20. Supersedes D-06 and D-11.*
+*Settled 2026-08-20. Supersedes D-06 and D-11. Retrieval trigger updated
+2026-09-15 when S-25 removed generated maps.*
 
-### S-19. The human picks the agent; Caiman owns the map
+### S-19. The human declares the session mode; Caiman holds no agent policy
+
+`caiman sync --mode open|sealed` takes the decision directly. `open`
+materializes public documents only; `sealed` materializes everything the project
+version pins. The flag is required and has no default.
 
 Every enforcement mechanism considered — a server that refuses, a kernel that
 returns `EACCES`, a filter that excludes — acts at the moment of *read*, when
 nothing knows what the work is for. At session start the human knows exactly, and
-the harness is already asking which project.
+the harness is already asking which project. Asking one more question costs
+nothing.
 
-So the engineer picks the agent, and Caiman makes it consequential by
-materializing a different document set depending on the choice. Both error
-directions fail safe.
+**An earlier version of this decision had Caiman own an agent map**
+(`~/.config/caiman/agents.toml`), translating agent names into what they could
+receive. Removed, for three reasons in ascending order of seriousness: it had to
+be hand-maintained and did not travel with the store, so machines could diverge;
+it invented a vocabulary of agent names that nothing else defined; and it could
+be **silently wrong**, because a profile keyed on an agent name asserts something
+about the model, and one harness can drive either kind.
 
-The agent map lives in Caiman (`~/.config/caiman/agents.toml`) rather than the
-harness: one place to answer "what could this session see", an unknown name fails
-closed rather than receiving whatever the harness asserted, policy survives
-harness changes, and the brief can state session mode truthfully because the same
-code computed it.
+The third is disqualifying on this project's own terms. A control that can be
+systematically wrong while appearing authoritative is the "shape of a gate with
+none of the substance" that S-19 already rejects model-identity checks for.
+Removing the map is that principle applied consistently, not a relaxation of it.
 
-Caiman is explicitly **not an enforcement boundary**. Filesystem hardening is
-available as an option and is not the design. `SECURITY-MODEL.md` §5.
+What is lost is a guardrail against a momentary lapse — with a map, a distracted
+engineer could not hand a frontier session the full document set. Accepted,
+because the guardrail only worked when the map was right. A convenience layer may
+return later on one condition: **it may narrow the mode, never widen it.**
 
-*Settled 2026-08-20. Resolves D-05.*
+An optional `--agent-label`, supplied by the harness-specific hook adapter, is
+recorded in the materialization log as an **unverified annotation**. It names the
+harness, not the model, and is not an input to any decision.
+
+Caiman remains explicitly **not an enforcement boundary**. Filesystem hardening
+is an option, not the design. `SECURITY-MODEL.md` §5.
+
+*Settled 2026-08-20; agent map removed 2026-09-15.*
 
 ### S-20. Documents are linked from a content-addressed cache, not copied
 
@@ -340,32 +364,318 @@ Full specification and the alternatives analysis are in `STORAGE.md`.
 *Settled 2026-09-14. Resolves D-02 and D-10 for the MVP; the graduation trigger
 remains open as D-02.*
 
+### S-22. The store is kept in one private git repository
+
+The whole store — every compartment — lives in a single private git repository,
+with compartments as directories inside it. Push refuses a non-private remote.
+
+**An earlier version of this decision used one repository per compartment.** That
+was reversed. Separate repositories buy host-enforced access control *between*
+compartments, which matters only when a person should see one and not another —
+and there is no such person. Compartments here are one engineer holding several
+counterparties' secrets, not multi-tenancy, and this project's own convention
+says not to build abstraction for hypothetical tenants.
+
+Two facts settled it. **Every store repository is private regardless** — `public`
+in this design means visible to every session, not publishable, since vendor
+manuals are under click-through agreements and redistributing them is a licensing
+violation. So the per-compartment boundary was separating the engineer from
+themselves. And **GitHub has no per-directory read permission**, so within git
+the choice is repository-level or nothing.
+
+The cost of the earlier design was recurring: per customer, create a repository,
+set visibility, wire a remote, clone it on every machine. One repository makes a
+new compartment a `mkdir`.
+
+**What makes the simple default safe is that splitting is cheap.** Git is
+transport and backup; the content-addressed tree is the source of truth, and
+history is not load-bearing. When a real access boundary appears, copy that
+compartment's directory into a new private repository and repoint its remote. The
+configuration supports per-compartment remote overrides for exactly this, and for
+the counterparty whose agreement forbids third-party storage. If the migration is
+cheap, do not build it early.
+
+**What it costs:** one visibility mistake now exposes every compartment rather
+than one, and repository size grows faster. The first is why push verifies
+privacy and `init` deliberately does not create the repository.
+
+**And what git costs regardless:** history is permanent. A mislabeled document,
+once pushed, requires history rewriting on every clone rather than a delete, and
+forks and host caches may retain it. Two consequences are load-bearing — **ingest
+never pushes**, with a label review between, so the cheap fix exists in the window
+where mistakes are found; and a compartment correction after push is an incident
+rather than a chore (`SECURITY-MODEL.md` §8).
+
+Git does not carry file modes, so `0444` on blobs and `0700` on compartment
+directories are restored after every clone and pull, before anything else runs.
+
+Full specification in `STORAGE.md` §6.6, §7.5, §7.6, §9.4, §9.5.
+
+*Settled 2026-09-14; revised from per-compartment repositories to a single
+repository the same day.*
+
+### S-23. Session integration is via harness hooks, as thin adapters over the CLI
+
+Caiman registers callbacks at the harness's own extension points: session start
+to configure or warn, tool-use events to record reads, stop events to close the
+record.
+
+This does not reopen S-01. Caiman is not managing sessions; it is using
+extension points a harness already publishes, and a harness with no hook
+mechanism degrades to the manual path (D-07) rather than breaking.
+
+**All logic lives in `caiman session start|record|end`.** The hook adapter only
+translates the harness's event format. Hook mechanisms are harness-specific — the
+shapes differ and some harnesses have none — so keeping logic in the CLI makes a
+second harness a new adapter rather than a second implementation. This is the
+line that stops session integration from becoming harness coupling.
+
+Two consequences worth stating. **The hook cannot prompt the engineer**: hooks
+run non-interactively, so the start hook injects context and the *agent* asks
+which project to use. Selection is conversational rather than a startup dialog.
+And **Caiman now runs during a session**, which an earlier version of
+`ARCHITECTURE.md` denied; the form is narrow — string parsing and an append, no
+store access, no resolution.
+
+`ARCHITECTURE.md` §6.10, §9.2.
+
+*Settled 2026-09-14.*
+
+### S-24. Audit has two layers: what could be read, and what was read
+
+The materialization log is written by `sync`, is deterministic, is complete, and
+does not depend on the agent cooperating. The access log is written by hooks
+during the session, has finer granularity, and is **incomplete** — `Bash` reads
+cannot be reliably attributed, hooks may not be installed, subagent coverage is
+unverified, and anything outside the harness is invisible.
+
+They are complementary. An earlier version of `SECURITY-MODEL.md` argued against
+tool-call logging *as a replacement* for materialization logging, and that
+argument still holds; adding it as a second layer is a different proposition.
+
+**The access log's strongest justification is forensic, not compliance.**
+`harness.md` establishes that transcripts persist plaintext of everything read,
+outside Caiman's reach. Until now, "which compartmented documents are in which
+transcript" had no answer. The access log answers it, converting residue from an
+unbounded unknown into an enumerable list. That is the difference between a gap
+you can act on and one you can only worry about.
+
+Because it is incomplete, **absence of a record is never proof of non-access**,
+and that must be stated wherever the log is surfaced rather than only in the
+design documents. The logs are also metadata-sensitive — a path naming a
+customer's specification reveals the relationship — so they live outside the
+worktree under restrictive permissions and are never committed to any repository.
+
+`SECURITY-MODEL.md` §9.
+
+*Settled 2026-09-14.*
+
+---
+
+### S-25. Ingest registers one unchanged Markdown file
+
+A document version contains one user-prepared Markdown file plus human-supplied
+metadata. Store the exact input bytes in one content blob; apply explicit access
+labels to the entire document. Retain document-level provenance and immutable
+manifest pins.
+
+**Usable headings are required.** Admission validates nonempty, unambiguous
+heading paths covering the document. Requirement-structured documents must also
+contain IDs matching their declared pattern. Invalid input is rejected with
+locations and reasons; Caiman does not fix it or use line-only citations.
+`ARCHITECTURE.md` §6.4.2 owns the detailed admission rules.
+
+The workflow is **select file → supply metadata → review → register**. Importing
+a manual does not require board or project authoring. Those declarations remain
+separate. S-27 defines ingestion through a TUI; S-28 defines board/project
+authoring through a TUI and editable JSON drafts. This decision does not require an AI service or an AI-assisted
+preparation workflow.
+
+No splitting, stored chunks, generated maps or outlines, summaries, semantic
+tagging, or content rewriting. Conversion and cleanup happen outside Caiman.
+Agents search existing headings and identifiers and read selected line ranges;
+a several-hundred-page file does not need to be loaded whole into context.
+
+**Alternatives considered:** whole-file registration with a generated outline;
+deterministic heading-based splitting; accepting externally prepared chapter
+bundles. The MVP chooses whole-file registration alone. Navigation improvements
+must earn their scope through real retrieval failures, rather than being bundled
+into ingest.
+
+**Costs accepted:** no chapter-level deduplication across revisions, potentially
+larger blobs for the remote, and dependence on source headings for navigation.
+Heading validation establishes structure, not conversion fidelity, completeness,
+or correct application of a requirement. G08 and G09 remain evaluation work.
+
+This resolves the stored-Chunk question in ARCHITECTURE.md and STORAGE.md,
+replaces the former splitting/map responsibilities, and narrows I-5's admission
+implementation without weakening its citation requirement.
+
+*Settled 2026-09-15 by user choice of whole-file registration with usable headings.*
+
+---
+
+### S-26. Original-source and converter provenance are optional
+
+Registration requires the Markdown artifact and its document metadata, not the
+source PDF or conversion history. Both `source` and `converter` objects, and
+their individual fields, are optional. Omit unknown values. Missing information
+must not imply local conversion, public access, or verified source identity.
+
+Keep only `original_filename`, automatically captured from the input Markdown.
+The author convention is that conversion retains the source basename; do not
+store or request a second source filename. Optional source metadata consists of
+a checksum and page count. Optional converter metadata consists of name, version,
+and hosted/local information. The Markdown digest and size are always computed.
+
+This gives up source-file and converter traceability where provenance is absent,
+while retaining exact identification of the bytes the agent reads. Supplied
+optional fields are validated, but omitted fields never block registration.
+`STORAGE.md` §6.4.1 owns the stored representation.
+
+*Settled 2026-09-15 by user instruction.*
+
+### S-27. Ingestion uses a TUI; the future GUI is a native macOS app
+
+`caiman ingest [markdown]` opens a terminal form for document metadata, optional
+provenance, and review before local registration. With no file argument, select
+the file in the TUI. Explicit access labels have no default. Invalid entries are
+shown with actionable errors; cancelling publishes no version and changes no ref.
+`ARCHITECTURE.md` §6.4.3 owns the workflow and field contract.
+
+This is required MVP scope: the manifest needs enough human input that a long
+flag list or hand-authored sidecar is not the initial user interface. A
+noninteractive ingestion format is deferred; invocation without an interactive
+terminal fails with an explanation and no writes.
+
+Keep validation and registration independent of terminal widgets. The planned
+GUI is a native macOS app using the same operations and manifest rules, not a
+separate storage or validation implementation. The app's implementation and
+schedule are post-MVP. Board/project authoring is specified by S-28.
+A TUI framework is an implementation choice, not settled here.
+
+*Settled 2026-09-15 by user instruction. Resolves D-09's form-factor choice.*
+
+---
+
+### S-28. Board and project authoring use a TUI and editable JSON drafts
+
+The user chose both a terminal UI and configuration files. JSON drafts map to
+board/project manifest fields, with schema fields generated when absent. The TUI
+uses top-level forms and JSON collection editors for parts, links, documents,
+precedence, and features. Both paths call shared validators and registration
+logic; `AUTHORING.md` owns the concrete workflow and field contract.
+
+Document selectors may use an explicit ref or digest and compartment. Review
+resolves missing digests within the allowed scope. Board documents are public;
+project documents must fit the project's declared compartments. Governing feature
+references bind to the project's already selected documents or precedence set.
+Digests are authoritative thereafter, even if diagnostic refs move.
+
+A new-version command copies the complete selected snapshot into the TUI,
+retaining its pins and adding human-declared lineage. Registration stores the
+whole edited snapshot. No version ordering, inheritance resolution, obligation
+inference, or compliance status is introduced. Read-only validation, version
+listing, and private JSON export make the result inspectable outside the TUI.
+
+Both TUIs use a shared sparse terminal theme inspired by Claude Code: warm orange
+accents, muted secondary text, simple controls, and keyboard navigation. Respect
+terminal color preferences, including NO_COLOR. Caiman keeps its own branding.
+Input fields use full borders and a subtle fill so their boundaries remain
+visible without focus; the active field has an orange border. This refines the
+initial bottom-border layout following user feedback about unclear boundaries.
+
+*Settled 2026-09-15 by user instruction: TUI plus config files and a Claude
+Code-inspired terminal appearance. Resolves ARCHITECTURE.md §8.6 Gap B / G13.*
+
+---
+
+### S-29. Start with a board and project; reuse them during ingestion
+
+Opening `caiman` guides the engineer through establishing one board and one
+project before document ingestion. The board declares hardware parts; the
+project pins that board and declares its customer and compartments. Document
+lists can start empty, so setup does not depend on manuals already being stored.
+
+Ingestion offers existing project and board versions, plus actions to create
+new ones and return to the document form. Selecting a board part supplies its
+declared issuer/part identity; selecting a project supplies its program and
+compartment context. Version labels remain opaque and pinned board identities
+remain authoritative. No hardware facts or classification are derived from text.
+Access remains an explicit human choice reviewed before document registration.
+
+The terminal may remember explicitly selected catalog compartments locally for
+the next launch. These preferences are not shared manifests, session modes, or
+an authorization boundary. Catalog discovery never expands them by scanning for
+other private compartments. Document registration does not silently revise
+existing board or project snapshots; adopting a document into their pinned sets
+remains an explicit configuration edit.
+
+The TUI presents compartments as **access groups**, with customer examples and
+an explanation that a project needs every group assigned to a document. This
+addresses the user's feedback that “compartment” is unclear in the interface.
+Storage keys and existing CLI flags retain their spelling for compatibility;
+this is a terminology change, not a change to access rules.
+
+*Settled 2026-09-15 by user instruction: guide first-time board/project setup,
+then offer existing selections and creation actions during ingestion.*
+
+---
+
+### S-30. The bare command is a dashboard with shared Vim-style navigation
+
+Running `caiman` opens the primary human interface: first-time setup when needed,
+then a grid of implemented document, board, and project capabilities. The grid
+includes editing existing configurations and working with editable JSON files.
+Individual commands remain available for direct invocation and agent tooling;
+this does not make currently interactive commands noninteractive.
+
+Edits start from a complete pinned snapshot. The user chooses a new opaque
+version with declared lineage, or explicitly repoints the selected version tag,
+then reviews the full edited configuration before registration. Existing digest
+pins remain resolvable. Editing a board does not silently change a project.
+
+The terminal uses a pure black canvas, warm orange accents, and full field
+outlines. Shared keyboard controls use `hjkl` for directional tile navigation
+and previous/next control movement in forms. Enter or `i` starts text editing;
+Escape returns to navigation. Editing preserves ordinary `hjkl` text input.
+Dropdowns support `j/k` to move, Enter or `l` to select, and Escape or `h` to close.
+In navigation mode, `q` closes the current menu or returns from a form, and quits
+from the dashboard. An open dropdown closes first. During text editing `q`
+remains ordinary input; cancellation guards still prevent interrupted writes.
+
+*Settled 2026-09-15 by user instruction: expose features in a grid on bare
+`caiman`, support board/project modification, Vim keys, and a black background
+with a Claude Code-inspired appearance.*
+
 ---
 
 ## Open
 
 ### D-02. When to move the store to an OCI registry
 
-The backend is decided (S-21). What remains is the threshold for change, stated
-in `STORAGE.md` §12.3:
+The backend is decided (S-21) and the remote is git (S-22). The original trigger
+— compartment separation needing real authentication — has been met, and git
+answered it more cheaply than a registry would have.
 
-> Move to an OCI registry when compartment separation must be real
-> authentication rather than POSIX permissions — a second person, a second
-> machine with different trust, or a store that stops living on hardware you
-> control.
+What a registry would still add: immutability enforced by the system rather than
+by this design's conventions, retention as configuration rather than discipline,
+and **deletion that actually deletes**, which git cannot do (`STORAGE.md` §9.5).
 
-At that point ORAS earns its keep: compartments map to repositories with separate
-credentials, immutability is enforced by the system rather than by convention,
-and retention becomes configuration rather than discipline. For a single engineer
-on one machine it is operational surface with no corresponding benefit.
+Revised trigger:
 
-*Open: nothing to decide until the threshold is met. Recorded so the trigger is
-not forgotten.*
+> Move to a registry when history permanence becomes the binding constraint —
+> compartment corrections happening often enough that irreversible pushes are a
+> recurring incident, or a counterparty requiring demonstrable deletion.
+
+*Open: nothing to decide until then. Recorded so the trigger is not forgotten,
+and so the reason it changed is visible.*
 
 ### D-03. Index backend — deferred, not chosen
 
 S-18 removed the semantic index from the MVP, so this is off the critical path.
-It becomes live only if the miss log shows grep plus generated maps failing.
+It becomes live only if the miss log shows search and selective reading of
+source documents failing on real tasks (S-18).
 
 | Option | For | Against |
 |---|---|---|
@@ -413,7 +723,7 @@ A harness driving a single backend cannot express the choice S-19 rests on. Veri
 before adopting.
 
 Caiman's obligation is an interface clean enough for someone else to drive:
-`caiman sync --project P --version V --agent A --into DIR`, with no assumption
+`caiman sync --project P --version V --mode open|sealed --into DIR`, with no assumption
 that Caiman owns the file or knows what a session is. Until a harness exists, the
 same command plus a one-line `@.caiman/project.md` import is the manual path —
 which is good, because it exercises the interface from day one.
@@ -452,22 +762,16 @@ behavior, and building two exercises compartment isolation with no exposure.
 *Open: confirm part diversity and multi-version availability; write the synthetic
 specification sets.*
 
-### D-09. Front-end form factor
+### D-09. Front-end form factor *(resolved 2026-09-15 by S-27)*
 
-CLI for the MVP. Three later surfaces, not to be conflated:
+The MVP requires a TUI for document ingestion. The future GUI is a native macOS
+app for authoring and curation. Both use shared validation and registration
+operations; no local web frontend is planned. S-28 now defines board/project editing through a TUI and JSON drafts. The
+Mac app's schedule remains to be designed.
 
-- **Admin / curation** — register boards and projects, cut versions, declare
-  features and precedence, upload documents with provenance and compartments,
-  correct a mislabel. A human workflow the CLI serves badly past a few dozen
-  documents, and the place where a typo becomes a mislabeled document or a
-  cross-compartment leak. Feature and precedence declaration are structured
-  editing, which is the form a CLI serves worst. Wanted.
-- **An MCP server for semantic fallback only** — S-18.
-- **A documentation browser for humans** — still a non-goal.
-
-*Open: form factor and timing for the admin surface. A local web app contradicts
-nothing, since the non-goal was always about serving document content for
-reading. Do not start before the layers beneath it are correct.*
+This changes the human authoring interface, not the filesystem interface used
+by coding agents. Semantic retrieval remains deferred under S-18, and a separate
+human-facing documentation browser remains a non-goal.
 
 ### D-12. How program deviations are represented
 
@@ -481,9 +785,9 @@ rather than per-program.
 
 | Option | For | Against |
 |---|---|---|
-| **A document, like any other** | Zero new machinery; ingests, splits, and cites identically | Incremental deviations mean re-ingesting a growing document; no structured "which requirements are amended" query |
+| **A document, like any other** | Zero new machinery; registers unchanged and cites identically | Incremental deviations mean re-ingesting a growing document; no structured "which requirements are amended" query |
 | **Structured amendments on requirement IDs** | Exact override lookup; incremental additions are cheap | A second content path, and hand entry is where mislabels happen |
-| **Both — document is the artifact, amendments a declared index over it** | Citation stays to the real document; override lookup is exact | Two things to keep in sync, mitigated if the index is derived at ingest |
+| **Both — document is the artifact, amendments a declared index over it** | Citation stays to the real document; override lookup is exact | Two things to keep in sync; a future index needs an explicit authoring decision and is not part of S-25 ingest |
 
 *Leaning: the third, once the first becomes painful. Do not build before there is
 a real deviation document to look at.*
@@ -502,7 +806,8 @@ material regardless of how candidates scored on public documents.
 
 Retired because conversion left scope. The risk did not disappear, it moved: it
 now lives in the user's choice of converter, and Caiman addresses what it still
-can — recording converter identity so a bad conversion can be traced, and
+can — optionally recording converter identity so a bad conversion can be traced
+when that information is supplied (S-26), and
 rejecting documents whose content lacks resolvable locators. The confidentiality
 observation survives as a security note: a compartmented document must not be
 sent to a hosted converter, and Caiman cannot enforce that.

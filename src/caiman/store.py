@@ -1,0 +1,230 @@
+"""Local, compartment-separated content storage. Registration never publishes remotely.
+
+Objects are durable before a ref becomes visible. Failure may leave unreachable
+objects; existing refs remain valid. Multi-compartment refs are not a transaction.
+The store assumes a single writer, not a hostile process modifying directories.
+"""
+from dataclasses import dataclass
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import tempfile
+from urllib.parse import quote
+
+from .ingest import PreparedDocument, validate_metadata, verify_prepared
+from .models import AccessLabel, canonical_json
+
+
+class StoreError(ValueError):
+    """Invalid or corrupt store data; no unverified content is returned."""
+
+
+class AccessDenied(StoreError):
+    """Valid stored metadata requires compartments absent from the caller's scope."""
+
+
+@dataclass(frozen=True)
+class Registration:
+    manifest_digest: str
+    blob_digest: str
+    ref_path: Path
+    compartments: tuple[str, ...]
+
+
+def _hex(digest: str) -> str:
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise StoreError("Expected a complete lowercase sha256 digest")
+    return digest[7:]
+
+
+def _digest(content: bytes) -> str:
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _component(value: str) -> str:
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise StoreError("Invalid empty path component")
+    # quote leaves dots unescaped even with safe="". Encode dot-only labels
+    # explicitly so opaque versions never become filesystem traversal.
+    if value in (".", ".."):
+        return "%2E" * len(value)
+    return quote(value, safe="")
+
+
+def _compartments(manifest: dict) -> tuple[str, ...]:
+    labels = manifest.get("labels")
+    if not isinstance(labels, dict) or set(labels) != {"public", "compartments"}:
+        raise StoreError("Explicit public and compartment labels are required")
+    public, names = labels["public"], labels["compartments"]
+    if type(public) is not bool or not isinstance(names, list):
+        raise StoreError("Invalid access labels")
+    if public:
+        if names:
+            raise StoreError("Public and compartment labels cannot be mixed")
+        return ("public",)
+    if not names or any(not isinstance(n, str) for n in names):
+        raise StoreError("A non-public document needs explicit compartments")
+    if len(set(names)) != len(names) or "public" in names:
+        raise StoreError("Invalid compartment labels")
+    for name in names:
+        _component(name)
+    return tuple(sorted(names))
+
+
+def _validate_manifest(manifest: dict) -> None:
+    if not isinstance(manifest, dict) or manifest.get("schema") != "caiman.document/1":
+        raise StoreError("Not a document manifest")
+    generated = {"schema", "original_filename", "pipeline_version", "ingested_at", "files"}
+    validate_metadata({key: value for key, value in manifest.items() if key not in generated})
+    files = manifest.get("files")
+    if (not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], dict)
+            or set(files[0]) != {"path", "sha256", "size"}
+            or files[0]["path"] != "document.md"
+            or type(files[0]["size"]) is not int or files[0]["size"] < 0):
+        raise StoreError("Manifest must describe exactly one unchanged document blob")
+    _hex("sha256:" + str(files[0]["sha256"]))
+
+
+class Store:
+    def __init__(self, root: Path):
+        # Resolve the parent only: standard platform aliases such as /tmp are
+        # allowed, but the store root and everything within it may not be links.
+        root = Path(root).expanduser().absolute()
+        self.root = root.parent.resolve() / root.name
+
+    def _directory(self, path: Path, *, create: bool = False) -> None:
+        if not path.is_relative_to(self.root):
+            raise StoreError("Path lies outside store")
+        if create and not self.root.parent.exists():
+            missing = []
+            parent = self.root.parent
+            while not parent.exists():
+                missing.append(parent)
+                parent = parent.parent
+            for parent in reversed(missing):
+                parent.mkdir(mode=0o700)
+                self._fsync_directory(parent.parent)
+        for current in (self.root, *[self.root / Path(*path.relative_to(self.root).parts[:i])
+                                   for i in range(1, len(path.relative_to(self.root).parts) + 1)]):
+            if create:
+                try:
+                    current.mkdir(mode=0o700)
+                    self._fsync_directory(current.parent)
+                except FileExistsError:
+                    pass
+            mode = current.lstat().st_mode
+            if not stat.S_ISDIR(mode):
+                raise StoreError(f"Store directory must not be a link: {current}")
+            if create:
+                current.chmod(0o700)
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    def _path(self, compartment: str, kind: str, digest: str) -> Path:
+        value = _hex(digest)
+        return self.root / _component(compartment) / kind / "sha256" / value[:2] / value
+
+    def _read(self, path: Path) -> bytes:
+        self._directory(path.parent)
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except OSError as exc:
+            raise StoreError(f"Cannot safely read store object: {path}") from exc
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise StoreError(f"Store object is not a regular file: {path}")
+            return stream.read()
+
+    def _read_object(self, compartment: str, kind: str, digest: str) -> bytes:
+        content = self._read(self._path(compartment, kind, digest))
+        if _digest(content) != digest:
+            raise StoreError(f"Store object digest mismatch: {digest}")
+        return content
+
+    def read_blob(self, compartment: str, digest: str) -> bytes:
+        return self._read_object(compartment, "blobs", digest)
+
+    def read_manifest(self, compartment: str, digest: str, *,
+                      allowed_compartments: set[str] | None = None) -> dict:
+        content = self._read_object(compartment, "manifests", digest)
+        try:
+            manifest = json.loads(content)
+            _validate_manifest(manifest)
+            if canonical_json(manifest) != content:
+                raise StoreError("Manifest is not canonical")
+            if compartment not in _compartments(manifest):
+                raise StoreError("Manifest labels do not match containing compartment")
+            allowed = (set() if compartment == "public" else {compartment}) if allowed_compartments is None else allowed_compartments
+            labels = AccessLabel(manifest["labels"]["public"], frozenset(manifest["labels"]["compartments"]))
+            if not labels.permits(allowed):
+                raise AccessDenied("All document compartments must be authorized")
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise StoreError("Invalid manifest JSON") from exc
+        return manifest
+
+    def _atomic_write(self, path: Path, content: bytes, *, immutable: bool) -> None:
+        self._directory(path.parent, create=True)
+        fd, temporary = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fchmod(stream.fileno(), 0o444 if immutable else 0o600)
+                os.fsync(stream.fileno())
+            if immutable:
+                # A no-clobber publication; never modify an existing inode.
+                try:
+                    os.link(temporary, path, follow_symlinks=False)
+                except FileExistsError:
+                    if self._read(path) != content:
+                        raise StoreError(f"Existing object digest mismatch: {path}")
+                    if stat.S_IMODE(path.lstat().st_mode) != 0o444:
+                        raise StoreError(f"Existing immutable object must have mode 0444: {path}")
+            else:
+                if path.is_symlink():
+                    raise StoreError(f"Ref must not be a symlink: {path}")
+                os.replace(temporary, path)
+            self._fsync_directory(path.parent)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+    def _write_object(self, compartment: str, kind: str, digest: str, content: bytes) -> None:
+        if _digest(content) != digest:
+            raise StoreError("Prepared object digest mismatch")
+        path = self._path(compartment, kind, digest)
+        self._atomic_write(path, content, immutable=True)
+
+    def register(self, prepared: PreparedDocument) -> Registration:
+        verify_prepared(prepared)
+        manifest = prepared.manifest
+        _validate_manifest(manifest)
+        compartments = _compartments(manifest)
+        content = canonical_json(manifest)
+        if _digest(content) != prepared.manifest_digest or _digest(prepared.content) != prepared.blob_digest:
+            raise StoreError("Prepared document digest mismatch")
+        if manifest["files"][0] != {"path": "document.md", "sha256": _hex(prepared.blob_digest), "size": len(prepared.content)}:
+            raise StoreError("Manifest does not describe prepared document bytes")
+        identity = manifest.get("part") or manifest.get("program")
+        components = [_component(value) for value in (
+            manifest.get("issuer"), identity, manifest.get("doc_type"), manifest.get("version"))]
+        refs = [self.root / _component(name) / "refs" / "documents" / Path(*components)
+                for name in compartments]
+        # Source verification and all input checks precede the first mkdir.
+        for compartment in compartments:
+            self._write_object(compartment, "blobs", prepared.blob_digest, prepared.content)
+            self._write_object(compartment, "manifests", prepared.manifest_digest, content)
+        for ref in refs:
+            self._atomic_write(ref, (prepared.manifest_digest + "\n").encode(), immutable=False)
+        return Registration(prepared.manifest_digest, prepared.blob_digest, refs[0], compartments)

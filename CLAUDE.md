@@ -47,9 +47,11 @@ content must become unreachable, not world-readable.
 Two distinct failure paths, tested separately: no labels at all, and a
 compartment dropped while other fields survived.
 
-The same rule covers agent profiles. An agent name absent from
-`~/.config/caiman/agents.toml` resolves to nothing — `sync` fails and
-materializes nothing. Never default an unknown agent to `public`; refuse.
+The same rule covers the session mode. `sync --mode` is required and has no
+default: omitting it fails and materializes nothing. Never infer a mode, never
+default to `open`, and do not reintroduce a policy file that maps agents to
+modes — S-19 records why that was removed. If a convenience layer ever returns,
+it may only narrow the mode, never widen it.
 
 ### I-2. One function generates both write-time and filter-time labels
 
@@ -58,20 +60,39 @@ materializes MUST come from the same prefixing code, over `is_public` and
 compartments alike. If they diverge, the filter silently under- or over-matches
 and nobody notices. Never hand-roll a label string at a call site.
 
-### I-3. Compartmented documents never enter git
+### I-3. Compartmented documents never enter a repository that was not built for them
 
-The blob cache, the materialized documents, and the session's `.caiman/`
-directory are gitignored **and** guarded by a pre-commit hook. Git history is
-permanent; an accidental `git add .` that commits a customer's specification is
-unrecoverable and is a commercial event.
+There is exactly one git repository a compartmented document may live in: **that
+compartment's own private store repository** (S-22). Everywhere else it is a
+commercial incident.
 
-Do not weaken either guard, do not add exceptions "just for testing", and do not
-commit fixture documents from a real vendor or a real customer. Use the synthetic
-fixtures in `fixtures/`, including the synthetic specification sets, which exist
-precisely so this never comes up (D-08).
+| Repository | Compartmented documents |
+|---|---|
+| `store/<compartment>/` — private, one per counterparty | **Yes.** This is what it is for |
+| `store/public/` | No. Public documents only |
+| The firmware code repository | **Never.** The blob cache, materialized documents, and `.caiman/` are gitignored *and* pre-commit-hook guarded |
+| This repository | **Never.** Not even as a fixture |
 
-`docs/` at the repo root is Caiman's *own* design documentation and is committed
-normally. Materialized documents live elsewhere. Do not conflate them.
+Git history is permanent, so every one of these is one-way. An accidental
+`git add .` that commits a customer's specification cannot be undone by deleting
+the file — and once pushed, not by rewriting history either, because clones,
+forks, and host caches retain it.
+
+Three rules follow:
+
+- Do not weaken either guard on the code repository, and do not add exceptions
+  "just for testing".
+- Do not commit fixture documents from a real vendor or a real customer. Use the
+  synthetic fixtures in `fixtures/`, including the synthetic specification sets,
+  which exist precisely so this never comes up (D-08).
+- **Ingest does not push.** Writing to the local store and publishing it to a
+  remote are separate acts with a label review between them, because a mislabel
+  caught before push costs a `git reset` and one caught after does not
+  (`STORAGE.md` §9.5).
+
+`docs/` at the root of *this* repository is Caiman's own design documentation and
+is committed normally. Materialized documents live elsewhere. Do not conflate
+them.
 
 ### I-4. Pin digests, not tags
 
@@ -91,9 +112,16 @@ All three are required.
 - A page number rides alongside when the conversion supplied one, never instead
   of a locator.
 
-Corollary at ingest: content with no resolvable locator is rejected, not stored
-without one. A document declared requirement-structured is rejected if
-requirement IDs are absent.
+Corollary at ingest: every document must have usable Markdown headings, as
+defined in `ARCHITECTURE.md` §6.4.2. Reject missing or ambiguous heading paths;
+do not repair the input or fall back to line-only citations. A document declared
+requirement-structured must also contain IDs matching its declared pattern.
+
+Registration stores one input file byte-for-byte as one content blob (S-25).
+Labels apply to the whole document and are supplied by a human. No splitting,
+chunk entities, generated maps, summaries, or AI calls belong in ingest.
+Original-source and converter information are optional (S-26). Missing provenance
+never implies public access or local conversion; explicit labels remain required.
 
 ### I-6. The brief is metadata only
 
@@ -153,6 +181,33 @@ the whole truth.
 - **A partial materialization is an error, not a warning.** If any pinned
   document cannot be written, `sync` fails and says which.
 
+### I-10. Hooks observe; they never block, and they log identities only
+
+Caiman registers callbacks with the harness to configure a session at start and
+to record which managed documents were read. Three rules, none of them
+negotiable:
+
+**Never deny a tool call.** `PreToolUse` can block; Caiman does not use it.
+Blocking would make Caiman look like an enforcement boundary, which S-19 says it
+is not — and it would add nothing, because a document the session may not see was
+never materialized, so there is no read to deny. A gate where nothing can pass is
+the shape of a gate with none of the substance.
+
+**Never fail a session.** Hook failures, timeouts, and a missing Caiman
+installation all leave the session running and unlogged. A broken audit hook that
+halts work gets deleted within a week, which is worse than a log with gaps that
+are known.
+
+**Never record content.** The access log holds paths, document names, versions,
+and compartments — the same metadata-only rule as the brief (I-6). A log entry
+containing an excerpt of a specification is a copy of that specification in a file
+nobody thinks of as one.
+
+A fourth rule about how it is described, which matters as much as the code:
+**absence of a record is not proof a document was not read.** Reads through
+`Bash`, uninstalled hooks, and anything outside the harness are all invisible.
+Say so wherever the log is surfaced.
+
 ---
 
 ## Working conventions
@@ -175,12 +230,26 @@ the whole truth.
 
 ## Layout
 
+The implementation is a Python package under `src/caiman/`: `cli.py`, `tui.py`,
+`ingest.py`, `models.py`, and `store.py` for documents; `configuration.py`,
+`config_store.py`, `config_files.py`, and `config_tui.py` for board/project
+authoring; `onboarding.py` and `workflow.py` for initial setup, the home screen,
+and local authoring selections; `dashboard_actions.py` for interactive edit,
+file, and catalog actions; `navigation.py` for shared Vim-style form and
+dashboard controls; `board_gallery.py`, `board_edit.py`, and `external_editor.py`
+for board cards and reviewed Vim edits; `theme.py` for shared appearance. Tests live
+under `tests/`.
+Python and Textual are implementation choices for local authoring;
+the shared core does not depend on terminal widgets. The conceptual component
+layout below describes the full planned system, not existing directories.
+
 ```
 caiman/
   cli/            # sync, brief, ingest, board, project — the command surface
   project/        # project model, versions, features, precedence, brief rendering
   board/          # board model, versions, part instances, links
-  ingest/         # splitting, locators, labels, generated maps
+  ingest/         # unchanged-file registration, heading validation, document labels
+  tui/            # ingestion form and review; calls the shared registration logic
   store/          # blobs, manifests, refs, resolution — see docs/STORAGE.md
   materialize/    # workspace assembly, linking, agent-profile filtering
   fixtures/       # synthetic documents and synthetic spec sets ONLY
@@ -188,8 +257,8 @@ caiman/
 ```
 
 No `server/`. If semantic fallback is ever built (S-18) it arrives as one tool
-behind one server, and not before grep plus generated maps has demonstrably
-failed on real queries.
+behind one server, and not before search and selective reading of the source documents have
+demonstrably failed on real queries.
 
 ---
 
@@ -202,6 +271,7 @@ failed on real queries.
 | Build session/worktree orchestration or HIL execution | S-01 |
 | Add an MCP server, retrieval service, or any process between agent and documents | S-18 |
 | Build a PDF → markdown converter, or add one as a dependency | S-08 |
+| Split, rewrite, summarize, or generate maps for ingested documents; add AI to ingest | S-25 |
 | Track compliance status — a feature declares `required` or `not-used`; `in-progress`, `implemented`, `verified` are ALM's job | S-14 |
 | Build conflict detection between specifications, in any form | S-15, I-8 |
 | Host or model licensed standards content (ISO, AUTOSAR, MISRA) | S-17 |

@@ -155,10 +155,11 @@ that half. Build it cheaply rather than lovingly.
 
 Note that S-18 already dissolved most of the build-versus-buy question by
 accident. With the filesystem as the interface, the descriptive layer reduces to
-*chunk, label, write markdown to disk* — there is no retrieval service to build
-or buy, because the deliverable is files. The question survives only for the
-deferred semantic tool and for ingest chunking, where the work is small and
-domain-specific.
+*validate headings, register unchanged Markdown with human-supplied labels,
+materialize the pinned file* (S-25). There is no retrieval service, chapter
+splitter, or map generator to build or buy. The agent searches and selectively
+reads the source document. The build-versus-buy question survives for deferred
+retrieval improvements.
 
 ---
 
@@ -230,15 +231,17 @@ from these; `DECISIONS.md` carries the reasoning for each.
 |---|---|---|
 | Agent orchestration, session or worktree management | Commodity, and where the platforms compete | S-01 |
 | Hardware-in-the-loop test execution or scheduling | A real problem; not the context layer | S-01 |
-| PDF to markdown conversion | Solved elsewhere and improving monthly | S-08 |
+| PDF to markdown conversion | Supplied externally; Caiman accepts prepared Markdown | S-08 |
+| Splitting, generated maps, summaries, or AI processing at ingest | Register one unchanged file with usable headings and document-level labels; evaluate navigation on real tasks | S-25 |
 | Requirements or compliance management | Caiman cites a requirement; it does not track whether you met it | S-14 |
 | Conflict detection between specifications | Precedence is declared, not computed. Inferring it means interpreting contracts | S-15 |
 | Hosting licensed standards (ISO, AUTOSAR, MISRA) | Licensing, and customer specifications are largely self-contained | S-17 |
 | Acting as an enforcement boundary | The human picks the agent; Caiman makes the choice consequential | S-19 |
-| A human-facing documentation browser | The consumer is an agent. An admin surface for curation is a different thing and is on the roadmap | D-09 |
+| A human-facing documentation browser | The consumer is an agent. Authoring uses an ingestion TUI in the MVP; a native macOS app is the future curation GUI | S-27 |
 | Bundling or redistributing vendor or customer documentation | Licensing, and it breaks the core design commitment | — |
 | Content-inspection-based confidentiality detection | Cannot work on this data (`SECURITY-MODEL.md` §4) | S-03 |
 | Interpreting version numbering | Varies per company; encoding one convention breaks the rest | S-10 |
+| A sync or merge system | Git already does this. The store is a git repository; Caiman wraps it, it does not reimplement it | S-22 |
 | Multi-user, team, or SSO features | No second user yet | — |
 
 ---

@@ -19,7 +19,7 @@ The system has four stages:
 
 | Stage | Input | Output |
 |---|---|---|
-| **Ingest** | Converted markdown plus asserted provenance | Immutable document versions with labels, locators, and a navigation map |
+| **Ingest** | One Markdown file plus human-supplied metadata | Immutable document version with unchanged content, document labels, and validated headings |
 | **Register** | Human declarations about hardware and programs | Immutable board versions and project versions |
 | **Resolve** | A project name and version | A complete, digest-pinned set of documents and structure |
 | **Materialize** | A pin set plus an agent name | A session workspace: a brief, a machine-readable structure file, and the documents |
@@ -67,6 +67,8 @@ Two consequences run through every section below:
 | G-5 | Make the choice of coding agent determine what material is available on disk |
 | G-6 | Add no process between the agent and the content |
 | G-7 | Integrate with any harness through a command-line interface, owning no part of session management |
+| G-8 | Configure a session at its start without the engineer remembering to run anything |
+| G-9 | Record which managed documents a session actually read |
 
 ## 4. Non-Goals
 
@@ -91,27 +93,31 @@ does not have.
 
 | ID | Requirement | Source |
 |---|---|---|
-| R-1 | Every chunk of ingested content carries a resolvable locator; content that cannot produce one is rejected at ingest | I-5 |
+| R-1 | Every document has usable heading paths; requirement-structured documents also contain declared requirement IDs; invalid input is rejected unchanged | I-5 |
 | R-2 | Labels are supplied at ingest from provenance and never derived from content | I-8, S-03 |
 | R-3 | Content that is neither public nor compartmented is materialized nowhere | I-1 |
 | R-4 | A project version resolves to a complete pin set, including everything its board version pins | S-07 |
 | R-5 | A bare board or project name returns the list of versions and does not resolve | I-7 |
 | R-6 | Resolution happens once per session and holds digests thereafter | I-4 |
-| R-7 | An agent name absent from the agent map causes `sync` to fail and write nothing | I-1, S-19 |
+| R-7 | `--mode` is required; omitting it causes `sync` to fail and write nothing | I-1, S-19 |
 | R-8 | The brief generator has no access to document content | I-6 |
 | R-9 | A generated brief contains no customer identity, only the program codename | I-6 |
 | R-10 | Lineage, precedence, and feature relationships are declared and rendered, never computed | I-8 |
 | R-11 | The materialized document set is complete; partial materialization is an error | I-9 |
 | R-12 | `grep` over the documents returns the whole truth — no symlinked directories, no silent omissions | I-9 |
+| R-13 | Hooks never deny a tool call and never fail a session | I-10, S-19 |
+| R-14 | The access log records document identities, never document content | I-10, I-6 |
+| R-15 | A session whose brief no longer matches its project version is told so at start | I-4 |
+| R-16 | A repository with no Caiman configuration has its sessions unaffected | — |
 
 ### 5.2 Constraints
 
 | Constraint | Consequence |
 |---|---|
-| Documents arrive already converted, by a tool Caiman does not control | Converter identity must be recorded; conversion quality is a risk to be traced, not prevented |
+| Documents arrive already converted, by a tool Caiman does not control | Optional converter provenance can help trace conversion defects; unknown provenance is accepted (S-26) |
 | A session harness writes plaintext copies of every file the agent reads, outside Caiman's control | Materialization is not revocable; see §11.4 and `harness.md` |
 | The consumer is an agent with a bounded context window | The brief must be an orientation document, not a data dump |
-| A 2,000-page reference manual is roughly 20 MB of markdown | Documents are split per chapter; no single file is readable whole |
+| A 2,000-page reference manual is roughly 20 MB of markdown | Keep the file whole; agents search and read selected ranges rather than loading the entire manual |
 | Version semantics differ per company | No parsing, ordering, or "latest" resolution anywhere in the system |
 
 ---
@@ -129,7 +135,7 @@ does not have.
   │ 1 INGEST  │                        │ 2 REGISTER                   │
   │ label     │                        │ boards (hardware)            │
   │ locate    │                        │ projects (programs)          │
-  │ map       │                        │ features                     │
+  │ hash      │                        │ features                     │
   └─────┬─────┘                        └───────────────┬──────────────┘
         │                                              │
         └───────────────────┬──────────────────────────┘
@@ -145,28 +151,35 @@ does not have.
                   └────────┬─────────┘
                            ▼
                   ┌──────────────────┐
-                  │ 5 MATERIALIZE    │  filtered by agent profile
+                  │ 5 MATERIALIZE    │  filtered by declared mode
                   └────────┬─────────┘
                            ▼
               <worktree>/.caiman/
                 project.md      brief, loaded into agent context
                 project.json    resolved structure, machine-readable
-                documents/      markdown and generated maps
+                documents/      unchanged Markdown files
                            │
                            ▼
               harness → coding agent (reads, greps, cites)
+                           │
+                           ├── SessionStart  → caiman session start
+                           ├── PostToolUse   → caiman session record
+                           └── Stop / SubagentStop → caiman session end
+                                       │
+                           ~/.local/state/caiman/audit/<session>.jsonl
 ```
 
 ### 6.2 Component responsibilities
 
 | Component | Owns | Does not own |
 |---|---|---|
-| **Ingest** | Splitting, labeling, locator validation, map generation | Conversion, classification decisions |
+| **Ingest** | Metadata validation, heading validation, hashing, unchanged-file registration | Conversion, splitting, maps, AI processing, classification decisions |
 | **Register** | Board and project models, features, precedence, lineage | Inferring any of them |
 | **Store** | Immutability, content addressing, compartment separation | Query, search, ranking |
 | **Resolve** | Name→digest, transitive pin set, version listing | Choosing a version on the user's behalf |
 | **Materialize** | Workspace assembly, agent filtering, linking, brief rendering | Session lifecycle, agent process |
-| **Harness** (external) | Asking which project and agent, worktree creation, launching | Deciding what an agent may see |
+| **Session integration** | Start-time configuration and staleness check; access recording | Blocking, resolving, or reading the store |
+| **Harness** (external) | Worktree creation, launching, publishing hook events | Deciding what an agent may see |
 
 ### 6.3 Why there is no server
 
@@ -185,8 +198,8 @@ highest-value normative capability in the system:
 
 ```
 grep -rn "REQ-FLASH-0142" .caiman/documents/
-  documents/oem-alpha/flash-spec@3.2/04-programming-session.md:212:REQ-FLASH-0142 …
-  documents/oem-alpha/deviations-falcon@2026-06/deviations.md:88:Amends REQ-FLASH-0142 …
+  documents/oem-alpha/flash-spec@3.2/document.md:212:REQ-FLASH-0142 …
+  documents/oem-alpha/deviations-falcon@2026-06/document.md:88:Amends REQ-FLASH-0142 …
 ```
 
 A single search returns the base requirement and the deviation that amends it.
@@ -203,75 +216,122 @@ revisiting.
 
 #### 6.4.1 Inputs and responsibilities
 
-Input is markdown already converted from the source document, plus asserted
-provenance: issuer, part or program, document type, document version, applicable
-silicon revisions, access labels, source checksum, and the identity and version
-of the converter.
+Input is **one UTF-8 Markdown file**, already prepared outside Caiman, plus
+human-supplied metadata: issuer, part or program, document type and version,
+applicable silicon revisions, and access labels. Original-source and converter
+information are optional. The ingestion TUI collects these fields; §6.4.3
+defines the form and `STORAGE.md` §6.4.1 defines their stored representation.
 
-Ingest owns five things:
+Ingest is registration, not document processing (S-25). It owns:
 
-1. **Splitting** into per-chapter files, preserving the document's own structure.
-   Register tables, bitfield descriptions, and individual requirements must not be
-   divided across file boundaries.
-2. **Labeling** — `public`, or one or more compartments. An input, recorded on
-   the artifact, never re-derived from content (R-2).
-3. **Locator validation** — see below.
-4. **Map generation** — see §6.4.3.
-5. **Admission** — reject documents that fail validation rather than storing
-   them with a warning.
+1. Validating required metadata and explicit whole-document access labels.
+2. Validating usable headings and, for requirement-structured documents, the
+   declared requirement-ID pattern (§6.4.2).
+3. Computing a digest of the exact input bytes and registering one content blob
+   and its immutable document manifest. No newline normalization or text edits.
 
-Conversion is deliberately outside the system (D-01, retired). Two consequences
-follow:
+There is no splitting, chunk model, generated outline or map, semantic tagging,
+summary generation, or AI dependency. The same human-supplied access label set
+covers the entire file. Caiman never derives labels from its content.
 
-**Converter identity is provenance, not trivia.** It answers "which documents
-went through which converter" when one is later found to have dropped content,
-and "which artifacts predate the current converter" when a better one arrives.
+PDF conversion and any cleanup happen externally. Optional converter provenance
+can help identify affected artifacts when a converter is found to drop content;
+without it that history is unknown. Do not require the source PDF to ingest. Compartmented material
+must be prepared with tools authorized for that material; ingest cannot undo an
+earlier disclosure (`SECURITY-MODEL.md` §7.2).
 
-**A compartmented document must be converted locally, and Caiman cannot enforce
-it.** By the time markdown reaches ingest, the source has already been wherever
-it was going to go. This is a documented user responsibility plus an ingest-time
-lint, not a pipeline property. See `SECURITY-MODEL.md`.
+#### 6.4.2 Usable headings and citations
 
-#### 6.4.2 Locators
+Every document, including a requirement-structured specification, must have
+usable headings. Admission is a deterministic Markdown-structure check:
 
-A citation is `(document identity, document version, locator)`. All three are
-required (G-2, R-1).
+- The first nonblank block must be a nonempty heading, so all content has a
+  heading path. A document title can supply the initial path.
+- Recognize Markdown headings through a parser, including ATX and Setext forms;
+  heading-like text inside code blocks is not a heading.
+- Each heading must have nonempty text and an unambiguous full ancestor path.
+  Repeated names under different parent paths are allowed; duplicate full paths
+  are rejected with source line numbers so the author can repair them externally.
+- Heading levels may skip numbers; the ancestor is the preceding heading of a
+  lower level. Caiman does not infer missing headings or semantic chapters.
 
-| Document kind | Locator | Properties |
-|---|---|---|
-| Requirement-structured — customer specifications | Requirement ID, e.g. `REQ-DIAG-0412` | Unique, greppable, stable within a release line, and durable across re-conversion |
-| Prose — reference manuals, datasheets, errata | Heading path, e.g. `§12.4.3 → LPSPI Control Register (CR)` | The floor. Survives conversion, where page boundaries frequently do not |
-| Any | Page number | Recorded *alongside* a locator when the conversion supplied one, never instead of one |
+Reject documents that fail these checks without registering a version or
+changing the input. Report the relevant locations and reasons. A title-only
+structure may pass mechanically but provide poor navigation: admission does not
+certify useful granularity, conversion fidelity, or technical correctness.
 
-Requirement IDs are durable in a way the alternatives are not: re-converting a
-document with a better tool preserves every existing citation, because the anchor
-is in the text rather than in the layout.
+A citation remains `(document identity, document version, locator)`:
 
-**Admission check.** A document whose content cannot produce a resolvable locator
-is rejected. A document declared requirement-structured is rejected unless
-requirement IDs appear matching its declared pattern. The reasoning is that
-content which cannot be cited cannot be used for firmware work, so storing it
-only creates a path to producing uncitable answers later.
+| Document kind | Locator |
+|---|---|
+| Reference manuals, datasheets, errata, other prose | Heading path in the unchanged source |
+| Requirement-structured specifications | Requirement ID, with headings still required for navigation |
+| Any | Source page number when preserved, alongside rather than instead of the locator |
 
-#### 6.4.3 Generated maps
+A document declared `requirement` must additionally supply a valid ID pattern
+and contain matching IDs. This is syntactic validation, not extraction of a
+requirements model or proof that every requirement survived conversion. No
+line-range-only citation fallback is introduced: line numbers help retrieve
+text, while headings and requirement IDs remain the citation locators (I-5).
 
-For each document, ingest emits a companion map as plain markdown: the heading
-tree, the requirement-ID ranges the document contains, and an index of register
-and identifier mentions. It is materialized alongside the document and is
-greppable like anything else.
+#### 6.4.3 Registration and reading workflow
 
-The map exists to serve the one query `grep` cannot: the engineer or agent knows
-the concept but not the identifier. A map provides a route from concept to
-identifier with no embedding model, vector store, or service. It costs one pass
-at ingest and it is inspectable when it produces a bad answer.
+**Select file → supply metadata → review → register.** The engineer reviews the
+document identity, version, applicability, and explicit access labels before
+local registration in a terminal UI (TUI), launched by `caiman ingest [markdown]`.
+The file argument is optional; without it the TUI asks for a file. On first
+launch, `caiman` and `caiman ingest` guide setup of a board and project; both can
+start with empty document lists (S-29). Subsequent ingestion reuses those
+configurations. Push remains a separate act with its own label review.
 
-**This is the weakest component in the design, and the evidence says so.**
-Published measurements on code retrieval put semantic search meaningfully ahead
-of `grep` alone for exactly this query class; S-18 records the numbers. The
-argument that this document set sits on the favorable side of that trade-off is that
-its identifiers are unique and unambiguous — `LPSPI1_CR`, `REQ-FLASH-0142` —
-where a codebase full of repeated names like `validate` is not. That argument is
-plausible and unverified. §15.2 states how it gets tested.
+The form has four steps:
+
+1. **File.** Select one Markdown file. Show its basename and heading-validation
+   results; do not ask for a second original-source filename.
+2. **Document.** Pick an existing project or board part to populate declared
+   metadata, or enter document identity manually. Offer creation of a new board
+   or project and return to the retained ingestion form. Enter document type,
+   version, and structure (`prose` or `requirement`). Project selection supplies
+   the program and compartment context; board-part selection supplies issuer,
+   part, and any declared silicon revision. Silicon revisions are optional when
+   not applicable or unknown; display that absence honestly. Show a required
+   ID-pattern field only for requirement-structured documents. Choose public
+   access or named compartments explicitly, with no preselected access label.
+3. **Optional provenance.** A skippable section for original-source checksum and
+   page count, and converter name, version, and hosted/local information. Each
+   may be left unknown. Never infer these from the filename or missing fields.
+4. **Review and register.** Show entered metadata and labels, unknown optional
+   fields, and the computed Markdown digest and size. Allow back/edit or cancel.
+   Register only on explicit submit; cancellation creates no document version
+   and does not repoint a ref. Report field errors inline and heading errors
+   with source locations, retaining entered values for correction.
+
+The TUI fills a manifest draft. Caiman supplies `original_filename` (the input
+Markdown basename), content digest and size, schema and pipeline versions, and
+ingestion timestamp. Source and converter fields are optional individually and
+as groups; omitted values stay absent, not invented or encoded as safe defaults.
+The input convention is that the Markdown retains the source basename; it is
+not proof of source identity and no separate source filename is stored.
+
+The TUI calls shared validation and registration logic rather than writing blobs
+or manifests itself. A future native macOS app will use the same operations and
+field rules (S-27). A noninteractive flag/sidecar format is not an MVP requirement;
+without an interactive terminal, explain that the TUI requires one and write
+nothing. Board/project creation uses the shared authoring workflow
+([AUTHORING.md](AUTHORING.md), S-28, S-29). Selecting a configuration during
+ingestion does not change its immutable document pins; adoption is an explicit
+configuration edit.
+
+The stored content is materialized as `document.md` under the versioned document
+directory. Preserve the original input filename as metadata. Agents search for
+identifiers, phrases, or existing headings and read bounded ranges around hits,
+including relevant qualifications. A several-hundred-page manual stays one file;
+its full contents need not enter the context window.
+
+No `_map.md` or other navigation artifact is generated. Concept-known,
+identifier-unknown queries remain an evaluation risk (§15.2). If the original
+headings are poor, the engineer prepares a corrected file externally and
+registers a new immutable version; Caiman does not repair it in place.
 
 ### 6.5 Register
 
@@ -405,9 +465,21 @@ digests.** Changing a label produces a new manifest digest over unchanged blobs,
 which is the signal the reclassification procedure in `SECURITY-MODEL.md`
 depends on.
 
-> The on-disk layout, manifest schemas, write ordering, garbage collection, and
-> the full storage rationale are specified in `STORAGE.md`. The backend decision
-> is `DECISIONS.md` D-02. This document does not repeat them.
+The store is kept off-machine in git: **one private repository holding the whole
+store**, compartments as directories inside it (S-22). GitHub has no per-directory
+read permission, and there is no second person to separate compartments from, so
+a repository boundary per compartment would cost real setup work for no benefit
+today. Per-compartment remote overrides exist for when that stops being true, and
+for a counterparty whose agreement forbids third-party storage.
+
+Git is transport and backup; the content-addressed layout remains the source of
+truth for immutability. Do not use branches or tags to express document, board,
+or project versions — that is the model S-02 rejected.
+
+> The on-disk layout, manifest schemas, write ordering, the git remote, garbage
+> collection, and the full storage rationale are specified in `STORAGE.md`. The
+> backend decision is `DECISIONS.md` S-22 and D-02. This document does not repeat
+> them.
 
 ### 6.7 Resolve
 
@@ -443,35 +515,34 @@ is written at commit time from what was actually loaded. Not built for the MVP.
 
 ```
 caiman sync --project falcon --version B-sample \
-            --agent claude-code --into .caiman/
+            --mode sealed --into .caiman/
 ```
 
 Two inputs produce two independent scopings that compose:
 
 - **The project** determines which compartments are in play.
-- **The agent profile** determines whether compartmented material may be written
-  at all.
+- **The mode** determines whether compartmented material is written at all.
 
-```toml
-# ~/.config/caiman/agents.toml
-[agent.claude-code]
-receives = "public"      # sends prompts to a third party
+| Mode | Materializes |
+|---|---|
+| `open` | Public documents only |
+| `sealed` | Everything the project version pins |
 
-[agent.codex-local]
-receives = "all"         # self-hosted model, no egress
-```
+**`--mode` is required and has no default** (R-7). Omitting it is an error, never
+an implicit `open`. There is no agent map, no profile lookup, and no policy file:
+the human states what this session gets, at the moment they know what model they
+are running and what the work touches. `SECURITY-MODEL.md` §5.3 records why the
+map that used to sit here was removed, and what that costs.
 
-The harness passes an agent **name**, not a policy decision. Caiman owns the map
-for four reasons, given in full in `SECURITY-MODEL.md`: one place to answer "what
-could this session see", an unknown name fails closed rather than receiving
-whatever the harness asserted (R-7), policy survives harness changes, and the
-brief can state the session mode truthfully because the same code computed it.
+An optional `--agent-label` is carried into the materialization log as an
+unverified annotation. It names the harness, not the model, and is not an input
+to the decision.
 
 The workspace layout, link mechanism, and the three materialization constraints
 are specified in `STORAGE.md` §7.3. In summary: documents are linked rather than
-copied, files are read-only, no symlinked directories appear in the documents tree, and a
-partial materialization fails rather than producing an incomplete document set (R-11,
-R-12).
+copied, files are read-only, no symlinked directories appear in the documents
+tree, and a partial materialization fails rather than producing an incomplete
+document set (R-11, R-12).
 
 `project.json` — the resolved structure, fully expanded — is why there is no
 `describe_feature` tool. The feature graph, precedence order, and pin set are a
@@ -528,9 +599,11 @@ Local model. Full document set for this program is available.
 2. OEM spec set 3.2
 
 ## Where things are
-Documents: .caiman/documents/ — grep them. Every document directory carries a `_map.md`
-listing its heading tree and requirement-ID ranges. Paths include the document
-version, so a grep hit is a citation.
+Documents: .caiman/documents/ — each document directory contains one unchanged
+`document.md`. Search identifiers or headings, then read the relevant line range
+and surrounding qualifications. Paths identify the document and version; cite
+the heading path or requirement ID as the locator. Do not read a whole manual
+into context. There are no generated maps.
 Resolved structure: .caiman/project.json
 
 ## Rules
@@ -577,16 +650,148 @@ no access to document content. It cannot leak restricted material even if someon
 later adds a summarization feature, because it cannot read any. Enforced by
 construction and by test, not by review.
 
+### 6.10 Session integration
+
+Caiman runs inside the session as well as before it, through the harness's own
+hook mechanism. Two jobs: configure the session at start, and record which
+managed documents were read.
+
+This does not reopen S-01. Caiman is not managing sessions; it is registering
+callbacks with a harness it does not own, at extension points that harness
+already publishes. `sync` is still the whole of what Caiman produces.
+
+#### 6.10.1 Boundary and coupling
+
+Hooks are **thin adapters over the CLI**. All logic lives in `caiman` commands;
+the adapter translates the harness's event format into a command invocation and
+its output back.
+
+This matters because hook mechanisms are harness-specific. Claude Code publishes
+`SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`, and `SubagentStop`; other
+harnesses have different shapes or none. Keeping logic in the CLI means
+supporting a second harness is a new adapter, not a second implementation — and a
+harness with no hooks degrades to the manual path (D-07) rather than breaking.
+
+| Layer | Owns | Harness-specific |
+|---|---|---|
+| `caiman session start`, `caiman session record`, `caiman session end` | All behavior | No |
+| Hook adapter | Event translation, stdin/stdout shape | Yes |
+
+#### 6.10.2 Session start
+
+On `SessionStart` the adapter calls `caiman session start` with the working
+directory and the harness's session identifier. Four outcomes:
+
+| State | Behavior |
+|---|---|
+| A valid `.caiman/project.md` exists and its digest still resolves | Confirm and inject the brief reference into context. Nothing to ask |
+| A `.caiman/` exists but the brief's project digest no longer matches what that project version resolves to | **Inject a staleness warning naming both digests.** A brief that disagrees with the workspace is the "right fact, wrong project" failure produced by the tool itself |
+| No `.caiman/` in this worktree | Inject the available projects and versions, and an instruction for the agent to ask the engineer **which project and which mode**, then run `caiman sync` |
+| Caiman not configured on this machine | Inject nothing. A repository without Caiman must not have its sessions disrupted |
+
+**The hook cannot prompt the engineer directly.** Hooks run non-interactively —
+stdin carries the event payload, not a terminal. So the hook injects context and
+the *agent* asks, which is the only path that works with the grain of the
+harness. Selection is conversational rather than a startup dialog, and the
+engineer answers both questions in their first message: which project, and
+whether this session is `open` or `sealed`.
+
+That the mode is asked rather than looked up is deliberate (S-19). The engineer
+answering knows which model this session is running; a configuration file written
+months ago does not.
+
+A per-worktree `.caiman/session.toml` records the last selection — project,
+version, and mode — so a resumed or repeated session in the same worktree does
+not ask again. It is a record of what was chosen, not policy: changing mode means
+re-running `sync`, which rewrites it.
+
+#### 6.10.3 Access recording
+
+On `PostToolUse`, the adapter calls `caiman session record` with the tool name
+and its inputs. If a path falls inside the session's `documents/` tree, one line
+is appended to the session's access log.
+
+`PostToolUse` rather than `PreToolUse` because the question is what was read, not
+what was attempted. `PreToolUse` is not used at all, which is deliberate — see
+§6.10.5.
+
+**Document identity comes from the path, not from the store.** The materialized
+path already encodes issuer, part, document type, and version (§6.8), so the hook
+derives identity with string parsing and never opens the store, never resolves,
+and never reads a manifest. This is what keeps it cheap enough to run on every
+tool call.
+
+```jsonl
+{"ts":"2026-09-14T11:02:19Z","session":"a3f9…","event":"read","tool":"Read",
+ "path":"documents/oem-alpha/flash-spec@3.2/document.md",
+ "document":"oem-alpha/flash-spec","version":"3.2","compartment":"oem-alpha"}
+```
+
+`Stop` and `SubagentStop` close the record with a summary: distinct documents
+read, per compartment. `SubagentStop` matters because a subagent's reads are
+still this session's reads; whether subagent tool calls raise `PostToolUse` in
+every harness configuration is **unverified** and must be checked before the
+access log is relied on (§15.1).
+
+#### 6.10.4 What the access log is and is not
+
+It is a **second layer** over the materialization log, not a replacement.
+
+| | Materialization log | Access log |
+|---|---|---|
+| Answers | What the session *could* read | What the session *did* read |
+| Produced by | `sync`, deterministically | Hooks, during the session |
+| Complete? | Yes | **No** — see below |
+| Depends on the agent cooperating? | No | Partly |
+
+Three ways a read escapes the access log:
+
+1. **`Bash` reads.** `PostToolUse` fires for `Bash`, but the payload is a command
+   string. Extracting which files a `cat`, `rg`, or shell script read is
+   heuristic at best and defeated by pipes and indirection. Log the command
+   verbatim and mark the entry `unresolved` rather than pretending to parse it.
+2. **Hooks not installed**, or installed for one harness and not another.
+3. **Anything outside the harness.** An editor, another process, a second tool.
+
+So: **absence of a record is not proof of non-access.** The access log is
+evidence, not an accounting. Stated plainly wherever it is used, because the
+opposite reading is the one that causes harm.
+
+What it genuinely buys is in `SECURITY-MODEL.md` §9: it converts harness
+transcript residue from an unbounded unknown into an enumerable list.
+
+#### 6.10.5 Hooks observe; they never block
+
+`PreToolUse` can deny a tool call. Caiman does not use it, and this is an
+invariant (I-10), not a current limitation.
+
+Blocking would make Caiman look like an enforcement boundary, which S-19 says it
+is not. It would also add nothing: differential materialization already means a
+document the session may not see is not on disk, so there is no read to deny.
+A gate positioned where nothing can pass is the "shape of a gate with none of the
+substance" the security model warns against.
+
+Two further rules follow from the same reasoning:
+
+**A hook failure never fails the session.** Logging is best-effort. A broken
+audit hook that halts work would be traded away within a week, which is worse
+than a log with gaps that is known to have gaps.
+
+**The access log records identities, never content.** Paths, document names,
+versions, compartments — the same metadata-only rule as the brief (I-6). An audit
+record containing an excerpt of a specification would be a copy of the
+specification in a file nobody thinks of as one.
+
 ---
 
 ## 7. Data Model
 
 ```
-Issuer ──< Part ──────< Document ──< DocumentVersion ──< Chunk *
-   │                        │              │                │
- vendor              issued_by        public | compartments  labels
- or OEM              part | program   silicon revs          locator
-                                      digest                (doc_id, digest)
+Issuer ──< Part ──────< Document ──< DocumentVersion ───> Blob
+   │                        │              │               │
+ vendor              issued_by        document labels    unchanged Markdown
+ or OEM              part | program   silicon revs       headings and IDs
+                                      manifest digest   content digest
 
 Board ──< BoardVersion ──< PartInstance ──> Part
               │     │            │
@@ -606,7 +811,8 @@ compartments      │  └──< Feature
                           scope: required | not-used
 ```
 
-`*` `Chunk` is under review as a stored entity — see §15.1.
+A document version references exactly one content blob. Labels belong to the
+document manifest; locators remain in the source text. No stored chunks (S-25).
 
 ### 7.1 Four independent version axes
 
@@ -634,7 +840,7 @@ axis with opaque labels and declared lineage expresses both.
 
 Adapted from Onyx's model (`onyx/access/models.py`, MIT-licensed):
 
-- A frozen label **set** per labeled unit, with an `is_public` flag
+- A frozen label **set** per document, with an `is_public` flag
 - Prefixed label strings to prevent namespace collisions — `compartment:`,
   `project:`, `part:` rather than bare values
 - One function generates labels for both write-time and filter-time (I-2)
@@ -658,10 +864,14 @@ under `ee/` and is **not** MIT-licensed: read for design, do not copy.
 ### 8.1 Adding a document
 
 1. The engineer converts a PDF with an external tool.
-2. `caiman ingest` validates locators, splits the markdown, generates the map,
-   and writes an immutable document version carrying the asserted labels and
-   converter identity.
+2. The engineer supplies metadata and whole-document labels, reviews the
+   registration summary, and runs `caiman ingest`. It validates usable headings
+   and any declared requirement-ID pattern, hashes the exact input bytes, and
+   registers one immutable document version without transforming the file.
 3. A ref maps `<issuer>/<part>/<doc_type>/<version>` to the new manifest digest.
+4. `caiman push` reviews labels, then publishes to that compartment's remote.
+   Separate and deliberate: step 3 is reversible, step 4 is not
+   (`STORAGE.md` §9.5).
 
 At this point nothing references the document. It becomes reachable when a board
 or project version pins it.
@@ -681,9 +891,9 @@ Both are complete snapshots. Both are immutable.
    `caiman project list` and `caiman project versions <name>`.
 2. The harness asks **which agent**, from the backends it can drive.
 3. The harness creates the worktree.
-4. The harness calls `caiman sync --project … --version … --agent … --into …`.
+4. The harness calls `caiman sync --project … --version … --mode … --into …`.
 5. Caiman resolves the project version to a complete pin set (§6.7).
-6. Caiman looks up the agent. **An unknown name fails here, and nothing is
+6. Caiman checks the mode. **A missing `--mode` fails here, and nothing is
    written** (R-7).
 7. Caiman materializes the permitted subset, writes `project.json`, writes
    `_index.md` recording what was omitted and why, and renders `project.md`.
@@ -694,9 +904,125 @@ and the boundary is a command-line call (G-7).
 
 ### 8.4 During the session
 
-The agent greps the documents, reads files, and cites by path plus locator. Caiman
-is not running. Nothing resolves, and nothing changes underneath the session
-(R-6).
+The agent greps the documents, reads files, and cites by path plus locator.
+Nothing resolves and nothing changes underneath the session (R-6).
+
+Caiman does run, in one narrow form: hook adapters fire on tool use and on stop,
+appending to the session's access log (§6.10.3). They read no store, resolve
+nothing, and never block. An earlier version of this document said "Caiman is not
+running"; that was true before session integration and is no longer accurate.
+
+### 8.5 First run, end to end
+
+The full planned path from nothing to a working session, with the steps that are
+**not yet specified** marked. Gap references are to §8.6. The implemented local
+entry point is `caiman`: set up a board and project first, then ingest documents.
+Remote and session commands below remain roadmap work.
+
+| # | Step | Command | Status |
+|---|---|---|---|
+| 1 | Create the store on this machine | `caiman init --remote <url>` | Specified (`STORAGE.md` §7.5) |
+| 2 | Create the private repository at the host | *manual, by design* | Specified. `init` prints the command; it does not create it |
+| 3 | Set up an initial board and project with empty document sets | `caiman` | Implemented; S-29 |
+| 4 | Convert externally, then select existing context and review document metadata | `caiman ingest manual.md` | Conversion out of scope (S-08); ingestion §6.4.3, S-26–S-29 |
+| 5 | Add a compartment | `caiman compartment add oem-alpha` | Specified. Local only |
+| 6 | Register customer specifications; explicitly select their compartments in the TUI | `caiman ingest specification.md` | §6.4.3 |
+| 7 | Adopt document pins into a board configuration | `caiman board configure [config.json]` | Manual editing implemented; [authoring workflow](AUTHORING.md), S-28 |
+| 8 | Adopt project document pins, features, precedence | `caiman project configure [config.json]` | Manual editing implemented; [authoring workflow](AUTHORING.md), S-28 |
+| 9 | Publish | `caiman push` | Specified (`STORAGE.md` §7.6) |
+| 10 | Install the harness hooks | `caiman hooks install` | Specified (§9.2) |
+| 11 | Start a session in a worktree | *harness* | Specified (§6.10.2) |
+| 12 | Agent asks which project and which mode; engineer answers | *conversation* | Specified |
+| 13 | Materialize the workspace | `caiman sync --project … --mode …` | Specified (§6.8) |
+| 14 | Work: read, grep, cite | *agent* | Specified |
+| 15 | Session ends; access log closed | *hooks* | Specified (§6.10.3) |
+
+And the recurring operations after first run:
+
+| Operation | Command | Status |
+|---|---|---|
+| Set up a second machine | `caiman clone --remote <url>` | Specified |
+| Pick up someone else's additions | `caiman pull` | Specified. **Gap C** — nothing reports what arrived |
+| Adopt a re-converted or newer document into a project | — | **Gap D.** The most common operation, and it has no command |
+| Check whether a workspace is current | — | **Gap E.** Only the session-start hook checks; no standalone command |
+| Verify store integrity | — | **Gap E** |
+
+### 8.6 Gaps in the end-to-end workflow
+
+None of these blocks the design. All of them block an implementation, and they
+are roughly in priority order.
+
+Two gaps in an earlier version of this section — agent identity, and what a
+second machine needs beyond the store — were **removed by S-19 dropping the agent
+map**, not solved. With no policy file there is no vocabulary to define, nothing
+to keep in sync across machines, and no name that can assert a falsehood about
+which model a session is running.
+
+#### Gap A — Ingestion input *(resolved by S-26 and S-27)*
+
+The MVP uses a TUI to fill and review the manifest metadata. §6.4.3 specifies
+steps, fields, defaults, errors, cancellation, and submission. Source and
+converter provenance are optional; the input filename is captured automatically.
+No sidecar file or lengthy flag list is required for ingestion.
+
+Widget layout and TUI library remain implementation choices. Shared registration
+logic must remain independent of terminal widgets so the future native macOS app
+can reuse it. This resolves document input, not board/project authoring below.
+
+#### Gap B — Board and project authoring input *(resolved by S-28)*
+
+Boards and projects use editable JSON drafts and a TUI over the same shared
+validation and registration operations. The UI has top-level fields plus JSON
+editors for nested collections. `AUTHORING.md` owns the implemented field and
+command contract, including template, configure, validate, show, export, and
+new-version workflows.
+
+Review resolves document references and the selected board version into immutable
+digest pins; registration revalidates the pinned objects without re-resolving
+mutable refs. A new version begins as a complete copy of a selected predecessor,
+with an explicitly supplied new label and relation. Only edits form the authoring
+delta; the stored result is always a complete snapshot.
+
+The TUI and config-file path both report validation errors without writing a
+version. Config-file import does not modify the input file. Explicit exports
+create private files and refuse to overwrite existing work. Detailed row editors
+may improve the nested JSON editing experience later; no second config format or
+GUI-specific validation layer is introduced.
+
+#### Gap C — Nothing reports what a pull brought
+
+`caiman pull` merges. There is no `caiman log` or diff to show which documents,
+board versions, or project versions arrived — and because refs are the only
+mutable thing, the answer is computable and cheap. Minor, but it makes the
+multi-machine story opaque in practice.
+
+#### Gap D — Adopting a newer document into a project
+
+The common operation, and it has no command.
+
+Re-converting a manual (`STORAGE.md` §2.2) produces a new manifest digest and
+repoints the ref. Every existing board and project version still pins the **old**
+digest, correctly and by design (I-4). Adopting the new one means cutting a new
+board version and then a new project version — a cascade the model requires and
+nothing automates.
+
+`SECURITY-MODEL.md` §8 step 3 names the same cascade for reclassification and
+flags it as "a real cost and the honest consequence of immutability". The
+mitigation recorded there is to make the CLI perform the cascade in one command
+so the cost is machine time rather than human decision. That command does not
+exist in the surface (§9.1). Without it, the friction lands on the operation
+people perform most, and the predictable outcome is stale pins.
+
+#### Gap E — No status or verification command
+
+There is no way to ask, outside a session, whether a workspace is current, what a
+project version resolves to, or whether the store is internally consistent —
+digests matching content, no manifest missing blobs, modes correct after a clone.
+
+The session-start hook checks staleness for its own worktree (§6.10.2) and
+`--dry-run` answers "what could this session see", but neither covers the store
+itself. `STORAGE.md` §8.2 specifies digest verification on read without a command
+that exercises it deliberately.
 
 ---
 
@@ -704,13 +1030,39 @@ is not running. Nothing resolves, and nothing changes underneath the session
 
 ### 9.1 Command-line surface
 
+The surface below includes planned store and session commands. Local ingestion
+and board/project authoring are implemented; see [AUTHORING.md](AUTHORING.md)
+for their current arguments and examples.
+
 ```
-caiman ingest <markdown…> --provenance …        add a document version
-caiman board   list | versions | show | version new
-caiman project list | versions | show | version new
-caiman sync --project P --version V --agent A --into DIR
+caiman                                        guided setup, then document ingestion
+caiman init [--remote URL]                      create a store on this machine
+caiman clone --remote URL                       join an existing store
+caiman compartment add <name> --remote URL      add an access boundary
+caiman compartment clone <name> --remote URL
+
+caiman ingest [markdown]                      open ingestion TUI; register locally
+caiman push [compartment…]                      publish to remotes, after review
+caiman pull [compartment…]                      fetch from remotes
+
+caiman documents [--compartment NAME]          list accessible documents
+caiman board   configure | template | validate | show | export | new-version
+caiman project configure | template | validate | show | export | new-version
+caiman sync --project P --version V --mode open|sealed --into DIR
 caiman brief --project P --version V            render only the brief
 ```
+
+Three groups, and the separation is deliberate:
+
+| Group | Commands | Moves what |
+|---|---|---|
+| Store lifecycle | `init`, `clone`, `compartment add/clone`, `push`, `pull` | The store, between machines |
+| Authoring | `ingest`, `board`, `project` | Content into the local store |
+| Session | `sync`, `brief` | The store into a workspace |
+
+`push`/`pull` are named separately from `sync` because they do a different job:
+`sync` builds a session workspace from the store, `push`/`pull` move the store
+itself. `push` is never automatic on ingest — see `STORAGE.md` §7.6 for why.
 
 `sync` is the integration point a harness calls. Two flags matter beyond the
 obvious:
@@ -718,9 +1070,28 @@ obvious:
 | Flag | Purpose |
 |---|---|
 | `--dry-run` | Prints what would be materialized without writing. This is how a human answers "what could this session see" |
-| `--agent` | Required. There is no default; omitting it is an error, not an implicit `public` |
+| `--mode` | Required. `open` or `sealed`. No default; omitting it is an error, not an implicit `open` |
 
-### 9.2 Workspace contract
+### 9.2 Hook contract
+
+Three commands, each reading a JSON event on stdin and writing optional JSON to
+stdout. The adapter is whatever glue the harness requires; these are stable.
+
+| Command | Fired on | Reads | Writes | May fail the session |
+|---|---|---|---|---|
+| `caiman session start` | Session start or resume | `cwd`, `session_id` | Context to inject: confirmation, staleness warning, or project choices | No |
+| `caiman session record` | After a tool call | `session_id`, `tool_name`, `tool_input` | Nothing | No |
+| `caiman session end` | Stop, SubagentStop | `session_id` | Nothing | No |
+
+`caiman hooks install` writes the adapter configuration into the harness's
+settings file. It prints exactly what it will add and requires confirmation,
+because it modifies a file Caiman does not own.
+
+Two properties are contractual, not incidental: **no command exits non-zero in a
+way that blocks a tool call** (R-13), and **`session record` performs no store
+access** (§6.10.3), because it runs on every tool call.
+
+### 9.3 Workspace contract
 
 The harness and the agent both depend on the workspace layout, so it is an
 interface rather than an implementation detail. It is specified in `STORAGE.md`
@@ -744,13 +1115,18 @@ the layers above it.
 
 | Condition | Behavior | Rationale |
 |---|---|---|
-| Agent name not in `agents.toml` | `sync` fails; nothing written | Fail closed. Defaulting to `public` would make an unconfigured backend silently work (R-7) |
+| `--mode` omitted | `sync` fails; nothing written | Fail closed. A default would let an unconsidered session silently receive whatever that default was (R-7) |
 | Bare project or board name | Return the version list; do not resolve | Resolving to "latest" against a frozen program is a compliance failure (R-5) |
 | Document produces no resolvable locator | Reject at ingest | Uncitable content creates a path to uncitable answers (R-1) |
 | Requirement-structured document lacks requirement IDs | Reject at ingest | The declared structure is part of the contract |
-| Any pinned file cannot be materialized | `sync` fails and names the file | A document set missing one chapter is indistinguishable, to an agent, from a document that never had it (R-11) |
-| Project pins a digest no longer in the store | `sync` fails and names the digest | Broken pin. See `STORAGE.md` §8.4 for why this should be impossible |
-| Map generation fails for a document | Materialize without the map; warn | The map is a navigation aid, not correctness-bearing. Failing the whole sync would be disproportionate |
+| Any pinned file cannot be materialized | `sync` fails and names the file | A document set missing one manual is indistinguishable, to an agent, from a document that never had it (R-11) |
+| Project pins a digest no longer in the store | `sync` fails and names the digest | Broken pin. See `STORAGE.md` §8.5 for why this should be impossible |
+| `push` to a remote that is not private | Hard error; nothing sent | One repository holds every compartment, so a public remote exposes all of them (`STORAGE.md` §7.6) |
+| `pull` brings a ref conflict | Fail; show both digests and document identities | Two machines repointed one name. Guessing would silently change what a name means |
+| A hook fails, times out, or Caiman is not installed | The session continues; nothing is logged | R-13. A broken audit hook that halts work gets removed within a week, which is worse than a log with known gaps |
+| `session start` finds a brief whose digest no longer resolves | Inject a staleness warning naming both digests; do not block | R-15. The agent and engineer decide whether to re-sync; blocking would be disproportionate |
+| `session record` receives a `Bash` call | Log the command verbatim, marked `unresolved` | Parsing which files a shell command read is heuristic and defeated by pipes. Recording the gap honestly beats a confident wrong answer |
+| Two sessions log concurrently | Separate files keyed by session id | No contention, no locking |
 
 ### 10.2 Edge cases worth naming
 
@@ -837,10 +1213,11 @@ enforcement boundary.
 
 | Operation | Cost driver | Notes |
 |---|---|---|
-| Ingest | Hashing and writing converted markdown | I/O bound, proportional to document size. Runs once per document version |
+| Ingest | Validating headings, hashing, and writing unchanged Markdown | I/O bound, proportional to document size. Runs once per document version |
 | Resolve | Reading one ref and tens of small JSON manifests | Negligible at the stated volume; this is why no index exists (D-10) |
-| Materialize | Number of files linked, not their size | CoW clones and hardlinks copy no bytes. A few thousand files is a few thousand syscalls |
+| Materialize | Number of files linked, not their size | CoW clones and hardlinks copy no bytes. One content file per document; cross-volume copying still scales with bytes |
 | Agent retrieval | `ripgrep` over the documents | No network hop, no embedding call, no ranking |
+| `session record` | One process spawn per tool call | The only Caiman code on a hot path. Constrained by design to string parsing plus an append — no store access, no resolution, no manifest read. **Measure it before shipping**; if process spawn alone proves too costly, batch at `Stop` from the transcript instead of hooking every call |
 
 The context budget is the resource that constrains design most tightly. The brief
 is paid for on every turn of every session, which is why it is an orientation
@@ -856,8 +1233,8 @@ Storage-level tests are in `STORAGE.md` §11. The security negative tests are in
 
 | ID | Test | Asserts |
 |---|---|---|
-| A-1 | Ingest a document whose content yields no locator | Rejected, not stored (R-1) |
-| A-2 | Ingest a `requirement` document with no requirement IDs | Rejected (R-1) |
+| A-1 | Ingest headingless content, content before the first heading, empty headings, duplicate full heading paths, and headings only inside code blocks | Invalid documents rejected with actionable locations (§6.4.2) |
+| A-2 | Ingest a `requirement` document with valid headings but missing or invalid ID pattern, or no matching IDs | Rejected (R-1) |
 | A-3 | Resolve a project version; compare against its manifest | Pin set includes everything the board pins, transitively (R-4) |
 | A-4 | Resolve a bare project name | Returns the version list; resolves nothing (R-5) |
 | A-5 | `sync` with an agent absent from the map | Fails; workspace not created (R-7) |
@@ -868,6 +1245,19 @@ Storage-level tests are in `STORAGE.md` §11. The security negative tests are in
 | A-10 | Materialize two project versions differing only in silicon revision; ask the same question | Corpora differ correspondingly |
 | A-11 | Walk a materialized document tree for symlinked directories | None (R-12) |
 | A-12 | Regenerate a workspace after repointing a document ref | The previously pinned digest still materializes (R-6, I-4) |
+| A-13 | Run `session start` in a worktree with no `.caiman/` | Injects project choices; does not fail, does not create anything |
+| A-14 | Run `session start` against a brief whose project digest was repointed | Injects a staleness warning naming both digests (R-15) |
+| A-15 | Run `session start` in a repository with no Caiman configuration | Injects nothing; exits zero (R-16) |
+| A-16 | `session record` for a read inside `documents/` | One access-log line with document, version, and compartment derived from the path |
+| A-17 | `session record` for a read outside `documents/` | Nothing logged |
+| A-18 | `session record` for a `Bash` call | Logged verbatim and marked `unresolved`, not silently dropped |
+| A-19 | Make every hook command fail | The session completes normally (R-13) |
+| A-20 | Grep an access log for content from any document it references | No document body text present (R-14) |
+| A-21 | Ingest valid ATX/Setext headings, skipped levels, and repeated names under distinct parents | Accepted without changing the input; heading paths resolve (§6.4.2) |
+| A-22 | Search a large materialized manual, read a bounded range, and cite a fact | Correct heading or requirement-ID citation without loading the entire file |
+| A-23 | Submit a valid TUI form with source and converter sections empty or partially filled | Unknown fields omitted; registration succeeds without the original source file (S-26) |
+| A-24 | Edit after review, cancel, or submit with missing labels/invalid fields | Edits are revalidated; cancellation and invalid input publish no version or ref; labels have no default (S-27) |
+| A-25 | Invoke ingestion without an interactive terminal | Actionable error; no writes (S-27) |
 
 A-9 is the test that covers the highest-value normative behavior, and A-12 covers
 the reproducibility property the whole pinning model exists for.
@@ -935,59 +1325,53 @@ intuition with a trigger.
 
 ### 15.1 Open questions
 
-**Does `Chunk` need to exist as a stored entity?** Chunks were introduced when
-the design included a semantic index and were the unit that index was built over.
-With S-18 there is no index, materialization is whole-document, and the agent
-greps markdown. Locators are carried natively by the format: headings are
-headings and requirement IDs appear in the text.
+**Document granularity is settled by S-25.** One unchanged Markdown file is one
+content blob; document-level labels and source headings replace the former
+chunk model. Splitting and generated maps are outside the MVP.
 
-If chunks are removed, labels attach per document rather than per chunk, and the
-admission check becomes document-level validation rather than a property of
-stored chunk records. That simplifies this data model, the wording of I-1, and
-the storage layout. The counter-argument is that chunk boundaries return if the
-deferred semantic tool is built — but chunking is deterministic and cheap, so it
-can be recomputed then.
+**Does `PostToolUse` fire for subagent tool calls?** `SubagentStop` exists, so
+subagents are visible at their boundary, but whether their individual tool calls
+raise `PostToolUse` in every harness configuration is unverified. If they do not,
+a subagent's reads are missing from the access log while the session appears
+fully recorded — the worst shape for an audit gap, because it looks complete.
 
-This changes the wording of an invariant and therefore needs its own decision.
-Tracked identically in `STORAGE.md` §13.1.
+Verify before the access log is relied on for anything. If coverage is partial,
+the honest fallback is to derive the log from the harness transcript at `Stop`
+rather than from per-call hooks, accepting higher latency for completeness.
 
 **Should the brief carry a session-scoped miss log path?** §15.2 depends on
-recording queries where grep and the maps both fail. Whether the agent can be
-asked to record them, or whether it must be inferred from harness transcripts, is
-undecided.
+recording queries where search and selective reading both fail. Whether the
+agent can be asked to record them, or whether it must be inferred from harness
+transcripts, is undecided.
 
-**Four interface formats are named but not specified.** Each is described by its
+**Three interface formats are named but not specified.** Each is described by its
 purpose and referenced by other components, but no schema or example exists.
-They are interfaces (§9.2), so leaving them implicit means two implementations
-could disagree.
+They are interfaces (§9.3), so leaving them implicit means two implementations
+could disagree. These are the output side; §8.6 covers the input side and the
+missing commands.
 
 | Format | Referenced by | What is missing |
 |---|---|---|
-| `project.json` | §6.8, §9.2, the brief's *Where things are* block | Schema. It is the resolved project structure "fully expanded", which is not a specification |
-| `_map.md` | §6.4.3, §9.2 | Layout of the heading tree, requirement-ID ranges, and identifier index. Its usefulness depends on being predictable enough to grep |
+| `project.json` | §6.8, §9.3, the brief's *Where things are* block | Schema. It is the resolved project structure "fully expanded", which is not a specification |
 | `_index.md` | §6.8, `STORAGE.md` §7.3 | Wording of omission entries. An agent must be able to distinguish "this project has none" from "this session may not see them" reliably, which is a format question |
-| Ingest provenance input | §6.4.1 | How a human asserts issuer, version, labels, and converter identity — CLI flags, a sidecar file, or an interactive prompt. This is the surface where a typo becomes a mislabeled document, so it bears on D-09 |
+| Access log schema | §6.10.3, `SECURITY-MODEL.md` §9 | The example line is illustrative. Field names, the `unresolved` marker, and the end-of-session summary shape need fixing before anything reads the log programmatically |
 
-None of these blocks the design. All four should be specified before the code
+None of these blocks the design. All three should be specified before the code
 that writes them, and `project.json` is the one to do first, because the agent
 reads it directly and `describe_feature` was dropped on the assumption that it
 would be sufficient.
 
-### 15.2 The generated-maps bet, and how it gets settled
+### 15.2 Source-document navigation, and how it gets evaluated
 
-The concept-known, identifier-unknown query is served by generated maps rather
-than by semantic search, and the published evidence does not clearly support that
-choice in general (§6.4.3). The argument is domain-specific and untested.
+The MVP relies on search and selective reading of unchanged documents, including
+their existing headings. It generates no maps. Exact-identifier lookup is the
+favorable case; concept-known, identifier-unknown questions remain unproven.
 
-The trigger for revisiting, stated so the decision is evidence-driven:
-
-> Build the deferred semantic tool when concept-known, identifier-unknown queries
-> defeat both `grep` and the generated maps, and this is observed more than
-> occasionally in real use. Record the misses; do not decide from intuition.
-
-`ROADMAP.md` carries the miss log as a phase-3 deliverable for this reason. If
-the trigger fires, `ByteAsk-Embedded-MCP` (MIT) has a pluggable backend seam and
-should be evaluated before writing a server.
+Record misses on real tasks. Revisit navigation or the deferred semantic tool
+when these queries defeat search and selective reading more than occasionally.
+Generated outlines or splitting would require a new decision rather than being
+silently added to ingest. `ROADMAP.md` includes the miss log; S-18 and D-03 keep
+semantic retrieval deferred.
 
 ### 15.3 Risks
 
@@ -995,7 +1379,11 @@ should be evaluated before writing a server.
 |---|---|---|
 | A deviation document without requirement IDs (§10.2) | The correlation behavior silently does not occur; the agent never learns a requirement was amended | Lint at ingest and report at registration, not during a session. D-12 tracks a structured alternative |
 | Hand-declared features drift from the program | The brief asserts something false, with authority | Author-by-delta means a new project version starts from its predecessor (S-11); the brief is regenerated per session and never hand-edited |
-| A converter silently drops content | Wrong facts that look right, with valid citations | Converter identity in provenance bounds the blast radius; locator and requirement-ID admission checks catch structural loss; spot-check a register table by hand on first use of any new converter |
-| Maps prove inadequate and the miss log is not implemented | The trigger in §15.2 cannot fire; the decision reverts to intuition | Implement the miss log with the rest of phase 3 |
+| A converter silently drops content | Wrong facts that look right, with valid citations | Converter provenance, when supplied, helps identify affected artifacts; heading and ID checks only validate structure, not completeness. Spot-check against the source outside ingest |
+| Source-document navigation proves inadequate and the miss log is not implemented | The trigger in §15.2 cannot fire; the decision reverts to intuition | Implement the miss log with the rest of phase 3 |
 | Harness residue (§11.4) | Materialization is not reversible | Out of scope here. Tracked in `harness.md`; the policy question belongs to `SECURITY-MODEL.md` |
+| Hook latency on every tool call (§12) | Perceptible slowdown across a whole session; pressure to remove the hooks | Constrain `session record` to string parsing and an append. Measure before shipping; fall back to transcript-derived logging at `Stop` if needed |
+| The access log is read as an accounting rather than as evidence | A false negative treated as proof a document was never read | State the incompleteness wherever the log is surfaced, not only in this document (§6.10.4) |
+| Subagent reads missing from the log | An audit gap that looks like completeness | Verify coverage before relying on it (§15.1) |
+| `hooks install` writes to a settings file Caiman does not own | Surprising edits to the engineer's configuration | Print the exact change and require confirmation (§9.2) |
 | Context budget growth in the brief | Every added line is paid on every turn of every session | Keep detail in `project.json` and the documents; treat brief size as a reviewed budget, not an incidental outcome |
