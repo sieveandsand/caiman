@@ -81,9 +81,15 @@ practice.
 
 ## 4. Landscape
 
-Surveyed 2026-08-20. **Re-run this before relying on it.** An earlier draft
-asserted that nobody was building the hardware documentation layer; that became
-false within months and stayed in the document until someone checked.
+Surveyed 2026-08-20, re-run 2026-09-16. **Re-run this before relying on it.** An
+earlier draft asserted that nobody was building the hardware documentation layer;
+that became false within months and stayed in the document until someone checked.
+
+The re-run changed three things: Embedder's published scope grew, silicon vendors
+began shipping agent interfaces themselves, and the context-file convention the
+brief imitates standardised (§4.3). Claims below about products are their own
+published descriptions gathered by search, not measured against a running system;
+treat scope figures as marketing until tried.
 
 ### 4.1 The question asked
 
@@ -99,6 +105,8 @@ models all three kinds of context? No.
 | `kicad-happy` / `kicad-sch-api` | ✓ design files | ✗ | ✓ design-side | ✗ | schematic only |
 | `AutonomousGuy` | ✗ ships standards | ✗ | ✗ | ✓ public standards only | none |
 | *Embedder* (not open source) | ✓ | ✓ | ✓ EDA-derived | ✗ | board |
+| *Microchip MCP server* (vendor-hosted) | ✗ its own catalogue | ✓ its own parts | ✗ | ✗ | vendor catalogue |
+| *Veecle*, *Embroid* (not open source) | ✗ | ✗ | ✓ target model | ✗ | execution target |
 
 "Agnostic" is the important cell. A general-purpose retrieval system ingests a
 datasheet, a schematic export, and a customer specification equally well — bytes
@@ -122,6 +130,32 @@ deployment. Several things an earlier draft claimed nobody was building, it
 builds — including a structural model derived automatically from EDA source,
 which is a better mechanism than a hand-maintained registry.
 
+As of the re-run Embedder publishes a catalogue of 500+ platforms across 13
+manufacturers and 5,500+ peripherals, with custom platforms addable. The shape of
+the claim has not changed — board context derived from native design files,
+covering components, nets, pin assignments, addresses and power topology — but the
+breadth has. It remains the closest thing to the structural half done as a
+product, and still shows no model of specification sets, program freeze,
+deviations, or per-counterparty compartmentation.
+
+**Silicon vendors are now shipping agent interfaces themselves.** Microchip
+publishes an MCP server serving product specifications, datasheets, inventory,
+pricing and lead times as JSON over streamable HTTP. This is a new axis. It does
+not compete with Caiman — it is the vendor's own catalogue, not your documents,
+with no board, program, or compartment — but it erodes the descriptive half from
+a direction the first survey did not consider, and it is free substrate if a
+vendor you use offers one. Watch whether this spreads; a vendor-served descriptive
+layer is strictly better than anyone's scraped copy of it, and S-18's no-server
+rule is about *Caiman* running a server, not about consuming someone else's.
+
+**The execution half is being served by others, which is S-01 working as
+intended.** Veecle argues an agent needs a target to run on and offers virtual
+chip instances reproducing peripheral registers, reset and clock behaviour;
+Embroid offers agents supervised access to real hardware; there are MCP servers
+that flash a thousand boards through PlatformIO, and `awesome-mcp-hardware`
+collects the rest. None of this is Caiman's job (S-01) and all of it composes with
+a materialized workspace.
+
 **`ByteAsk-Embedded-MCP`** (MIT) is the closest open-source analogue to the
 document half: a source-grounded, page-cited retrieval server for coding agents
 writing firmware. What is open is the server shell; the corpus and retrieval
@@ -140,14 +174,63 @@ Not related despite the name collision: GitHub's `spec-kit` is *spec-driven
 development* — you author a specification for the feature you are building. That
 is the opposite direction from conforming to a customer's binding specification.
 
-### 4.3 What the landscape settles
+### 4.3 The context-file convention
+
+The brief is an instance of a convention that standardised between the two
+surveys, and it is worth knowing its rules because they were learned expensively
+by a much larger community.
+
+`AGENTS.md` is now the cross-tool form of `CLAUDE.md`, read by Claude Code,
+Cursor, Copilot and others. Three properties matter here:
+
+- **Deliberately schema-less.** Plain Markdown, no required fields. The file *is*
+  the context, so structure would only add friction.
+- **Cascading.** Global, then project, then folder, so an agent loads only the
+  rules covering what it is touching.
+- **Budgeted.** Practitioner guidance converges on roughly 150 lines, because the
+  file is re-sent on every turn and each wasted line dilutes the rest. An
+  empirical study of 2,303 context files across 1,925 repositories exists
+  (arXiv 2511.12884) for anyone wanting evidence rather than folklore.
+
+`llms.txt` is the nearest precedent for the document half: a map of what
+documentation exists, served for agents to orient against, with the documents
+fetched on demand. Anthropic, Cloudflare, Stripe and Vercel publish one. It is
+used almost entirely for software documentation — **no semiconductor vendor was
+found publishing one**, which is the same hole the rest of this section describes.
+
+Two consequences.
+
+**The schema is not a divergence from the convention.** Board and project
+configurations are the *source* a brief is generated from, not the context the
+agent reads. What must stay prose and unstructured is the brief itself. Stated
+positively: `AGENTS.md` is hand-written and mutable; Caiman generates the same
+artifact from declared, versioned, compartmented data with pinned digests. That
+sentence is a better one-line description of the project than "a documentation
+layer".
+
+**The 150-line budget is an external check on I-6.** Every field added to the
+board schema competes for it, which is a cost `DECISIONS.md` D-13 should weigh
+before the schema grows.
+
+Across everything surveyed, in both runs, three absences are consistent and none
+of them has moved:
+
+- **Nothing is versioned or pinned.** `AGENTS.md` is a mutable file in git,
+  `llms.txt` is a live URL, and EDA-derived context reflects whatever the design
+  files say today. No content addressing anywhere; I-4 has no counterpart.
+- **Nothing is compartmented.** No format or product carries an NDA boundary.
+- **Nothing is normative.** All of it is descriptive and structural.
+
+### 4.4 What the landscape settles
 
 **The documents are a solved problem; the model is not, and that is the whole
 project.** This is the sentence to return to when scope feels uncertain.
 
 **The brief mechanism is commodity, and that is fine.** `AGENTS.md` is an open
 format used by tens of thousands of projects, with generators that scan a repo
-and emit one. The value is entirely in *what goes in the file*.
+and emit one. The value is entirely in *what goes in the file* — and, the re-run
+adds, in the fact that Caiman's is generated from pinned, versioned, compartmented
+declarations rather than hand-maintained (§4.3).
 
 **The descriptive layer is substrate, not moat.** If an MIT-licensed server doing
 page-cited firmware retrieval adds bring-your-own-documents, it covers most of

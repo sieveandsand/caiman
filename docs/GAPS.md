@@ -75,12 +75,15 @@ Suggested starting order: **G01, G06, G13, G17, G23, G25**.
 - [x] **G13 — Specify board and project authoring.** [Authoring guide](AUTHORING.md)
   and S-28 define and implement TUI plus JSON drafts, shared validation, review,
   local registration, export, and deriving a new complete snapshot. S-29 adds
-  guided initial setup and reusable context selections during ingestion. Remote
+  board/project creation from the home screen and choosing existing configurations
+  during ingestion, with no default selection. Remote
   publication and automated document-adoption cascades remain separate work.
 - [ ] **G14 — Decide import paths from existing engineering sources.** Identify
   the first useful schematic export and requirements-baseline input, their
   ownership, and how imported data would be reviewed. Either scope an import path
-  or explicitly accept and measure manual duplication for the MVP.
+  or explicitly accept and measure manual duplication for the MVP. D-13 surveys
+  what industry board descriptions carry and what they omit, and drafts the board
+  schema changes that survey implies.
 - [ ] **G15 — Specify document adoption and version cascades.** Define the
   behavior of the roadmap's adoption command, including affected board/project
   versions, review of the proposed changes, failure behavior, and preservation of

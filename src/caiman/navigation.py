@@ -7,7 +7,10 @@ from textual.reactive import reactive
 from textual.widgets import Input, OptionList, Select, Static, TextArea
 
 
-class NavigationApp(App):
+class NavigationApp(App, inherit_bindings=False):
+    """Vim keys are the only navigation: no Ctrl+Q, Footer, or command palette."""
+
+    ENABLE_COMMAND_PALETTE = False
     editing = reactive(False)
     BINDINGS = [
         Binding('h', "vim_move('h')", 'Previous', priority=True, show=False),

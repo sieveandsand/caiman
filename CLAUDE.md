@@ -233,11 +233,13 @@ Say so wherever the log is surfaced.
 The implementation is a Python package under `src/caiman/`: `cli.py`, `tui.py`,
 `ingest.py`, `models.py`, and `store.py` for documents; `configuration.py`,
 `config_store.py`, `config_files.py`, and `config_tui.py` for board/project
-authoring; `onboarding.py` and `workflow.py` for initial setup, the home screen,
-and local authoring selections; `dashboard_actions.py` for interactive edit,
-file, and catalog actions; `navigation.py` for shared Vim-style form and
+authoring; `onboarding.py` and `workflow.py` for board/project creation, the home
+screen, and remembered access groups (never a default board or project);
+`dashboard_actions.py` for choosing a configuration and interactive edit, file,
+and catalog actions; `navigation.py` for shared Vim-style form and
 dashboard controls; `board_gallery.py`, `board_edit.py`, and `external_editor.py`
-for board cards and reviewed Vim edits; `theme.py` for shared appearance. Tests live
+for board cards and reviewed Vim edits; `theme.py` for shared appearance and
+`mascot.py` for the half-block pixel-art caiman on the home screen. Tests live
 under `tests/`.
 Python and Textual are implementation choices for local authoring;
 the shared core does not depend on terminal widgets. The conceptual component

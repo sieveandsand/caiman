@@ -1,6 +1,5 @@
 """The board gallery shows complete snapshots and returns exact editor selections."""
 
-from copy import deepcopy
 
 import pytest
 from textual.widgets import Static
@@ -51,10 +50,12 @@ async def test_gallery_two_columns_complete_parts_and_keyboard_edit(tmp_path):
             for index in range(count):
                 assert f'role-{index:02d}' in text
                 assert f'synthetic/chip-{index}' in text
-                assert f'Reference: U{index + 1}' in text
-            assert 'Silicon: mask-A' in text
+                assert f'Ref U{index + 1}' in text
+            assert 'Silicon mask-A' in text
             assert f'Parts ({count})' in text
-            assert 'Version: A' in text
+            # The logo spells the version too, but an opaque label must also
+            # appear as literal text (CLAUDE.md I-7).
+            assert 'Version A' in text
         await pilot.press('l', 'e')
     assert app.return_value['digest'] == beta['digest']
     assert app.return_value['digest'] != alpha['digest']
@@ -63,27 +64,18 @@ async def test_gallery_two_columns_complete_parts_and_keyboard_edit(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_gallery_retains_archived_selected_snapshot(tmp_path):
+async def test_gallery_marks_no_board_as_current(tmp_path):
+    """There is no default board: every card is an equal choice."""
     root = tmp_path / 'store'
-    original = register_board(root)
-    changed = deepcopy(original['manifest'])
-    changed['parts'][0]['part'] = 'synthetic/replacement'
-    service = ConfigurationService(Store(root))
-    service.register(service.prepare('board', changed))
-    app = BoardGalleryApp(root, selected=original)
+    register_board(root, 'alpha')
+    register_board(root, 'beta')
+    app = BoardGalleryApp(root)
     async with app.run_test(size=(80, 30)) as pilot:
         await ready(pilot, app)
         cards = list(app.query(BoardCard))
         assert len(cards) == 2
-        assert cards[0].region.x == cards[1].region.x
-        assert cards[1].region.y > cards[0].region.y
-        selected = app.focused
-        assert isinstance(selected, BoardCard)
-        assert selected.record['digest'] == original['digest']
-        assert 'Pinned snapshot' in selected.label.plain
-        assert 'synthetic/chip-0' in selected.label.plain
-        await pilot.press('enter')
-    assert app.return_value['digest'] == original['digest']
+        assert app.focused is cards[0]
+        assert not any('Current selection' in card.label.plain for card in cards)
 
 
 @pytest.mark.asyncio
@@ -136,3 +128,35 @@ async def test_different_height_cards_navigate_by_grid_row(tmp_path):
         assert app.focused.record['manifest']['board'] == 'gamma'
         await pilot.press('k')
         assert app.focused.record['manifest']['board'] == 'alpha'
+
+
+def test_board_cards_use_a_registered_dotted_border():
+    """Textual ships no dotted border, so Caiman registers one.
+
+    Registration reaches into Textual internals and falls back to the built-in
+    dashed border if they move. That fallback must never pass silently: this is
+    where a Textual upgrade gets noticed.
+    """
+    from textual._border import BORDER_CHARS
+    from textual.css.constants import VALID_BORDER
+
+    from caiman.theme import DOT, DOT_BORDER
+
+    assert DOT_BORDER == 'dotted', 'Textual internals moved; the border degraded to dashed'
+    assert 'dotted' in VALID_BORDER
+    assert BORDER_CHARS['dotted'] == ((DOT, DOT, DOT), (DOT, ' ', DOT), (DOT, DOT, DOT))
+    # Latin-1, so it renders in any terminal font — unlike Braille or block dots.
+    assert DOT.encode('latin-1') == b'\xb7'
+    assert f'border: {DOT_BORDER} ' in BoardGalleryApp.CSS
+
+
+@pytest.mark.asyncio
+async def test_board_card_text_is_left_aligned(tmp_path):
+    """Button centres its label by default; a card is a left-aligned document."""
+    root = tmp_path / 'store'
+    register_board(root, 'alpha', parts=2)
+    app = BoardGalleryApp(root)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await ready(pilot, app)
+        card = next(iter(app.query(BoardCard)))
+        assert card.styles.text_align == 'left'

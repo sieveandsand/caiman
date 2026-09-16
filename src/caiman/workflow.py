@@ -1,4 +1,4 @@
-"""Interactive launcher and explicit, private authoring preferences."""
+"""Interactive launcher and private, explicitly chosen access-group preferences."""
 
 from copy import deepcopy
 import json
@@ -15,15 +15,16 @@ def load_state(root: Path) -> dict:
     store = Store(root)
     path = store.root / STATE_FILE
     if not path.exists() and not path.is_symlink():
-        return {'context': {}, 'authorized_compartments': []}
+        return {'authorized_compartments': []}
     state = json.loads(store._read(path))
-    if not isinstance(state, dict) or set(state) != {'context', 'authorized_compartments'}:
+    # Older files also held a remembered board/project; there is no default
+    # selection any more, so that key is accepted and dropped.
+    if not isinstance(state, dict) or set(state) - {'context'} != {'authorized_compartments'}:
         raise StoreError('Invalid local authoring state')
     scopes = state['authorized_compartments']
-    if (not isinstance(scopes, list) or any(not valid_identifier(s) or s == 'public' for s in scopes)
-            or not isinstance(state['context'], dict) or set(state['context']) - {'board', 'project'}):
-        raise StoreError('Invalid local authoring context or explicit compartments')
-    return state
+    if not isinstance(scopes, list) or any(not valid_identifier(s) or s == 'public' for s in scopes):
+        raise StoreError('Invalid local authoring explicit compartments')
+    return {'authorized_compartments': scopes}
 
 
 def save_state(root: Path, state: dict) -> None:
@@ -31,101 +32,57 @@ def save_state(root: Path, state: dict) -> None:
     store._atomic_write(store.root / STATE_FILE, canonical_json(state), immutable=False)
 
 
-def remember_context(state: dict, context: dict) -> None:
-    state['context'] = {}
-    for kind, selection in context.items():
-        manifest = selection['manifest']
-        state['context'][kind] = {'name': manifest[kind], 'version': manifest['version'],
-                                 'digest': selection['digest'],
-                                 'compartment': 'public' if kind == 'board' else manifest['compartments'][0]}
-    project = context.get('project')
-    if project:
-        scopes = set(state['authorized_compartments'])
-        scopes.update(project['manifest']['compartments'])
-        state['authorized_compartments'] = sorted(scopes)
-
-
-def _validated_context(root, state):
-    from .config_store import ConfigurationService
-
-    service = ConfigurationService(Store(root))
-    result = {}
+def remember_compartments(root: Path, state: dict, selections) -> None:
+    """Remember access groups of explicitly chosen projects; never which project."""
     scopes = set(state['authorized_compartments'])
-    for kind, selection in state['context'].items():
-        if not isinstance(selection, dict) or set(selection) != {'name', 'version', 'digest', 'compartment'}:
-            raise StoreError('Invalid saved configuration selection')
-        stored = service.load_digest(kind, selection['digest'], compartment=selection['compartment'], compartments=scopes)
-        if stored[kind] != selection['name'] or stored['version'] != selection['version']:
-            raise StoreError('Saved selection does not match its pinned configuration')
-        result[kind] = {'manifest': stored, 'digest': selection['digest']}
-    if 'project' in result and 'board' not in result:
-        pin = result['project']['manifest']['board']
-        result['board'] = {'manifest': service.load_digest('board', pin['digest']), 'digest': pin['digest']}
-    return result
+    for selection in selections:
+        manifest = (selection or {}).get('manifest', {})
+        if 'project' in manifest:
+            scopes.update(manifest['compartments'])
+    if scopes != set(state['authorized_compartments']):
+        state['authorized_compartments'] = sorted(scopes)
+        save_state(root, state)
 
 
 def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -> int:
+    """Home screen loop. Every action names its board or project; none is remembered."""
+    from .dashboard_actions import run_dashboard_action
     from .onboarding import LauncherApp, SetupApp
     from .tui import IngestApp
 
     state = load_state(root)
-    context = _validated_context(root, state)
-
-    def select(kind, *, create=False):
-        selection = SetupApp(kind=kind, store_root=root, board=context.get('board'),
-                             compartments=state['authorized_compartments'], create=create).run()
-        if selection is None:
-            return False
-        context[kind] = selection
-        if kind == 'project':
-            from .config_store import ConfigurationService
-            service = ConfigurationService(Store(root))
-            board_pin = selection['manifest']['board']
-            board = service.load_digest('board', board_pin['digest'])
-            context['board'] = {'manifest': board, 'digest': board_pin['digest']}
-        remember_context(state, context)
-        save_state(root, state)
-        return True
-
-    # A cancelled project step leaves a saved board, so the next launch resumes.
-    for kind in ('board', 'project'):
-        if kind not in context and not select(kind):
-            return 0
-
     action = 'ingest' if ingest else None
     ingest_state = None
+    ingest_context = {}
     while True:
         if action is None:
-            action = LauncherApp(context=context).run()
+            action = LauncherApp().run()
         if action is None or action == 'quit':
             return 0
-        if action in {'create-board', 'create-project', 'select-board', 'select-project'}:
-            select(action.split('-')[1], create=action.startswith('create-'))
-            action = 'ingest' if ingest_state is not None or ingest else None
+        if action in {'create-board', 'create-project'}:
+            kind = action.split('-')[1]
+            selection = SetupApp(kind=kind, store_root=root, board=ingest_context.get('board')).run()
+            if selection is not None:
+                ingest_context[kind] = selection
+                remember_compartments(root, state, [selection])
+            action = 'ingest' if ingest_state is not None else None
             continue
         if action != 'ingest':
-            from .dashboard_actions import run_dashboard_action
-            changes = run_dashboard_action(action, root, context, state['authorized_compartments'])
-            if changes:
-                context.update(changes)
-                remember_context(state, context)
-                save_state(root, state)
+            remember_compartments(root, state, [run_dashboard_action(action, root, state['authorized_compartments'])])
             action = None
             continue
         result = IngestApp(store_root=root, source_path=source_path,
-                           state=ingest_state, context=context,
+                           state=ingest_state, context=ingest_context,
                            authorized_compartments=state['authorized_compartments']).run()
+        ingest_state, ingest_context = None, {}
         if isinstance(result, dict):
-            if 'context' in result:
-                context.update(result['context'])
-                remember_context(state, context)
-                save_state(root, state)
-                context = _validated_context(root, state)
+            remember_compartments(root, state, result.get('context', {}).values())
+            # Inline creation hands the form's values and choices back afterwards.
             if result.get('action') in {'create-board', 'create-project'}:
-                ingest_state = result.get('ingest_state')
+                ingest_state = result['ingest_state']
+                ingest_context = deepcopy(result.get('context', {}))
                 action = result['action']
                 continue
         if ingest:
             return 0
-        ingest_state = None
         action = None

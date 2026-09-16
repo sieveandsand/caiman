@@ -8,9 +8,9 @@ Target: a working MVP in roughly six weeks, single-engineer scope.
 
 **Implementation checkpoint (2026-09-15):** local document ingestion and
 board/project configuration are implemented with TUIs, editable JSON drafts,
-validation, immutable pins, and local version registration. First launch guides
-board/project setup; ingestion reuses existing configurations or offers creation
-(S-29). Phase 1 is not
+validation, immutable pins, and local version registration. The home screen
+creates boards and projects without a default selection; ingestion reuses
+existing configurations or offers creation (S-29). Phase 1 is not
 complete: Git initialization, remote review/push/pull/clone, and multi-machine
 validation remain. Phase 2 still needs automated adoption cascades, status/verify,
 and briefs; session integration remains Phase 3. README.md and AUTHORING.md

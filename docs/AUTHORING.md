@@ -17,25 +17,25 @@ The config keys `compartments` and `compartment`, and the CLI flag
 groups; existing files and commands remain compatible. Architecture and storage
 documents also use the internal term *compartment*.
 
-## First launch
+## Launch
 
 ```bash
 caiman
 ```
 
-Caiman guides you through setting up a board and a project before ingesting
-documents. Start with the board's identity, version, and hardware part; then
-declare the project's codename, version, customer, access groups, and specification
-set, using the selected board. Review before registering. Manuals and
+Caiman opens the home screen. There is no default board or project: every action
+that works on one asks which, each time. **Create board** takes the board's
+identity, version, and first hardware part. **Create project** takes the codename,
+version, customer, access groups, and specification set, and you choose the
+registered board version it uses. Review before registering. Manuals and
 specifications can be added later: the initial document lists may be empty.
-Existing configurations can be selected instead of recreated.
 
-`caiman ingest manual.md` also runs setup when needed, then continues with that
-file. Subsequent launches reuse the saved authoring context. Catalog access-group
-choices are remembered locally; you can explicitly select additional access groups
-to find other projects. Caiman does not discover private projects by scanning
-undeclared access groups. These authoring preferences do not select an agent
-session mode.
+`caiman ingest manual.md` opens the document form directly. Access groups of
+projects you explicitly choose are remembered locally, so project lists can
+include them next time; you can enter additional groups to find other projects.
+Caiman does not discover private projects by scanning undeclared access groups,
+and it never remembers which board or project you used. These preferences do not
+select an agent session mode.
 
 During ingestion, choose an existing project or board and its part to reuse
 declared metadata. You can create a new board or project from the same flow and
@@ -68,9 +68,12 @@ previous review. Cancellation before registration writes nothing to the store.
 The complete resolved JSON is available in an expandable review panel.
 
 The home screen is the primary human interface. Its grid offers document
-ingestion and browsing, plus board/project creation, selection, viewing, editing,
-JSON import, export, validation, and templates. Direct commands remain available
-for scripts and agent tooling; interactive commands still require a terminal.
+ingestion and browsing, and for boards and projects just two tiles each:
+**Create** and **View**. Editing starts from what you are viewing: press **e**
+on a board card, or on a project snapshot after choosing it. JSON import, export,
+validation, and templates are available as direct commands (below), which also
+serve scripts and agent tooling; interactive commands still require a terminal.
+Home tiles are drawn with the same dotted border as board cards.
 
 ### Keyboard navigation
 
@@ -86,12 +89,17 @@ press Escape first to use it for navigation. Leaving a form does not register
 unsubmitted changes, and cannot interrupt a registration already being written.
 In dropdown menus, **j/k** move through choices, **Enter/l** selects, and
 **Escape/h** closes the menu. Tab and Shift+Tab also move between controls.
-Ctrl+R reviews a configuration; Ctrl+Q cancels or closes.
+These keys are the whole scheme: there are no Ctrl shortcuts, and the only prompt
+at the bottom of each screen is the mode hint.
 
-The shared terminal theme uses a pure black canvas, warm orange accents, muted
-secondary text, and clearly outlined fields with a subtle fill and orange
+The shared terminal theme takes its colours from a real caiman: a pure black
+canvas, bright green accents, muted reed-coloured secondary text, and
+clearly outlined fields with a subtle fill and green
 focus borders. Labels sit directly above their fields; a divider separates the
-form from its navigation buttons. The future native macOS app can reuse the
+form from its navigation buttons. The home screen's top-right corner carries a
+solid green pixel-art caiman drawn with half-block characters (two square pixels per
+cell), with a raised eye, a smile, and four legs mid-stride.
+It hides on terminals too narrow or too short to fit it without crowding the tiles. The future native macOS app can reuse the
 same core without importing terminal widgets.
 
 ## Work with a config file
@@ -198,10 +206,12 @@ adopts a newer document or board revision.
 
 ### Board cards and Vim editing
 
-**View board** opens a grid of registered board versions. Each card has a dotted
-name/version logo and the complete parts list, including declared silicon
-revisions, schematic references, and document counts. The current pinned board
-remains visible even if its version label has since moved. Narrow terminals use
+**View board** opens a grid of registered board versions, each card drawn in a
+dotted border. A card gives the board name, its version, the store digest, and
+the complete parts list, including declared silicon revisions, schematic
+references, and document counts. Each part takes two lines: role and part number,
+then its revision, reference, and document count. No card is marked as current;
+there is no default board. Narrow terminals use
 one column; Page Up/Down scroll cards with long parts lists.
 
 Use `hjkl` to select a card and **Enter** or **e** to open its JSON configuration
@@ -219,8 +229,9 @@ version, edit the version label and declare any desired lineage in the draft.
 
 ### Configuration forms and direct commands
 
-Use the home screen's board or project **Edit** action to modify the selected
-configuration. Choose a new version label and explain its relationship to the
+Open **View projects**, choose a project, and press **e** (or select **Edit**)
+on its snapshot. Boards are edited from the board grid in Vim, described above.
+In the project form, choose a new version label and explain its relationship to the
 previous version, or explicitly choose to replace the selected version's ref.
 The editor opens the complete snapshot, including its existing digest pins.
 Review the changes before registering. Editing a board does not automatically

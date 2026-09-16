@@ -22,29 +22,55 @@ def test_new_version_requires_distinct_label_and_declared_reason(version, relati
         revision_draft({'version': 'old'}, mode='new', version=version, relation=relation)
 
 
-def test_edit_cancel_does_not_return_context_update(tmp_path, monkeypatch):
+@pytest.mark.parametrize('action', ['edit-board', 'export-project', 'template-board', 'validate-project'])
+def test_removed_home_actions_are_unknown(tmp_path, monkeypatch, action):
     import caiman.dashboard_actions as actions
-    class Cancel:
+    shown = []
+    class Viewer:
         def __init__(self, **kwargs):
-            pass
+            shown.append(kwargs)
         def run(self):
             return None
-    monkeypatch.setattr(actions, 'RevisionApp', Cancel)
-    context = {'board': {'manifest': {'board': 'demo', 'version': 'v1'}, 'digest': 'sha256:' + 'a' * 64}}
-    assert run_dashboard_action('edit-board', tmp_path, context, []) is None
+    monkeypatch.setattr(actions, 'ViewerApp', Viewer)
+    assert run_dashboard_action(action, tmp_path / 'store', []) is None
+    assert 'Unknown' in shown[0]['content']
+    assert not (tmp_path / 'store').exists()
 
 
-def test_board_edit_updates_only_board_selection(tmp_path, monkeypatch):
+def test_view_project_cancel_writes_nothing(tmp_path, monkeypatch):
+    import caiman.dashboard_actions as actions
+    class Choose:
+        def __init__(self, **kwargs):
+            assert kwargs['kind'] == 'project'
+        def run(self):
+            return None
+    monkeypatch.setattr(actions, 'ChooseApp', Choose)
+    assert run_dashboard_action('show-project', tmp_path / 'store', []) is None
+    assert not (tmp_path / 'store').exists()
+
+
+def test_project_edit_starts_from_view_and_returns_to_the_new_snapshot(tmp_path, monkeypatch):
     import caiman.dashboard_actions as actions
     import caiman.config_tui as config_tui
     from types import SimpleNamespace
-    original = {'board': {'manifest': {'board': 'demo', 'version': 'v1'}, 'digest': 'sha256:' + 'a' * 64},
-                'project': {'manifest': {'board': {'digest': 'sha256:' + 'a' * 64}}}}
-    before = deepcopy(original)
-    revised = {'board': 'demo', 'version': 'v2', 'derives_from': 'v1', 'relation': 'Hardware update'}
-    class Revision:
+    chosen = {'manifest': {'project': 'demo', 'version': 'v1'}, 'digest': 'sha256:' + 'a' * 64}
+    before = deepcopy(chosen)
+    revised = {'project': 'demo', 'version': 'v2', 'derives_from': 'v1', 'relation': 'Spec update'}
+    viewed = []
+    class Choose:
         def __init__(self, **kwargs):
             pass
+        def run(self):
+            return chosen
+    class Viewer:
+        def __init__(self, **kwargs):
+            assert kwargs['editable']
+            viewed.append(kwargs['content'])
+        def run(self):
+            return 'edit' if len(viewed) == 1 else None
+    class Revision:
+        def __init__(self, **kwargs):
+            assert kwargs['selection'] == chosen
         def run(self):
             return revised
     class Editor:
@@ -54,12 +80,61 @@ def test_board_edit_updates_only_board_selection(tmp_path, monkeypatch):
             self.prepared = SimpleNamespace(manifest=revised)
         def run(self):
             pass
+    monkeypatch.setattr(actions, 'ChooseApp', Choose)
+    monkeypatch.setattr(actions, 'ViewerApp', Viewer)
     monkeypatch.setattr(actions, 'RevisionApp', Revision)
     monkeypatch.setattr(config_tui, 'ConfigApp', Editor)
-    result = run_dashboard_action('edit-board', tmp_path, original, [])
-    assert set(result) == {'board'}
-    assert result['board']['manifest']['version'] == 'v2'
-    assert original == before
+    result = run_dashboard_action('show-project', tmp_path, [])
+    assert result == {'manifest': revised, 'digest': 'sha256:' + 'b' * 64}
+    assert 'sha256:' + 'b' * 64 in viewed[1]
+    assert chosen == before
+
+
+@pytest.mark.asyncio
+async def test_viewer_e_edits_only_when_editable():
+    from caiman.dashboard_actions import ViewerApp
+    app = ViewerApp(title='Project snapshot', content='{}', editable=True)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.press('e')
+    assert app.return_value == 'edit'
+    plain = ViewerApp(title='Note', content='text')
+    async with plain.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.press('e')
+        assert plain.is_running
+        assert not plain.query('#edit')
+        await pilot.press('q')
+    assert plain.return_value is None
+
+
+@pytest.mark.asyncio
+async def test_choose_lists_projects_only_in_entered_access_groups(tmp_path):
+    from caiman.config_store import ConfigurationService
+    from caiman.dashboard_actions import ChooseApp
+    from caiman.store import Store
+    from textual.widgets import Select
+    root = tmp_path / 'store'
+    service = ConfigurationService(Store(root))
+    service.register(service.prepare('board', {'board': 'demo', 'version': 'v1',
+        'parts': [{'role': 'main', 'part': 'synthetic/chip', 'documents': []}], 'links': []}))
+    project = service.prepare('project', {'project': 'program', 'version': 'A', 'customer': 'Synthetic',
+        'compartments': ['alpha'], 'board': {'name': 'demo', 'version': 'v1'},
+        'spec_set': 'release A', 'documents': [], 'features': []})
+    service.register(project)
+    hidden = ChooseApp(kind='project', root=root, compartments=[])
+    async with hidden.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert hidden.records == []
+        await pilot.click('#continue')
+        assert hidden.is_running
+    app = ChooseApp(kind='project', root=root, compartments=['alpha'])
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert app.query_one('#choice', Select).value == Select.NULL
+        app.query_one('#choice', Select).value = '0'
+        await pilot.click('#continue')
+    assert app.return_value['digest'] == project.digest
 
 
 @pytest.mark.asyncio
@@ -76,25 +151,6 @@ async def test_revision_form_uses_explicit_mode_and_preserves_opaque_versions():
         await pilot.pause()
     assert app.return_value['version'] == 'release / B'
     assert app.return_value['derives_from'] == 'v1'
-
-
-@pytest.mark.asyncio
-async def test_export_file_action_keeps_existing_files(tmp_path):
-    from caiman.dashboard_actions import FileActionApp
-    from textual.widgets import Input, Static
-    path = tmp_path / 'existing.json'
-    path.write_text('existing work')
-    app = FileActionApp(operation='export', kind='board', root=tmp_path,
-                        selection={'manifest': {'board': 'demo', 'version': 'v1'}})
-    async with app.run_test(size=(100, 40)) as pilot:
-        await pilot.pause()
-        app.query_one('#path', Input).value = str(path)
-        await pilot.click('#run')
-        await pilot.pause(0.1)
-        assert 'exists' in str(app.query_one('#status', Static).content)
-        assert app.return_value is None
-        await pilot.click('#cancel')
-    assert path.read_text() == 'existing work'
 
 
 @pytest.mark.asyncio

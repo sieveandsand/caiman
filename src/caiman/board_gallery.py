@@ -9,61 +9,50 @@ import textwrap
 
 from rich.text import Text
 from textual.containers import Grid, Horizontal, VerticalScroll
-from textual.widgets import Button, Footer, Static
+from textual.widgets import Button, Static
 
 from .config_store import ConfigurationService
 from .navigation import NavigationApp
 from .store import Store
-from .theme import TERMINAL_CSS, apply_theme
+from .theme import DOT_BORDER, TERMINAL_CSS, apply_theme
 
 
 class BoardCard(Button):
     """A complete board summary; no parts are omitted to make the card shorter."""
 
-    def __init__(self, record: dict, *, index: int, current: bool = False, archived: bool = False):
+    def __init__(self, record: dict, *, index: int):
         super().__init__('', id=f'board-{index}', classes='dashboard-tile board-card')
         self.record = record
-        self.current = current
-        self.archived = archived
 
     def on_focus(self):
         self.scroll_visible(animate=False, top=True)
 
     def format_card(self, width: int) -> int:
-        from .logo import render_logo
-
         manifest = self.record['manifest']
         available = max(12, width - 4)
         label = Text(no_wrap=True, overflow='crop')
-        logo = render_logo(manifest['board'], max_width=available)
-        version_logo = render_logo(manifest['version'], max_width=available)
-        label.append(logo.rstrip() + '\n' + version_logo.rstrip() + '\n\n', style='#d97757')
 
-        def line(value, style=''):
-            for wrapped in textwrap.wrap(value, available, break_long_words=True, break_on_hyphens=False) or ['']:
+        def line(value, style='', accent=0):
+            """One wrapped field; the first *accent* characters take the highlight."""
+            for index, wrapped in enumerate(textwrap.wrap(value, available, break_long_words=True, break_on_hyphens=False) or ['']):
+                start = len(label.plain)
                 label.append(wrapped + '\n', style=style)
+                if accent and not index:
+                    label.stylize('#7fdc4f', start, start + min(accent, len(wrapped)))
 
         line(manifest['board'], 'bold')
-        line('Version: ' + manifest['version'])
-        if self.current:
-            line('Current selection', '#d97757')
-        if self.archived:
-            line('Pinned snapshot · version label has moved', '#b4afa7')
-        line('Public · ' + self.record['digest'][7:19], '#99958e')
-        line('')
+        version = 'Version ' + manifest['version']
+        line(f"{version} · Public · {self.record['digest'][7:19]}", '#8d9982', accent=len(version))
         line(f"Parts ({len(manifest['parts'])})", 'bold')
-        for index, part in enumerate(manifest['parts']):
-            if index:
-                line('')
-            line(part['role'], '#d97757')
-            line(part['part'])
-            if part.get('silicon_revision'):
-                line('Silicon: ' + part['silicon_revision'], '#b4afa7')
-            if part.get('refdes'):
-                line('Reference: ' + part['refdes'], '#b4afa7')
-            line(f"Documents: {len(part['documents'])}", '#99958e')
-        line('')
-        line(f"Hardware links: {len(manifest.get('links', []))}", '#99958e')
+        for part in manifest['parts']:
+            line(f"{part['role']} · {part['part']}", accent=len(part['role']))
+            # Silicon revision, schematic reference and document count all stay on
+            # the card; they share one line rather than taking three.
+            details = [prefix + value for prefix, value in
+                       (('Silicon ', part.get('silicon_revision')), ('Ref ', part.get('refdes'))) if value]
+            details.append(f"Docs {len(part['documents'])}")
+            line(' · '.join(details), '#aab69c')
+        line(f"Hardware links {len(manifest.get('links', []))}", '#8d9982')
         label.rstrip()
         self.label = label
         height = len(label.plain.splitlines()) + 2
@@ -74,24 +63,23 @@ class BoardCard(Button):
 class BoardGalleryApp(NavigationApp):
     TITLE = 'Caiman · Boards'
     BINDINGS = [
-        ('ctrl+q', 'cancel', 'Back'),
         ('e', 'edit_selected', 'Edit board'),
         ('pagedown', 'page_down', 'Scroll down'),
         ('pageup', 'page_up', 'Scroll up'),
     ]
-    CSS = TERMINAL_CSS + '''
-    #gallery { height: auto; grid-size: 2; grid-columns: 1fr; grid-gutter: 1 1; }
-    .board-card { width: 100%; min-width: 0; height: auto; margin: 0; padding: 0 1; content-align: left top; background: #000000; color: #e6e1d8; text-style: none; border: round #49453f; }
-    .board-card:hover, .board-card:focus { background: #000000; color: #e6e1d8; text-style: none; border: round #d97757; }
-    #gallery-status { height: auto; margin-bottom: 1; color: #b4afa7; }
-    #back { width: auto; }
+    CSS = TERMINAL_CSS + f'''
+    #gallery {{ height: auto; grid-size: 2; grid-columns: 1fr; grid-gutter: 1 1; }}
+    /* Button centres its label by default, which content-align alone does not undo. */
+    .board-card {{ width: 100%; min-width: 0; height: auto; margin: 0; padding: 0 1; content-align: left top; text-align: left; background: #000000; color: #dfe6d3; text-style: none; border: {DOT_BORDER} #33422e; }}
+    .board-card:hover, .board-card:focus {{ background: #000000; color: #dfe6d3; text-style: none; border: {DOT_BORDER} #7fdc4f; }}
+    #gallery-status {{ height: auto; margin-bottom: 1; color: #aab69c; }}
+    #back {{ width: auto; }}
     '''
 
-    def __init__(self, store_root: Path, selected: dict | None = None):
+    def __init__(self, store_root: Path):
         super().__init__()
         apply_theme(self)
         self.store_root = store_root
-        self.selected = deepcopy(selected)
         self.service = ConfigurationService(Store(store_root))
         self.records = []
 
@@ -106,28 +94,20 @@ class BoardGalleryApp(NavigationApp):
         with Horizontal(id='navigation'):
             yield Button('Back', id='back')
         yield self.navigation_hint()
-        yield Footer()
 
     async def on_mount(self):
         try:
             self.records = await asyncio.to_thread(self.service.list_configs, 'board')
-            archived = None
-            if self.selected and not any(record['digest'] == self.selected['digest'] for record in self.records):
-                manifest = await asyncio.to_thread(self.service.load_digest, 'board', self.selected['digest'])
-                archived = self.selected['digest']
-                self.records.append({'manifest': manifest, 'digest': archived, 'name': manifest['board'], 'version': manifest['version'], 'compartment': 'public'})
             # Group names for browsing; opaque version labels have no ordering semantics.
             self.records.sort(key=lambda record: (record['manifest']['board'], record['digest']))
             if not self.records:
                 self.query_one('#gallery-status', Static).update('No boards registered. Create a board from the dashboard.')
                 return
-            current_digest = self.selected['digest'] if self.selected else None
-            cards = [BoardCard(record, index=index, current=record['digest'] == current_digest, archived=record['digest'] == archived) for index, record in enumerate(self.records)]
+            cards = [BoardCard(record, index=index) for index, record in enumerate(self.records)]
             await self.query_one('#gallery', Grid).mount(*cards)
             self.resize_cards(self.size.width)
             self.query_one('#gallery-status', Static).update(f'{len(cards)} board snapshots · Select a card to edit its configuration in Vim.')
-            selected = next((card for card in cards if card.current), cards[0])
-            self.call_after_refresh(selected.focus)
+            self.call_after_refresh(cards[0].focus)
         except (OSError, ValueError) as error:
             self.query_one('#gallery-status', Static).update(f'Cannot load boards: {error}')
 

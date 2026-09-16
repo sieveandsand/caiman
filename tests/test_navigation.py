@@ -32,7 +32,8 @@ async def test_hjkl_moves_fields_without_editing_and_i_preserves_letters(tmp_pat
         assert not app.editing
         assert app.focused.id == 'version'
         assert app.text('name') == 'hjkl'
-        await pilot.press('ctrl+q')
+        await pilot.press('escape', 'q')
+    assert not app.is_running
     assert not (tmp_path / 'store').exists()
 
 
@@ -51,7 +52,8 @@ async def test_select_menu_hjkl_and_enter(tmp_path):
         selector.focus()
         await pilot.press('enter', 'h')
         assert not selector.expanded
-        await pilot.press('ctrl+q')
+        await pilot.press('escape', 'q')
+    assert not app.is_running
     assert not (tmp_path / 'store').exists()
 
 
@@ -74,15 +76,14 @@ async def test_json_editor_enter_edit_escape_and_tab(tmp_path):
         await pilot.press('enter', 'a', 'tab')
         assert not app.editing
         assert app.focused.id == 'version'
-        await pilot.press('ctrl+q')
+        await pilot.press('escape', 'q')
+    assert not app.is_running
     assert not (tmp_path / 'store').exists()
 
 
 @pytest.mark.asyncio
 async def test_home_hjkl_and_enter_activate_button():
-    context = {'board': {'manifest': {'board': 'demo', 'version': 'A'}},
-               'project': {'manifest': {'project': 'demo', 'version': 'A'}}}
-    app = LauncherApp(context=context)
+    app = LauncherApp()
     async with app.run_test(size=(100, 30)) as pilot:
         app.query_one('#ingest').focus()
         await pilot.press('l', 'h', 'j', 'enter')
@@ -131,10 +132,10 @@ async def test_q_types_while_editing_and_returns_from_form_when_navigating(tmp_p
 
 @pytest.mark.asyncio
 async def test_q_closes_dropdown_before_leaving_setup(tmp_path):
-    app = SetupApp(kind='board', store_root=tmp_path / 'store')
+    app = SetupApp(kind='project', store_root=tmp_path / 'store')
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.pause()
-        select = app.query_one('#existing', Select)
+        select = app.query_one('#board-choice', Select)
         select.focus()
         await pilot.press('enter')
         assert select.expanded
@@ -161,7 +162,7 @@ async def test_q_does_not_interrupt_registration(tmp_path):
 
 @pytest.mark.asyncio
 async def test_q_quits_dashboard():
-    app = LauncherApp(context={})
+    app = LauncherApp()
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.press('q')
     assert app.return_value == 'quit'

@@ -149,6 +149,6 @@ def test_invalid_vim_draft_reopens_same_session_then_registers_on_review(board_s
             return {'manifest': reviewed.manifest, 'digest': registration.digest}
     monkeypatch.setattr(editor, 'VimDraft', Draft)
     monkeypatch.setattr(editing, 'BoardEditReviewApp', Review)
-    assert run_board_gallery(root) == {'board': {'manifest': prepared.manifest, 'digest': prepared.digest}}
+    assert run_board_gallery(root) == {'manifest': prepared.manifest, 'digest': prepared.digest}
     assert calls == {'created': 1, 'entered': 1, 'edits': 2, 'reads': 2, 'reviews': 2, 'closed': 1}
     assert service.load_digest('board', original.digest) == original.manifest

@@ -58,3 +58,21 @@ async def test_cancel_setup_does_not_create_store(tmp_path):
         await pilot.click('#cancel')
     assert app.return_value is None
     assert not (tmp_path / 'store').exists()
+
+
+@pytest.mark.asyncio
+async def test_project_requires_an_explicitly_chosen_board(tmp_path):
+    root = tmp_path / 'store'
+    service = ConfigurationService(Store(root))
+    service.register(service.prepare('board', {'board': 'demo', 'version': 'v1',
+        'parts': [{'role': 'main', 'part': 'synthetic/chip', 'documents': []}], 'links': []}))
+    app = SetupApp(kind='project', store_root=root)
+    async with app.run_test(size=(110, 45)) as pilot:
+        await wait_for(pilot, lambda: app.boards and not app.busy)
+        assert app.query_one('#board-choice', Select).value == Select.NULL
+        await fill(app, {'name': 'program', 'version': 'A', 'customer': 'Synthetic Customer',
+                         'compartments': 'alpha', 'spec_set': 'release A'})
+        await pilot.click('#next')
+        await wait_for(pilot, lambda: not app.busy)
+        assert not app.reviewing
+        assert 'Choose the board' in str(app.query_one('#status').render())

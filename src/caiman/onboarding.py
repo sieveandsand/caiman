@@ -1,7 +1,6 @@
-"""Guided first board/project setup and the terminal home screen."""
+"""Board/project creation and the terminal home screen."""
 
 import asyncio
-from copy import deepcopy
 from pathlib import Path
 
 from rich.text import Text
@@ -9,30 +8,31 @@ from rich.text import Text
 from textual.app import ComposeResult
 from caiman.navigation import NavigationApp
 from textual.containers import Grid, Horizontal, VerticalScroll
-from textual.widgets import Button, Footer, Input, Label, Select, Static
+from textual.widgets import Button, Input, Label, Select, Static
 
 from .config_store import ConfigurationService
+from .mascot import HEIGHT as MASCOT_HEIGHT, WIDTH as MASCOT_WIDTH, render_mascot
 from .models import ValidationError
 from .store import Store
-from .theme import TERMINAL_CSS, apply_theme
+from .theme import DOT_BORDER, TERMINAL_CSS, apply_theme
 
 
 class SetupApp(NavigationApp):
-    TITLE = 'Caiman · Get started'
-    BINDINGS = [('ctrl+q', 'cancel', 'Cancel')]
+    """Create one board or project. A project names its board explicitly, every time."""
+
+    TITLE = 'Caiman · Create configuration'
     CSS = TERMINAL_CSS + '\n#review { height: auto; }\nButton { width: auto; }\n'
 
-    def __init__(self, *, kind: str, store_root: Path, board=None, compartments=(), create=False):
+    def __init__(self, *, kind: str, store_root: Path, board=None):
         super().__init__()
         apply_theme(self)
         self.kind = kind
         self.store_root = store_root
-        self.board = board
-        self.compartments = list(compartments)
-        self.create = create
+        self.initial_board = board
         self.service = ConfigurationService(Store(store_root))
-        self.records = []
+        self.boards = []
         self.prepared = None
+        self.selection = None
         self.reviewing = False
         self.busy = False
         self.saving = False
@@ -42,35 +42,25 @@ class SetupApp(NavigationApp):
         yield Input(value=value, id=name)
 
     def compose(self) -> ComposeResult:
-        yield Static(f'caiman  /  set up {self.kind}', id='brand')
+        yield Static(f'caiman  /  create {self.kind}', id='brand')
         with VerticalScroll(id='body'):
-            yield Static('Start with your hardware, then the customer program. Documents can be added afterwards.', classes='hint')
             with VerticalScroll(id='edit', classes='step'):
-                if not self.create:
-                    yield Label(f'Use an existing {self.kind}, or create one')
-                    yield Select([('Create new', 'new')], value='new', allow_blank=False, id='existing')
-                if self.kind == 'project':
-                    yield Label('Access groups to search (comma separated)')
-                    yield Static('Usually one per customer, such as oem-alpha. Only projects in these groups are listed.', classes='hint')
-                    yield Input(value=', '.join(self.compartments), id='search-compartments')
-                    yield Button('Find projects', id='find')
-                with VerticalScroll(id='new-fields', classes='step'):
-                    yield from self.field('name', 'Board name' if self.kind == 'board' else 'Program codename')
-                    yield from self.field('version', 'Version (exact label)')
-                    if self.kind == 'board':
-                        yield Static('Add the first hardware part. More parts and links can be added in board configuration.', classes='hint')
-                        yield from self.field('role', 'Part role', 'application-mcu')
-                        yield from self.field('issuer', 'Part manufacturer identifier')
-                        yield from self.field('part', 'Part number identifier')
-                        yield from self.field('silicon_revision', 'Silicon revision (optional)')
-                        yield from self.field('refdes', 'Schematic reference (optional)')
-                    else:
-                        manifest = (self.board or {}).get('manifest', {})
-                        yield Static(f"Board: {manifest.get('board', 'Choose a board first')} @ {manifest.get('version', '')}", markup=False)
-                        yield from self.field('customer', 'Customer identity')
-                        yield from self.field('compartments', 'Project access groups (comma separated; required)')
-                        yield Static('Usually one per customer, such as oem-alpha. A project must include every group required by a document to use it.', classes='hint')
-                        yield from self.field('spec_set', 'Specification set (exact release label)')
+                yield from self.field('name', 'Board name' if self.kind == 'board' else 'Program codename')
+                yield from self.field('version', 'Version (exact label)')
+                if self.kind == 'board':
+                    yield Static('Add the first hardware part. More parts and links can be added in board configuration.', classes='hint')
+                    yield from self.field('role', 'Part role', 'application-mcu')
+                    yield from self.field('issuer', 'Part manufacturer identifier')
+                    yield from self.field('part', 'Part number identifier')
+                    yield from self.field('silicon_revision', 'Silicon revision (optional)')
+                    yield from self.field('refdes', 'Schematic reference (optional)')
+                else:
+                    yield Label('Board version')
+                    yield Select([], prompt='Choose a registered board', id='board-choice')
+                    yield from self.field('customer', 'Customer identity')
+                    yield from self.field('compartments', 'Project access groups (comma separated; required)')
+                    yield Static('Usually one per customer, such as oem-alpha. A project must include every group required by a document to use it.', classes='hint')
+                    yield from self.field('spec_set', 'Specification set (exact release label)')
             yield Static('', id='review', markup=False)
         yield Static('', id='status', markup=False)
         with Horizontal(id='navigation'):
@@ -78,29 +68,33 @@ class SetupApp(NavigationApp):
             yield Button('Review', id='next', variant='primary')
             yield Button('Cancel', id='cancel')
         yield self.navigation_hint()
-        yield Footer()
 
     async def on_mount(self):
-        if not self.create:
-            await self.refresh_catalog()
+        self.show_view()
+        if self.kind == 'project':
+            await self.load_boards()
 
     def text(self, field):
         return self.query_one(f'#{field}', Input).value.strip()
 
-    async def refresh_catalog(self):
+    async def load_boards(self):
         self.busy = True
         self.show_view()
         try:
-            scopes = self.compartments
-            if self.kind == 'project':
-                scopes = [s.strip() for s in self.text('search-compartments').split(',') if s.strip()]
-            self.records = await asyncio.to_thread(self.service.list_configs, self.kind, compartments=scopes)
-            if not self.create:
-                selector = self.query_one('#existing', Select)
-                selector.set_options([('Create new', 'new')] + [
-                    (f"{record['name']} @ {record['version']} [{record['compartment']}; {record['digest'][7:19]}]", str(index)) for index, record in enumerate(self.records)])
-                selector.value = 'new'
-            self.query_one('#status', Static).update(f'{len(self.records)} existing {self.kind} configurations available.')
+            self.boards = await asyncio.to_thread(self.service.list_configs, 'board')
+            initial = self.initial_board
+            # A board handed over from ingestion stays choosable even if its label moved.
+            if initial and not any(record['digest'] == initial['digest'] for record in self.boards):
+                manifest = initial['manifest']
+                self.boards.append({'manifest': manifest, 'digest': initial['digest'], 'name': manifest['board'],
+                                    'version': manifest['version'], 'compartment': 'public'})
+            selector = self.query_one('#board-choice', Select)
+            selector.set_options([(f"{record['name']} @ {record['version']} [{record['digest'][7:19]}]", str(index))
+                                  for index, record in enumerate(self.boards)])
+            if initial:
+                selector.value = next(str(index) for index, record in enumerate(self.boards) if record['digest'] == initial['digest'])
+            self.query_one('#status', Static).update(
+                f'{len(self.boards)} registered boards.' if self.boards else 'No boards registered. Create a board first.')
         except (OSError, ValueError) as error:
             self.query_one('#status', Static).update(str(error))
         finally:
@@ -114,13 +108,7 @@ class SetupApp(NavigationApp):
             widget.disabled = self.busy
         self.query_one('#back', Button).disabled = not self.reviewing or self.busy
         self.query_one('#cancel', Button).disabled = self.saving
-        self.query_one('#next', Button).label = ('Use selection' if self.prepared is None else 'Register and continue') if self.reviewing else 'Review'
-        if not self.create:
-            self.query_one('#new-fields').display = self.query_one('#existing', Select).value == 'new'
-
-    def on_select_changed(self, event):
-        if event.select.id == 'existing':
-            self.show_view()
+        self.query_one('#next', Button).label = 'Register' if self.reviewing else 'Review'
 
     def draft(self):
         data = {self.kind: self.text('name'), 'version': self.text('version')}
@@ -131,12 +119,14 @@ class SetupApp(NavigationApp):
                     part[key] = self.text(key)
             data.update(parts=[part], links=[])
         else:
-            if self.board is None:
-                raise ValueError('Choose or create a board before creating a project')
-            board = self.board['manifest']
+            choice = self.query_one('#board-choice', Select).value
+            if not isinstance(choice, str):
+                raise ValueError('Choose the board version this project uses')
+            record = self.boards[int(choice)]
+            board = record['manifest']
             data.update(customer=self.text('customer'),
                         compartments=[s.strip() for s in self.text('compartments').split(',') if s.strip()],
-                        board={'name': board['board'], 'version': board['version'], 'digest': self.board['digest']},
+                        board={'name': board['board'], 'version': board['version'], 'digest': record['digest']},
                         spec_set=self.text('spec_set'), documents=[], precedence=[], features=[])
         return data
 
@@ -177,9 +167,6 @@ class SetupApp(NavigationApp):
             return
         if self.busy:
             return
-        if action == 'find':
-            await self.refresh_catalog()
-            return
         if action == 'back':
             self.prepared = None
             self.reviewing = False
@@ -188,22 +175,16 @@ class SetupApp(NavigationApp):
         if action != 'next':
             return
         self.busy = True
-        self.saving = self.reviewing and self.prepared is not None
+        self.saving = self.reviewing
         self.show_view()
         try:
             if self.reviewing:
-                if self.prepared is not None:
-                    await asyncio.to_thread(self.service.register, self.prepared)
+                await asyncio.to_thread(self.service.register, self.prepared)
                 self.exit(self.selection)
                 return
-            selected = 'new' if self.create else self.query_one('#existing', Select).value
-            if selected != 'new':
-                record = self.records[int(selected)]
-                self.selection = {'manifest': record['manifest'], 'digest': record['digest']}
-            else:
-                self.prepared = await asyncio.to_thread(self.service.prepare, self.kind, self.draft())
-                self.selection = {'manifest': self.prepared.manifest, 'digest': self.prepared.digest}
-            self.query_one('#review', Static).update('Review this configuration before continuing.\n\n' + self.review_text())
+            self.prepared = await asyncio.to_thread(self.service.prepare, self.kind, self.draft())
+            self.selection = {'manifest': self.prepared.manifest, 'digest': self.prepared.digest}
+            self.query_one('#review', Static).update('Review this configuration before registering.\n\n' + self.review_text())
             self.query_one('#status', Static).update('Use Back to edit or Cancel to leave without registering this configuration.')
             self.reviewing = True
         except ValidationError as error:
@@ -222,57 +203,46 @@ class DashboardTile(Button):
     def __init__(self, title, description, *, action, disabled=False):
         label = Text()
         label.append(title, style='bold')
-        label.append('\n' + description, style='#99958e')
+        label.append('\n' + description, style='#8d9982')
         super().__init__(label, id=action, classes='dashboard-tile', disabled=disabled)
 
 
 class LauncherApp(NavigationApp):
     TITLE = 'Caiman'
-    BINDINGS = [('ctrl+q', 'quit_launcher', 'Quit')]
-    CSS = TERMINAL_CSS + '''
-    #current-context { height: auto; margin-bottom: 1; color: #b4afa7; }
-    .dashboard-heading { height: 1; margin: 1 0 0 0; color: #d97757; text-style: bold; }
-    .dashboard-grid { grid-size: 3; grid-columns: 1fr; grid-rows: 4; grid-gutter: 0 1; height: auto; }
-    #documents-grid { height: 4; }
-    #board-grid, #project-grid { height: 12; }
-    .dashboard-tile { width: 100%; height: 4; min-width: 0; margin: 0; padding: 0 1; content-align: left middle; border: round #49453f; background: #000000; color: #e6e1d8; text-style: none; }
-    .dashboard-tile:hover, .dashboard-tile:focus { border: round #d97757; background: #18120f; color: #d97757; text-style: none; }
-    .dashboard-tile:disabled { border: round #292929; background: #000000; color: #615d57; }
-    #quit { width: auto; }
+    CSS = TERMINAL_CSS + f'''
+    .dashboard-heading {{ height: 1; margin: 1 0 0 0; color: #7fdc4f; text-style: bold; }}
+    .dashboard-grid {{ grid-size: 3; grid-columns: 1fr; grid-rows: 4; grid-gutter: 0 1; height: 4; }}
+    .dashboard-tile {{ width: 100%; height: 4; min-width: 0; margin: 0; padding: 0 1; content-align: left middle; border: {DOT_BORDER} #33422e; background: #000000; color: #dfe6d3; text-style: none; }}
+    .dashboard-tile:hover, .dashboard-tile:focus {{ border: {DOT_BORDER} #7fdc4f; background: #102210; color: #7fdc4f; text-style: none; }}
+    .dashboard-tile:disabled {{ border: {DOT_BORDER} #1f291c; background: #000000; color: #56604e; }}
+    #quit {{ width: auto; }}
+    #masthead {{ height: auto; }}
+    #masthead #brand {{ width: 1fr; }}
+    #mascot {{ width: auto; height: auto; padding: 0 2 0 0; }}
     '''
 
-    def __init__(self, *, context):
+    # Below these sizes the mascot would crowd the title or the tiles, so it steps aside.
+    MASCOT_MIN_WIDTH = MASCOT_WIDTH + 24
+    MASCOT_MIN_HEIGHT = MASCOT_HEIGHT + 20
+
+    def __init__(self):
         super().__init__()
         apply_theme(self)
-        self.context = deepcopy(context)
 
     def navigation_help(self):
         return 'h left · j down · k up · l right · Enter open · Tab next · q quit'
 
     def tiles(self, kind):
-        selected = kind in self.context
-        actions = (
-            ('create', f'Create {kind}', 'New configuration'),
-            ('select', f'Select {kind}', 'Choose saved version'),
-            ('edit', f'Edit {kind}', 'Create a new version'),
-            ('show', f'View {kind}', 'Board grid · Vim edit' if kind == 'board' else 'Inspect snapshot'),
-            ('import', f'Import {kind}', 'Open a JSON draft'),
-            ('export', f'Export {kind}', 'Save JSON draft'),
-            ('validate', f'Validate {kind}', 'Check without saving'),
-            ('template', f'Blank {kind} draft', 'Save JSON template'),
-        )
-        for action, title, description in actions:
-            yield DashboardTile(title, description, action=f'{action}-{kind}', disabled=not selected and action in {'edit', 'show', 'export'})
+        # Only create and view live here; editing starts from what is being viewed.
+        yield DashboardTile(f'Create {kind}', 'New configuration', action=f'create-{kind}')
+        yield DashboardTile(f'View {kind}s', 'Browse · e to edit' if kind == 'board' else 'Pick one · e to edit',
+                            action=f'show-{kind}')
 
     def compose(self):
-        yield Static('caiman  /  home', id='brand')
+        with Horizontal(id='masthead'):
+            yield Static('caiman  /  home', id='brand')
+            yield Static(render_mascot(), id='mascot')
         with VerticalScroll(id='body'):
-            context_lines = []
-            for kind in ('board', 'project'):
-                manifest = self.context.get(kind, {}).get('manifest')
-                selection = f"{manifest[kind]} @ {manifest['version']}" if manifest else 'No selection'
-                context_lines.append(f'{kind.capitalize()}: {selection}')
-            yield Static('\n'.join(context_lines), id='current-context', markup=False)
             yield Static('Documents', classes='dashboard-heading')
             with Grid(id='documents-grid', classes='dashboard-grid'):
                 yield DashboardTile('Ingest document', 'Register Markdown', action='ingest')
@@ -286,16 +256,16 @@ class LauncherApp(NavigationApp):
         with Horizontal(id='navigation'):
             yield Button('Quit', id='quit')
         yield self.navigation_hint()
-        yield Footer()
 
     def on_mount(self):
-        self.resize_grid(self.size.width)
+        self.resize_grid(self.size.width, self.size.height)
         self.query_one('#ingest', Button).focus()
 
     def on_resize(self, event):
-        self.resize_grid(event.size.width)
+        self.resize_grid(event.size.width, event.size.height)
 
-    def resize_grid(self, width):
+    def resize_grid(self, width, height=MASCOT_HEIGHT + 20):
+        self.query_one('#mascot').display = width >= self.MASCOT_MIN_WIDTH and height >= self.MASCOT_MIN_HEIGHT
         columns = 2 if width < 72 else 3
         for grid in self.query('.dashboard-grid'):
             grid.styles.grid_size_columns = columns

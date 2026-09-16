@@ -9,7 +9,7 @@ from pathlib import Path
 from textual.app import ComposeResult
 from caiman.navigation import NavigationApp
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Collapsible, Footer, Input, Label, Select, Static
+from textual.widgets import Button, Collapsible, Input, Label, Select, Static
 
 from caiman.ingest import PreparedDocument, ValidationError, prepare_document, validate_headings
 from caiman.config_store import ConfigurationService
@@ -21,7 +21,6 @@ class IngestApp(NavigationApp):
     """Four-step form. Preparing and reviewing never writes to the store."""
 
     TITLE = "Caiman · Register document"
-    BINDINGS = [("ctrl+q", "cancel", "Cancel")]
     CSS = TERMINAL_CSS
 
     def __init__(self, store_root: Path, source_path: Path | None = None, *, state: dict | None = None, context: dict | None = None, authorized_compartments=()):
@@ -106,7 +105,6 @@ class IngestApp(NavigationApp):
             yield Button("Continue", id="next", variant="primary")
             yield Button("Cancel", id="cancel")
         yield self.navigation_hint()
-        yield Footer()
 
     async def on_mount(self) -> None:
         self.query_one("#project_scope", Input).value = ", ".join(sorted(self.authorized_compartments))

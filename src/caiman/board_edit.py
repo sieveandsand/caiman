@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Collapsible, Footer, Static, TextArea
+from textual.widgets import Button, Collapsible, Static, TextArea
 
 from .config_store import ConfigurationService
 from .navigation import NavigationApp
@@ -18,7 +18,6 @@ from .theme import TERMINAL_CSS, apply_theme
 class BoardEditReviewApp(NavigationApp):
     TITLE = 'Caiman · Review board changes'
     CSS = TERMINAL_CSS + '\n#changes { height: 18; }\n'
-    BINDINGS = [('ctrl+q', 'cancel', 'Back')]
 
     def __init__(self, *, root, original, prepared=None, error=None):
         super().__init__()
@@ -63,7 +62,6 @@ class BoardEditReviewApp(NavigationApp):
             yield Button('Edit in Vim', id='edit')
             yield Button('Back to boards', id='cancel')
         yield self.navigation_hint()
-        yield Footer()
 
     def action_cancel(self):
         if not self.saving:
@@ -91,19 +89,21 @@ class BoardEditReviewApp(NavigationApp):
                     button.disabled = False
 
 
-def run_board_gallery(root: Path, selected: dict | None = None) -> dict | None:
-    """Vim runs only after the gallery releases the terminal; no nested TUIs."""
+def run_board_gallery(root: Path) -> dict | None:
+    """Vim runs only after the gallery releases the terminal; no nested TUIs.
+
+    Returns the last board registered from the gallery, if any.
+    """
     from .board_gallery import BoardGalleryApp
     from .dashboard_actions import ViewerApp
     from .external_editor import VimDraft
 
-    current = selected
-    changed = False
+    registered = None
     service = ConfigurationService(Store(root))
     while True:
-        selection = BoardGalleryApp(store_root=root, selected=current).run()
+        selection = BoardGalleryApp(store_root=root).run()
         if selection is None:
-            return {'board': current} if changed else None
+            return registered
         original = selection['manifest']
         try:
             with VimDraft(original) as draft:
@@ -120,8 +120,7 @@ def run_board_gallery(root: Path, selected: dict | None = None) -> dict | None:
                     if outcome == 'edit':
                         continue
                     if isinstance(outcome, dict):
-                        current = outcome
-                        changed = True
+                        registered = outcome
                     break
         except (OSError, ValueError) as error:
             ViewerApp(title='Vim editor needs attention', content=str(error)).run()

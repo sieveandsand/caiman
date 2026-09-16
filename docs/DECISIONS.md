@@ -590,12 +590,15 @@ Code-inspired terminal appearance. Resolves ARCHITECTURE.md §8.6 Gap B / G13.*
 
 ---
 
-### S-29. Start with a board and project; reuse them during ingestion
+### S-29. Create boards and projects on demand; choose them explicitly every time
 
-Opening `caiman` guides the engineer through establishing one board and one
-project before document ingestion. The board declares hardware parts; the
-project pins that board and declares its customer and compartments. Document
-lists can start empty, so setup does not depend on manuals already being stored.
+Opening `caiman` goes straight to the home screen. There is **no default board or
+project**: nothing is preselected, nothing is remembered as "current", and every
+action that operates on one — view (and edit from there), create a project on a board —
+asks the engineer to choose it. The board declares hardware parts; the project
+pins the board version the engineer chose and declares its customer and
+compartments. Document lists can start empty, so creation does not depend on
+manuals already being stored.
 
 Ingestion offers existing project and board versions, plus actions to create
 new ones and return to the document form. Selecting a board part supplies its
@@ -604,8 +607,8 @@ compartment context. Version labels remain opaque and pinned board identities
 remain authoritative. No hardware facts or classification are derived from text.
 Access remains an explicit human choice reviewed before document registration.
 
-The terminal may remember explicitly selected catalog compartments locally for
-the next launch. These preferences are not shared manifests, session modes, or
+The terminal may remember the compartments of explicitly chosen projects locally
+for the next launch, but never which board or project was chosen. These preferences are not shared manifests, session modes, or
 an authorization boundary. Catalog discovery never expands them by scanning for
 other private compartments. Document registration does not silently revise
 existing board or project snapshots; adopting a document into their pinned sets
@@ -618,15 +621,20 @@ Storage keys and existing CLI flags retain their spelling for compatibility;
 this is a terminology change, not a change to access rules.
 
 *Settled 2026-09-15 by user instruction: guide first-time board/project setup,
-then offer existing selections and creation actions during ingestion.*
+then offer existing selections and creation actions during ingestion. Amended
+2026-09-16 by user instruction: remove the concept of a default board and project;
+the forced first-launch setup and saved selection went with it.*
 
 ---
 
 ### S-30. The bare command is a dashboard with shared Vim-style navigation
 
-Running `caiman` opens the primary human interface: first-time setup when needed,
-then a grid of implemented document, board, and project capabilities. The grid
-includes editing existing configurations and working with editable JSON files.
+Running `caiman` opens the primary human interface: a grid of implemented
+document, board, and project capabilities. Boards and projects each get only
+**Create** and **View**; editing starts from the item being viewed, and JSON
+import, export, validation, and templates stay direct commands (amended
+2026-09-16 by user instruction: too many options). Home tiles share the dotted
+card border.
 Individual commands remain available for direct invocation and agent tooling;
 this does not make currently interactive commands noninteractive.
 
@@ -635,14 +643,18 @@ version with declared lineage, or explicitly repoints the selected version tag,
 then reviews the full edited configuration before registration. Existing digest
 pins remain resolvable. Editing a board does not silently change a project.
 
-The terminal uses a pure black canvas, warm orange accents, and full field
-outlines. Shared keyboard controls use `hjkl` for directional tile navigation
+The terminal uses a pure black canvas, bright green accents, and full
+field outlines — a real caiman's colouring (amended 2026-09-16 by user
+instruction, replacing the original pure black canvas and warm orange accents). Shared keyboard controls use `hjkl` for directional tile navigation
 and previous/next control movement in forms. Enter or `i` starts text editing;
 Escape returns to navigation. Editing preserves ordinary `hjkl` text input.
 Dropdowns support `j/k` to move, Enter or `l` to select, and Escape or `h` to close.
 In navigation mode, `q` closes the current menu or returns from a form, and quits
 from the dashboard. An open dropdown closes first. During text editing `q`
 remains ordinary input; cancellation guards still prevent interrupted writes.
+Navigation is Vim keys only: no Ctrl+Q/Ctrl+R shortcuts, no key footer, and no
+command palette. The mode hint is the one prompt at the bottom of every screen
+(amended 2026-09-16 by user instruction, for consistency).
 
 *Settled 2026-09-15 by user instruction: expose features in a grid on bare
 `caiman`, support board/project modification, Vim keys, and a black background
@@ -711,7 +723,9 @@ close it.
 *Leaning: build the layer.* The scope stays small enough for one engineer, the
 normative half is where the unserved problem is, and files-on-disk is adoptable
 without procurement. Revisit if the descriptive half consumes more than its
-allotted two weeks. See `VISION.md` §4.
+allotted two weeks. See `VISION.md` §4, re-surveyed 2026-09-16: Embedder's
+published scope grew, silicon vendors began serving their own catalogues to agents
+over MCP, and the versioned, compartmented and normative gaps all held.
 
 ### D-07. Harness strategy
 
@@ -791,6 +805,154 @@ rather than per-program.
 
 *Leaning: the third, once the first becomes painful. Do not build before there is
 a real deviation document to look at.*
+
+### D-13. How far the board schema should follow industry board descriptions
+
+G14 asks which engineering source to import from. Surveying what board-level
+description files actually carry answers a prior question: what a board file
+should contain at all.
+
+They fall into two families that barely overlap. **Software-facing** — devicetree
+and its bindings, Zephyr `board.yml`, CMSIS-Pack PDSC `<boards>`, PlatformIO
+board JSON, Arduino `boards.txt`, mbed `targets.json`, Yocto machine `.conf` —
+describe a board so firmware can boot on it. **Hardware-facing** — KiCad
+schematics and netlists, Altium, IPC-2581 (DPMX), ODB++, CycloneDX HBOM —
+describe a board so it can be built and bought. Nothing bridges them.
+
+What they commonly carry: board identity and revision; a component inventory;
+interconnect, as either bus hierarchy or nets; addressing and register data;
+capability flags; assembly variants; toolchain, flash and debug glue; a
+machine-readable schema; and vendor extension points. Of all of them, only
+CMSIS-Pack links a component to its documentation, and only as a bare URL.
+
+What none carry: design intent, so no counterpart to a part's role (S-12);
+document linkage with a version and a locator (I-5); immutability or pinning
+(I-4); silicon-revision applicability for a document; a rationale paired with a
+declared relationship (S-15); cross-domain identity across schematic, devicetree
+and orderable part number; compartmentation; and any normative program context at
+all. Most of that list Caiman already answers, which is evidence for D-04.
+
+Four gaps are real and open in `caiman.board/1`:
+
+- A document about the **assembly** — board user guide, schematic, stackup,
+  assembly errata — cannot be pinned at all, because `_pin` requires a document's
+  `issuer/part` to match a part instance. For a vendor evaluation board this is
+  usually the most useful document there is.
+- **Links carry no explanation**, though every other declared relationship pairs
+  with one: `derives_from` with `relation`, `features[].related` with `relation`,
+  `precedence[].note`. `ARCHITECTURE.md` §6.5.1 says peripheral names stay verbatim
+  because renaming them would break "the one thing a link description is useful
+  for", and then there is no field to put that description in.
+- **No place for cross-domain identifiers** beyond `refdes`, so the schematic,
+  devicetree and procurement names for one part cannot sit together.
+- **Part identity is a packed string.** `"part": "nxp/s32k344"` fuses two fields
+  that `caiman.document/1` already stores separately, and the format is implicit —
+  nothing in the field name says the slash is meaningful. So `_pin` rebuilds the
+  string it compares against, `document.get("part", "")` papers over documents that
+  carry a `program` instead of a `part`, and the ingest rule that a document has
+  exactly one of the two is invisible at the board.
+
+| Option | For | Against |
+|---|---|---|
+| **Leave `/1` alone** | No migration; the model stays minimal | Assembly documents stay unpinnable, which is a real hole rather than a deferred nicety |
+| **Notes only** — `note` on links and on document selectors | Two lines of validator; closes the inconsistency with every other declared relationship; no decision needed | Leaves assembly documents unpinnable |
+| **`caiman.board.v2` as drafted below** | Closes all four gaps; stored `caiman.board/1` snapshots stay valid and unmigrated (S-11), with readers accepting both | Splitting part identity makes v2 a breaking authoring change rather than a purely additive one; board-level documents contradict "a board version pins the vendor documentation for its parts" (`ARCHITECTURE.md` §6.5.1); `aliases` widens S-12's wording |
+| **Industry parity** — features, nets, register data, toolchain glue | Importers map nearly field-for-field | Breaks S-01, I-5 and I-8 at once. Rejected |
+
+Draft of the third option. New and changed fields marked:
+
+```jsonc
+{
+  "schema": "caiman.board.v2",
+  "board": "falcon-mainboard",
+  "version": "2.1",
+  "issuer": "acme",                                    // NEW
+  "description": "Dual-MCU safety mainboard.",         // NEW
+  "derives_from": "2.0",
+  "relation": "Adds the secure element; boot flash moved to QSPI.",
+
+  "documents": [                                       // NEW, board level
+    { "ref": "acme/falcon-mainboard/board-user-guide/2.1",
+      "compartment": "public",
+      "note": "Connector pinout and jumper defaults." }  // NEW on selectors
+  ],
+
+  "parts": [
+    { "role": "application-mcu",
+      "issuer": "nxp",                                 // CHANGED, was "nxp/s32k344"
+      "part": "s32k344",
+      "silicon_revision": "1.1",
+      "refdes": "U1",
+      "aliases": { "mpn": "S32K344EHTAR", "devicetree": "cpu0" },  // NEW
+      "note": "Runs the safety-rated application image.",          // NEW
+      "documents": [
+        { "ref": "nxp/s32k344/reference-manual/Rev%204",
+          "compartment": "public",
+          "note": "Errata 051234 applies at this mask revision." } ] },
+    { "role": "safety-companion",
+      "issuer": "ti",
+      "part": "tps65313",
+      "silicon_revision": "A",
+      "refdes": "U4",
+      "documents": [] }
+  ],
+
+  "links": [
+    { "name": "safety-link",
+      "between": ["application-mcu.LPSPI1", "safety-companion.SPI"],
+      "note": "Watchdog handshake; the companion resets the MCU if the question and answer sequence stops." }  // NEW
+  ]
+}
+```
+
+`issuer` and `part` are separate on a part, matching `caiman.document/1` field for
+field. The name is `issuer`, not `vendor`, because that is what the store already
+calls it and what the first segment of a document ref already is; a reader should
+not have to learn that two words mean one thing. The cross-check in `_pin` becomes
+two field comparisons instead of rebuilt string equality, and a board part
+document can be required to carry a `part` rather than a `program`, which the
+packed form cannot express.
+
+Board-level documents would resolve against `<issuer>/<board>`, mirroring the
+per-part rule, which makes the board's `issuer` required whenever they are
+present. `aliases` keys and values are declared strings that nothing interprets —
+the same standing `refdes` already has under S-12, generalized rather than
+special-cased.
+
+Migration follows from S-11 rather than needing machinery. Stored snapshots are
+immutable, so existing boards keep `caiman.board/1` and are never rewritten; the
+loader accepts both literal strings and authoring emits `caiman.board.v2`. Nothing
+re-registers, and `schema` earns its place in the manifest.
+
+The string changes shape at v2: `caiman.board.v2`, not `caiman.board/2`. That
+leaves the board out of step with `caiman.document/1` and `caiman.project/1`,
+which still carry the slash, and it stops the value being derivable from kind and
+number by the single f-string `_base` uses today — a table of accepted literals
+replaces it. Worth settling for all three kinds here rather than rediscovering it
+at the next project or document revision.
+
+Deliberately excluded, each on an existing decision:
+
+| Excluded | Offered by | Why not |
+|---|---|---|
+| Build flags, flash algorithms, upload and debug config | PlatformIO, Arduino, CMSIS `<debugInterface>` | S-01 |
+| Register maps, `reg` and `interrupts` | Devicetree, CMSIS-SVD | I-5 — facts come from documents with a locator, not restated uncited in config |
+| Capability and feature lists | CMSIS `<feature>`, mbed `device_has`, Yocto | Anything on the board that matters is a part with a role; a feature list is a second, uncitable way to say it, and collides with project features under S-14 |
+| Nets and pin-level connectivity | EDA netlists, IPC-2581 | Links are declared intent, not extracted topology (I-8) |
+| Fitted/DNP and assembly variants | Altium variants, KiCad | A variant is another opaque board version (S-11, I-7) |
+| Lifecycle status | PLM, vendor packs | Status that rots — the S-14 argument |
+| Compartment labels on a board | — | Boards are public by construction (S-13) |
+
+Each field added here competes for the brief's context budget, which `VISION.md`
+§4.3 puts at roughly 150 lines by the convention's own hard-won guidance. That is
+an argument for adding fields the brief can omit, and against any field it would
+have to carry for every part on every turn.
+
+*Leaning: take the notes now — they need no decision and close an inconsistency
+the design documents already assume is closed. Decide board-level documents
+against a real vendor evaluation board, not in the abstract; that is the half
+that changes §6.5.1. Hold `aliases` until a second namespace is actually needed,
+so it is not designed against one imagined use.*
 
 ---
 

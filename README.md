@@ -89,7 +89,8 @@ python3 -m venv .venv
 .venv/bin/caiman
 ```
 
-Caiman first guides you through setting up one board and one project. They can
+Caiman opens a home screen; create a board, then a project that uses it. Neither
+becomes a default: later actions ask which board or project to use. They can
 start with no documents. Use your hardware and project details, or synthetic
 values such as board `example-board`, version `Rev A`, part `example/example-mcu`,
 project `example-program`, version `Prototype`, customer `Synthetic Example
@@ -97,8 +98,8 @@ Customer`, and access group `example-customer`. An access group keeps one
 customer's private documents separate from another's; usually use one per
 customer. Config files call these groups `compartments`.
 
-The home screen provides a grid of document, board, and project actions,
-including editing existing configurations and working with JSON files. Use
+The home screen provides document actions plus **Create** and **View** for
+boards and projects; press `e` while viewing a board or project to edit it. Use
 `hjkl` to move between tiles and Enter to open one. In a form, Enter or `i`
 starts editing; Escape returns to navigation. Press `q` to go back while
 navigating, or to quit from the dashboard. The direct command equivalent for

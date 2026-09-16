@@ -5,10 +5,10 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
+from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Footer, Input, Label, Select, Static, TextArea
+from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
-from .config_files import read_draft, template, write_draft
 from .config_store import ConfigurationService
 from .navigation import NavigationApp
 from .store import Store
@@ -31,7 +31,6 @@ def revision_draft(manifest: dict, *, mode: str, version='', relation='') -> dic
 
 class ActionApp(NavigationApp):
     CSS = TERMINAL_CSS + '\nButton { width: auto; }\n#content { height: 1fr; }\n'
-    BINDINGS = [('ctrl+q', 'cancel', 'Cancel')]
 
     def __init__(self):
         super().__init__()
@@ -39,6 +38,71 @@ class ActionApp(NavigationApp):
 
     def action_cancel(self):
         self.exit(None)
+
+
+class ChooseApp(ActionApp):
+    """Pick the board or project an action applies to; nothing is preselected."""
+
+    TITLE = 'Caiman · Choose configuration'
+
+    def __init__(self, *, kind, root, compartments=(), purpose='choose'):
+        super().__init__()
+        self.kind = kind
+        self.purpose = purpose
+        self.compartments = list(compartments)
+        self.service = ConfigurationService(Store(root))
+        self.records = []
+        self.busy = False
+
+    def compose(self):
+        yield Static(f'caiman  /  {self.purpose} {self.kind}', id='brand')
+        with VerticalScroll(id='body'):
+            if self.kind == 'project':
+                yield Label('Access groups to search (comma separated)')
+                yield Static('Usually one per customer, such as oem-alpha. Only projects in these groups are listed.', classes='hint')
+                yield Input(', '.join(self.compartments), id='compartments')
+                yield Button('Find projects', id='find')
+            yield Label(f'{self.kind.capitalize()} version')
+            yield Select([], prompt=f'Choose a {self.kind}', id='choice')
+        yield Static('', id='status', markup=False)
+        yield self.navigation_hint()
+        with Horizontal(id='navigation'):
+            yield Button('Continue', id='continue', variant='primary')
+            yield Button('Cancel', id='cancel')
+
+    async def on_mount(self):
+        await self.refresh_catalog()
+
+    async def refresh_catalog(self):
+        if self.busy:
+            return
+        self.busy = True
+        try:
+            scopes = []
+            if self.kind == 'project':
+                scopes = [s.strip() for s in self.query_one('#compartments', Input).value.split(',') if s.strip()]
+            self.records = await asyncio.to_thread(self.service.list_configs, self.kind, compartments=scopes)
+            self.query_one('#choice', Select).set_options([
+                (f"{record['name']} @ {record['version']} [{record['compartment']}; {record['digest'][7:19]}]", str(index))
+                for index, record in enumerate(self.records)])
+            self.query_one('#status', Static).update(f'{len(self.records)} {self.kind} versions available.')
+        except (OSError, ValueError) as error:
+            self.query_one('#status', Static).update(str(error))
+        finally:
+            self.busy = False
+
+    async def on_button_pressed(self, event):
+        if event.button.id == 'cancel':
+            self.exit(None)
+        elif event.button.id == 'find':
+            await self.refresh_catalog()
+        elif event.button.id == 'continue' and not self.busy:
+            choice = self.query_one('#choice', Select).value
+            if not isinstance(choice, str):
+                self.query_one('#status', Static).update(f'Choose a {self.kind} first.')
+                return
+            record = self.records[int(choice)]
+            self.exit({'manifest': record['manifest'], 'digest': record['digest']})
 
 
 class RevisionApp(ActionApp):
@@ -71,7 +135,6 @@ class RevisionApp(ActionApp):
         with Horizontal(id='navigation'):
             yield Button('Continue to editor', id='continue', variant='primary')
             yield Button('Cancel', id='cancel')
-        yield Footer()
 
     def on_select_changed(self, event):
         if event.select.id == 'mode':
@@ -101,86 +164,20 @@ class RevisionApp(ActionApp):
                 self.busy = False
 
 
-class FileActionApp(ActionApp):
-    TITLE = 'Caiman · Configuration file'
-
-    def __init__(self, *, operation, kind, root, selection=None):
-        super().__init__()
-        self.operation = operation
-        self.kind = kind
-        self.root = root
-        self.selection = selection
-        self.busy = False
-
-    def compose(self):
-        yield Static(f'caiman  /  {self.operation} {self.kind}', id='brand')
-        with VerticalScroll(id='body'):
-            if self.selection:
-                manifest = self.selection['manifest']
-                yield Static(f"Selected: {manifest[self.kind]} @ {manifest['version']}", markup=False)
-                if self.kind == 'project':
-                    yield Static('Project exports contain customer metadata and are written as private files.', classes='hint')
-            yield Label('JSON configuration file path')
-            yield Input(id='path')
-            if self.operation == 'import':
-                yield Static('Import opens an editable draft. Register only after reviewing it in the editor.', classes='hint')
-            elif self.operation == 'validate':
-                yield Static('Validation resolves exact pins and writes no configurations.', classes='hint')
-            else:
-                yield Static('Choose a new output filename. Existing files are never overwritten.', classes='hint')
-        yield Static('', id='status', markup=False)
-        yield self.navigation_hint()
-        with Horizontal(id='navigation'):
-            yield Button(self.operation.capitalize(), id='run', variant='primary')
-            yield Button('Cancel', id='cancel')
-        yield Footer()
-
-    def action_cancel(self):
-        if not self.busy:
-            self.exit(None)
-
-    def perform(self, path):
-        if self.operation == 'import':
-            return {'draft': read_draft(path)}
-        if self.operation == 'validate':
-            prepared = ConfigurationService(Store(self.root)).prepare(self.kind, read_draft(path))
-            return {'title': 'Validation passed', 'content': 'No configuration was registered.\n\n' +
-                    json.dumps(prepared.manifest, indent=2, ensure_ascii=False) + '\n\nDigest: ' + prepared.digest}
-        draft = template(self.kind) if self.operation == 'template' else self.selection['manifest']
-        write_draft(path, draft)
-        return {'title': 'Configuration file written', 'content': str(path.expanduser().absolute())}
-
-    async def on_button_pressed(self, event):
-        if event.button.id == 'cancel':
-            self.action_cancel()
-            return
-        if event.button.id != 'run' or self.busy:
-            return
-        value = self.query_one('#path', Input).value.strip()
-        if not value:
-            self.query_one('#status', Static).update('Enter a file path.')
-            return
-        self.busy = True
-        for button in self.query('Button'):
-            button.disabled = True
-        try:
-            result = await asyncio.to_thread(self.perform, Path(value))
-            self.exit(result)
-        except (OSError, ValueError) as error:
-            self.query_one('#status', Static).update(str(error))
-        finally:
-            self.busy = False
-            for button in self.query('Button'):
-                button.disabled = False
-
-
 class ViewerApp(ActionApp):
     TITLE = 'Caiman · Inspect'
+    BINDINGS = [Binding('e', 'edit', 'Edit', priority=True, show=False)]
 
-    def __init__(self, *, title, content):
+    def __init__(self, *, title, content, editable=False):
         super().__init__()
         self.heading = title
         self.content = content
+        self.editable = editable
+
+    def navigation_help(self):
+        if self.editable:
+            return 'NAVIGATE · j/k move · e edit · Enter press button · q back'
+        return super().navigation_help()
 
     def compose(self):
         yield Static('caiman  /  ' + self.heading.lower(), id='brand', markup=False)
@@ -188,11 +185,20 @@ class ViewerApp(ActionApp):
             yield TextArea(self.content, read_only=True, id='content', soft_wrap=True)
         yield self.navigation_hint()
         with Horizontal(id='navigation'):
-            yield Button('Back to dashboard', id='close', variant='primary')
-        yield Footer()
+            if self.editable:
+                yield Button('Edit', id='edit', variant='primary')
+            yield Button('Back', id='close', variant='primary' if not self.editable else 'default')
+
+    def check_action(self, action, parameters):
+        if action == 'edit':
+            return self.editable and not self.editing
+        return super().check_action(action, parameters)
+
+    def action_edit(self):
+        self.exit('edit')
 
     def on_button_pressed(self, event):
-        self.exit(None)
+        self.exit('edit' if event.button.id == 'edit' else None)
 
 
 class DocumentCatalogApp(ActionApp):
@@ -216,7 +222,6 @@ class DocumentCatalogApp(ActionApp):
         yield self.navigation_hint()
         with Horizontal(id='navigation'):
             yield Button('Back to dashboard', id='close', variant='primary')
-        yield Footer()
 
     async def on_mount(self):
         await self.refresh_catalog()
@@ -242,42 +247,37 @@ class DocumentCatalogApp(ActionApp):
             self.exit(None)
 
 
-def run_dashboard_action(action: str, root: Path, context: dict, compartments) -> dict | None:
-    """Run one dashboard action; return only explicitly registered selection changes."""
+def run_dashboard_action(action: str, root: Path, compartments) -> dict | None:
+    """Run one dashboard action; return the project or board it viewed or registered.
+
+    Editing starts from viewing: the board grid edits in Vim, and a viewed
+    project snapshot offers Edit, which opens the revision form and editor.
+    """
     try:
         if action == 'documents':
             DocumentCatalogApp(root=root, compartments=compartments).run()
             return None
-        operation, kind = action.split('-', 1)
-        if kind not in {'board', 'project'}:
+        if action == 'show-board':
+            from .board_edit import run_board_gallery
+            return run_board_gallery(root)
+        if action != 'show-project':
             raise ValueError('Unknown dashboard action')
-        selection = context.get(kind)
-        if operation == 'show':
-            if kind == 'board':
-                from .board_edit import run_board_gallery
-                return run_board_gallery(root, selection)
-            ViewerApp(title=f'{kind.capitalize()} snapshot', content=json.dumps(selection['manifest'], indent=2, ensure_ascii=False) +
-                      '\n\nManifest: ' + selection['digest']).run()
-            return None
-        if operation == 'edit':
-            draft = RevisionApp(kind=kind, selection=selection, root=root).run()
+        selection = ChooseApp(kind='project', root=root, compartments=compartments, purpose='view').run()
+        while selection is not None:
+            content = (json.dumps(selection['manifest'], indent=2, ensure_ascii=False) +
+                       '\n\nManifest: ' + selection['digest'])
+            if ViewerApp(title='Project snapshot', content=content, editable=True).run() != 'edit':
+                break
+            draft = RevisionApp(kind='project', selection=selection, root=root).run()
             if draft is None:
-                return None
-        elif operation in {'import', 'export', 'validate', 'template'}:
-            result = FileActionApp(operation=operation, kind=kind, root=root, selection=selection).run()
-            if result is None:
-                return None
-            if operation != 'import':
-                ViewerApp(title=result['title'], content=result['content']).run()
-                return None
-            draft = result['draft']
-        else:
-            raise ValueError('Unknown dashboard action')
-        from .config_tui import ConfigApp
-        editor = ConfigApp(kind=kind, store_root=root, draft=draft)
-        editor.run()
-        if editor.registration is not None:
-            return {kind: {'manifest': deepcopy(editor.prepared.manifest), 'digest': editor.registration.digest}}
+                continue
+            from .config_tui import ConfigApp
+            editor = ConfigApp(kind='project', store_root=root, draft=draft)
+            editor.run()
+            if editor.registration is not None:
+                # Show what was just registered, not the snapshot it came from.
+                selection = {'manifest': deepcopy(editor.prepared.manifest), 'digest': editor.registration.digest}
+        return selection
     except (OSError, ValueError) as error:
         ViewerApp(title='Action needs attention', content=str(error)).run()
     return None

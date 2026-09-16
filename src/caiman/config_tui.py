@@ -10,7 +10,7 @@ from pathlib import Path
 from textual.app import ComposeResult
 from caiman.navigation import NavigationApp
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Collapsible, Footer, Input, Label, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Label, Static, TextArea
 
 from caiman.config_files import template, unique_keys
 from caiman.config_store import ConfigurationService
@@ -23,7 +23,6 @@ class ConfigApp(NavigationApp):
     """Edit a configuration draft, resolve its pins, review, and register locally."""
 
     TITLE = "Caiman · Author configuration"
-    BINDINGS = [("ctrl+q", "cancel", "Cancel"), ("ctrl+r", "review", "Review")]
     CSS = TERMINAL_CSS + """
     #catalog { height: 14; }
     #resolved { height: 20; }
@@ -107,7 +106,6 @@ class ConfigApp(NavigationApp):
             yield Button("Review", id="next", variant="primary")
             yield Button("Cancel", id="cancel")
         yield self.navigation_hint()
-        yield Footer()
 
     @staticmethod
     def collection_hint(key: str) -> str:
