@@ -13,10 +13,9 @@ documents, a project must include **every** compartment assigned to the document
 Add a separate project compartment only when some information needs tighter
 sharing.
 
-The config keys `compartments` and `compartment`, and the CLI flag
-`--compartment`, retain their existing spelling. They refer to these same access
-groups; existing files and commands remain compatible. Architecture and storage
-documents also use the internal term *compartment*.
+The same word is used everywhere: the TUI, the config keys `compartments` and
+`compartment`, the CLI flag `--compartment`, error messages, and the architecture
+and storage documents.
 
 ## Launch
 
@@ -31,13 +30,12 @@ version, customer, compartments, and specification set, and you choose the
 registered board version it uses. Review before registering. Manuals and
 specifications can be added later: the initial document lists may be empty.
 
-`caiman ingest manual.md` opens the document form directly. Compartments of
+`caiman ingest manual.md` opens the document form directly. The compartments of
 projects you explicitly choose are remembered locally, so project lists can
 include them next time; you can enter additional compartments to find other
-projects. Caiman does not discover private projects by scanning undeclared
-compartments,
-and it never remembers which board or project you used. These preferences do not
-select an agent session mode.
+projects. Caiman never discovers private projects by scanning undeclared
+compartments, and it never remembers which board or project you used. This
+preference does not select an agent session mode.
 
 During ingestion, choose an existing project or board and its part to reuse
 declared metadata. You can create a new board or project from the same flow and
@@ -95,14 +93,18 @@ These keys are the whole scheme: there are no Ctrl shortcuts, and the only promp
 at the bottom of each screen is the mode hint.
 
 The shared terminal theme takes its colours from a real caiman: a pure black
-canvas, bright green accents, muted reed-coloured secondary text, and
-clearly outlined fields with a subtle fill and green
-focus borders. Labels sit directly above their fields; a divider separates the
-form from its navigation buttons. The home screen's top-right corner carries a
-solid green pixel-art caiman drawn with half-block characters (two square pixels per
-cell), with a raised eye, a smile, and four legs mid-stride.
-It hides on terminals too narrow or too short to fit it without crowding the tiles. The future native macOS app can reuse the
-same core without importing terminal widgets.
+canvas, bright green accents, and muted reed-coloured secondary text. Fields are
+clearly outlined, with a subtle fill and a green border when focused. Labels sit
+directly above their fields, and a divider separates the form from its navigation
+buttons.
+
+The home screen's top-right corner shows a solid green pixel-art caiman with a
+raised eye, a smile, and four legs mid-stride. It is drawn with half-block
+characters, two square pixels per cell, and hides when the terminal is too narrow
+or too short to fit it without crowding the tiles.
+
+A future native macOS app can reuse the same core without importing terminal
+widgets.
 
 ## Work with a config file
 
@@ -208,13 +210,12 @@ adopts a newer document or board revision.
 
 ### Board cards and Vim editing
 
-**View board** opens a grid of registered board versions, each card drawn in a
-dotted border. A card gives the board name, its version, the store digest, and
-the complete parts list, including declared silicon revisions, schematic
-references, and document counts. Each part takes two lines: role and part number,
-then its revision, reference, and document count. No card is marked as current;
-there is no default board. Narrow terminals use
-one column; Page Up/Down scroll cards with long parts lists.
+**View boards** opens a grid of registered board versions, each card drawn with
+a dotted border. A card gives the board name, its version, the store digest, and
+the complete parts list. Each part takes two lines: its role and part number,
+then its declared silicon revision, schematic reference, and document count. No
+card is marked as current, because there is no default board. Narrow terminals
+use one column; Page Up/Down scroll cards with long parts lists.
 
 Use `hjkl` to select a card and **Enter** or **e** to open its JSON configuration
 in Vim. Caiman releases the terminal while Vim is running. Edit the temporary
@@ -231,14 +232,14 @@ version, edit the version label and declare any desired lineage in the draft.
 
 ### Configuration forms and direct commands
 
-Open **View projects**, choose a project, and press **e** (or select **Edit**)
-on its snapshot. Boards are edited from the board grid in Vim, described above.
-In the project form, choose a new version label and explain its relationship to the
-previous version, or explicitly choose to replace the selected version's ref.
-The editor opens the complete snapshot, including its existing digest pins.
-Review the changes before registering. Editing a board does not automatically
-adopt that board into an existing project; edit the project separately when
-that adoption is intended.
+To edit a project, open **View projects**, choose one, and press **e** (or select
+**Edit**) on its snapshot. Boards are edited from the board grid in Vim, as
+described above. In the project form, either choose a new version label and
+explain how it relates to the previous version, or explicitly replace the
+selected version's ref. The editor opens the complete snapshot, including its
+existing digest pins; review the changes before registering. Editing a board
+does not adopt it into an existing project; edit the project separately when you
+want that.
 
 ```bash
 caiman board show example-board
