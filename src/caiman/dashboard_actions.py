@@ -58,8 +58,8 @@ class ChooseApp(ActionApp):
         yield Static(f'caiman  /  {self.purpose} {self.kind}', id='brand')
         with VerticalScroll(id='body'):
             if self.kind == 'project':
-                yield Label('Access groups to search (comma separated)')
-                yield Static('Usually one per customer, such as oem-alpha. Only projects in these groups are listed.', classes='hint')
+                yield Label('Compartments to search (comma separated)')
+                yield Static('Usually one per customer, such as oem-alpha. Only projects in these compartments are listed.', classes='hint')
                 yield Input(', '.join(self.compartments), id='compartments')
                 yield Button('Find projects', id='find')
             yield Label(f'{self.kind.capitalize()} version')
@@ -213,8 +213,8 @@ class DocumentCatalogApp(ActionApp):
     def compose(self):
         yield Static('caiman  /  registered documents', id='brand')
         with VerticalScroll(id='body'):
-            yield Label('Access groups (comma separated; public documents are always included)')
-            yield Static('Usually one group per customer, such as oem-alpha. Enter only groups you intend to access.', classes='hint')
+            yield Label('Compartments (comma separated; public documents are always included)')
+            yield Static('Usually one compartment per customer, such as oem-alpha. Enter only compartments you intend to access.', classes='hint')
             yield Input(', '.join(self.compartments), id='compartments')
             yield Button('Refresh catalog', id='refresh')
             yield TextArea('', read_only=True, id='content', soft_wrap=True)

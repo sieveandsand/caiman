@@ -65,8 +65,8 @@ class IngestApp(NavigationApp):
                     yield Select([], prompt="Select a part", id="board_part")
                     yield Button("Create board", id="create-board")
                 with VerticalScroll(id="project-context", classes="step"):
-                    yield from self.field("project_scope", "Access groups to search (comma separated)")
-                    yield Static("Usually one per customer, such as oem-alpha. Only projects in these groups are listed.", classes="hint")
+                    yield from self.field("project_scope", "Compartments to search (comma separated)")
+                    yield Static("Usually one per customer, such as oem-alpha. Only projects in these compartments are listed.", classes="hint")
                     yield Button("Find projects", id="find-projects")
                     yield Select([], prompt="Select a project version", id="project_choice")
                     yield Button("Create project", id="create-project")
@@ -83,11 +83,11 @@ class IngestApp(NavigationApp):
                     yield from self.field("pattern", "Requirement ID pattern")
                 yield from self.field("silicon_revisions", "Silicon revisions (comma separated; optional)")
                 yield Label("Access — choose explicitly")
-                yield Select([("Public", "public"), ("Private — access groups", "compartments")], prompt="Choose access", id="visibility")
+                yield Select([("Public", "public"), ("Private — compartments", "compartments")], prompt="Choose access", id="visibility")
                 yield Static("", id="error-labels", classes="error", markup=False)
                 with VerticalScroll(id="compartment-fields", classes="step"):
-                    yield from self.field("compartments", "Access groups (comma separated)")
-                    yield Static("Usually one per customer, such as oem-alpha. A project needs every group listed here to use this document.", classes="hint")
+                    yield from self.field("compartments", "Compartments (comma separated)")
+                    yield Static("Usually one per customer, such as oem-alpha. A project needs every compartment listed here to use this document.", classes="hint")
             with VerticalScroll(id="step-2", classes="step"):
                 yield Static("Provenance is optional. Continue to skip; missing information remains unknown.")
                 with Collapsible(title="Original source and converter", collapsed=True):
@@ -264,7 +264,7 @@ class IngestApp(NavigationApp):
             if selected and set(selected["manifest"]["compartments"]) <= scopes and not any(record["digest"] == selected["digest"] for record in self.projects):
                 self.projects.append({**selected, "name": selected["manifest"]["project"], "version": selected["manifest"]["version"], "compartment": selected["manifest"]["compartments"][0]})
             self.query_one("#project_choice", Select).set_options([(self.option_label(record), str(index)) for index, record in enumerate(self.projects)])
-            self.query_one("#context-status", Static).update(f"{len(self.projects)} projects in the selected access groups.")
+            self.query_one("#context-status", Static).update(f"{len(self.projects)} projects in the selected compartments.")
         except (OSError, ValueError) as error:
             self.query_one("#context-status", Static).update(str(error))
 
@@ -320,7 +320,7 @@ class IngestApp(NavigationApp):
         labels = manifest["labels"]
         source = manifest.get("source", {})
         converter = manifest.get("converter", {})
-        access = "Public" if labels["public"] else "Access groups: " + ", ".join(labels["compartments"])
+        access = "Public" if labels["public"] else "Compartments: " + ", ".join(labels["compartments"])
         hosted = {True: "Hosted", False: "Local"}.get(converter.get("hosted"), "Unknown")
         lines = [
             "Review before registering locally",

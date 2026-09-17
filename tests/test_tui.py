@@ -120,7 +120,7 @@ async def test_optional_errors_can_be_corrected_after_going_back(tmp_path):
         await advance(pilot)
         assert app.step == 3
         assert app.prepared.manifest["converter"] == {"version": "1.2"}
-        assert "Access groups: synthetic-program" in app.review_text()
+        assert "Compartments: synthetic-program" in app.review_text()
         assert "Conversion location: Unknown" in app.review_text()
         assert not (tmp_path / "store").exists()
 

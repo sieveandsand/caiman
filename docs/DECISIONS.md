@@ -614,15 +614,28 @@ other private compartments. Document registration does not silently revise
 existing board or project snapshots; adopting a document into their pinned sets
 remains an explicit configuration edit.
 
-The TUI presents compartments as **access groups**, with customer examples and
-an explanation that a project needs every group assigned to a document. This
-addresses the user's feedback that “compartment” is unclear in the interface.
-Storage keys and existing CLI flags retain their spelling for compatibility;
-this is a terminology change, not a change to access rules.
+The interface says **compartment**, the same word as the stored field, the CLI
+flag and the design documents. An earlier revision of this decision renamed it
+to “access group” in the TUI only, on the grounds that “compartment” reads as
+jargon. That was reverted: two names for one concept cost more than the jargon
+did, because error messages are machine-shaped but human-read, so a user who
+had only ever seen “access groups” was told that “projects must carry named
+compartments” on failure. One word everywhere, with the customer examples in
+the hint text carrying the explanation instead.
+
+Rejected alongside it: **ip**, which in firmware names an IP block or IP core
+long before it suggests anything about confidentiality, and Internet Protocol
+after that. A compartment also names a party rather than a thing owned, so the
+word is the wrong shape for what S-16 says the model is. **counterparty** is
+accurate and is what this document already calls it in prose, but it is not
+worth a breaking change to the stored `compartments` field in
+`caiman.document/1` and `caiman.project/1`.
 
 *Settled 2026-09-15 by user instruction: guide first-time board/project setup,
 then offer existing selections and creation actions during ingestion. Amended
-2026-09-16 by user instruction: remove the concept of a default board and project;
+2026-09-16 by user instruction: the interface says “compartment” everywhere,
+reverting the “access group” wording; remove the concept of a default board
+and project;
 the forced first-launch setup and saved selection went with it.*
 
 ---
@@ -856,7 +869,7 @@ Four gaps are real and open in `caiman.board/1`:
 |---|---|---|
 | **Leave `/1` alone** | No migration; the model stays minimal | Assembly documents stay unpinnable, which is a real hole rather than a deferred nicety |
 | **Notes only** — `note` on links and on document selectors | Two lines of validator; closes the inconsistency with every other declared relationship; no decision needed | Leaves assembly documents unpinnable |
-| **`caiman.board.v2` as drafted below** | Closes all four gaps; stored `caiman.board/1` snapshots stay valid and unmigrated (S-11), with readers accepting both | Splitting part identity makes v2 a breaking authoring change rather than a purely additive one; board-level documents contradict "a board version pins the vendor documentation for its parts" (`ARCHITECTURE.md` §6.5.1); `aliases` widens S-12's wording |
+| **`caiman.board.v2` as drafted below** | Closes all four gaps; stored `caiman.board/1` snapshots stay valid and unmigrated (S-11), with readers accepting both | Splitting part identity makes v2 a breaking authoring change rather than a purely additive one; board-level documents contradict "a board version pins the vendor documentation for its parts" (`ARCHITECTURE.md` §6.5.1); moving `refdes` into `aliases` amends S-12's wording |
 | **Industry parity** — features, nets, register data, toolchain glue | Importers map nearly field-for-field | Breaks S-01, I-5 and I-8 at once. Rejected |
 
 Draft of the third option. New and changed fields marked:
@@ -866,58 +879,76 @@ Draft of the third option. New and changed fields marked:
   "schema": "caiman.board.v2",
   "board": "falcon-mainboard",
   "version": "2.1",
-  "issuer": "acme",                                    // NEW
-  "description": "Dual-MCU safety mainboard.",         // NEW
+  "vendor": "acme",                                    // NEW
+  "notes": "Dual-MCU safety mainboard.",               // NEW, unstructured
   "derives_from": "2.0",
   "relation": "Adds the secure element; boot flash moved to QSPI.",
 
   "documents": [                                       // NEW, board level
     { "ref": "acme/falcon-mainboard/board-user-guide/2.1",
       "compartment": "public",
-      "note": "Connector pinout and jumper defaults." }  // NEW on selectors
+      "notes": "Connector pinout and jumper defaults." }  // NEW on selectors
   ],
 
   "parts": [
     { "role": "application-mcu",
-      "issuer": "nxp",                                 // CHANGED, was "nxp/s32k344"
+      "vendor": "nxp",                                 // CHANGED, was "nxp/s32k344"
       "part": "s32k344",
       "silicon_revision": "1.1",
-      "refdes": "U1",
-      "aliases": { "mpn": "S32K344EHTAR", "devicetree": "cpu0" },  // NEW
-      "note": "Runs the safety-rated application image.",          // NEW
+      "aliases": { "refdes": "U1", "mpn": "S32K344EHTAR", "devicetree": "cpu0" },  // NEW; refdes moved here
+      "notes": "Runs the safety-rated application image.",         // NEW, unstructured
       "documents": [
         { "ref": "nxp/s32k344/reference-manual/Rev%204",
           "compartment": "public",
-          "note": "Errata 051234 applies at this mask revision." } ] },
+          "notes": "Errata 051234 applies at this mask revision." } ] },
     { "role": "safety-companion",
-      "issuer": "ti",
+      "vendor": "ti",
       "part": "tps65313",
       "silicon_revision": "A",
-      "refdes": "U4",
       "documents": [] }
   ],
 
   "links": [
     { "name": "safety-link",
       "between": ["application-mcu.LPSPI1", "safety-companion.SPI"],
-      "note": "Watchdog handshake; the companion resets the MCU if the question and answer sequence stops." }  // NEW
+      "notes": "Watchdog handshake; the companion resets the MCU if the question and answer sequence stops." }  // NEW
   ]
 }
 ```
 
-`issuer` and `part` are separate on a part, matching `caiman.document/1` field for
-field. The name is `issuer`, not `vendor`, because that is what the store already
-calls it and what the first segment of a document ref already is; a reader should
-not have to learn that two words mean one thing. The cross-check in `_pin` becomes
-two field comparisons instead of rebuilt string equality, and a board part
-document can be required to carry a `part` rather than a `program`, which the
-packed form cannot express.
+`vendor` and `part` are separate on a part. The name is `vendor` because it is
+the word an engineer reaches for and the one CMSIS-Pack uses (`Dvendor`). The
+cross-check in `_pin` becomes two field comparisons instead of rebuilt string
+equality, and a board part document can be required to carry a `part` rather than
+a `program`, which the packed form cannot express.
 
-Board-level documents would resolve against `<issuer>/<board>`, mirroring the
-per-part rule, which makes the board's `issuer` required whenever they are
-present. `aliases` keys and values are declared strings that nothing interprets —
-the same standing `refdes` already has under S-12, generalized rather than
-special-cased.
+This diverges from `caiman.document/1`, which calls the same identity `issuer`, so
+the check compares `document.issuer` with `part.vendor`. That makes explicit an
+assumption the packed form hid: a board part's documents are issued by the part's
+vendor. It holds for vendor documentation, which is what a board pins; a
+third-party application note about a vendor's part would fail it. Reconcile the
+two words when `caiman.document` next revises, rather than leave a second
+`compartment`/access-group split in the stored schemas.
+
+Board-level documents would resolve against `<vendor>/<board>`, mirroring the
+per-part rule, which makes the board's `vendor` required whenever they are
+present.
+
+**`notes` is the one place for unstructured information**, on the board, on each
+part, on each link and on each document selector. Nothing parses it, validates its
+content, or branches on it; it is rendered, like every other human declaration
+under S-15. Every other field stays structured, so an agent or a reader can tell
+at a glance which text is a declared fact and which is commentary. The project
+schema still spells its equivalent `precedence[].note`, singular — reconcile it
+when `caiman.project` next revises.
+
+**`refdes` is removed as a field.** A reference designator moves into `aliases`
+alongside the other cross-domain identifiers, so `aliases` is justified by a real
+use rather than an imagined one: every `caiman.board/1` part carrying `refdes`
+maps to `aliases.refdes` in v2. S-12's rule is unchanged — a designator is still
+cross-reference metadata, never the identity and never the display name — but its
+wording, which names `refdes` as a field, should point at `aliases` once this is
+adopted. `aliases` keys and values are declared strings that nothing interprets.
 
 Migration follows from S-11 rather than needing machinery. Stored snapshots are
 immutable, so existing boards keep `caiman.board/1` and are never rewritten; the
@@ -951,8 +982,8 @@ have to carry for every part on every turn.
 *Leaning: take the notes now — they need no decision and close an inconsistency
 the design documents already assume is closed. Decide board-level documents
 against a real vendor evaluation board, not in the abstract; that is the half
-that changes §6.5.1. Hold `aliases` until a second namespace is actually needed,
-so it is not designed against one imagined use.*
+that changes §6.5.1. `aliases` no longer needs holding: absorbing `refdes` gives
+it a concrete first use from existing boards.*
 
 ---
 

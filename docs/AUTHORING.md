@@ -5,12 +5,13 @@ Registration stores a complete, immutable snapshot. Document and board reference
 resolve to digests before review; registration verifies those pins again without
 following updated tags. This implements S-28.
 
-## Access groups
+## Compartments
 
-The TUI calls confidentiality boundaries **access groups**. Usually, create one
-per customer, such as `oem-alpha`. Public documents need no group. For private
-documents, a project must include **every** group assigned to the document.
-Add a separate project group only when some information needs tighter sharing.
+A **compartment** is a confidentiality boundary. Usually, create one per
+customer, such as `oem-alpha`. Public documents need no compartment. For private
+documents, a project must include **every** compartment assigned to the document.
+Add a separate project compartment only when some information needs tighter
+sharing.
 
 The config keys `compartments` and `compartment`, and the CLI flag
 `--compartment`, retain their existing spelling. They refer to these same access
@@ -26,21 +27,22 @@ caiman
 Caiman opens the home screen. There is no default board or project: every action
 that works on one asks which, each time. **Create board** takes the board's
 identity, version, and first hardware part. **Create project** takes the codename,
-version, customer, access groups, and specification set, and you choose the
+version, customer, compartments, and specification set, and you choose the
 registered board version it uses. Review before registering. Manuals and
 specifications can be added later: the initial document lists may be empty.
 
-`caiman ingest manual.md` opens the document form directly. Access groups of
+`caiman ingest manual.md` opens the document form directly. Compartments of
 projects you explicitly choose are remembered locally, so project lists can
-include them next time; you can enter additional groups to find other projects.
-Caiman does not discover private projects by scanning undeclared access groups,
+include them next time; you can enter additional compartments to find other
+projects. Caiman does not discover private projects by scanning undeclared
+compartments,
 and it never remembers which board or project you used. These preferences do not
 select an agent session mode.
 
 During ingestion, choose an existing project or board and its part to reuse
 declared metadata. You can create a new board or project from the same flow and
 return to the document form without losing entered values. Program and
-access-group information come from the selected project; issuer and part identity
+compartment information come from the selected project; issuer and part identity
 come from the selected board part. A project's customer name is context, not an
 assumed document publisher identifier. Manual identity entry is also available.
 Always explicitly choose and review document access before registration.
@@ -60,9 +62,9 @@ Enter the top-level fields in the form. Edit parts and links (boards), or
 documents, precedence, and features (projects), in the JSON collection editors.
 Use **Refresh catalog** to see registered documents and copy exact references or
 digest pins. A board sees public documents; a project catalog uses the explicitly
-entered access groups in addition to public documents.
+entered compartments in addition to public documents.
 
-Select **Review**, inspect the identities, access groups, resolved pins, and
+Select **Review**, inspect the identities, compartments, resolved pins, and
 declared relationships, then **Register**. **Back to edit** invalidates the
 previous review. Cancellation before registration writes nothing to the store.
 The complete resolved JSON is available in an expandable review panel.
@@ -154,7 +156,7 @@ Boards contain no customer or project fields and may pin only public documents.
 | Field | Meaning |
 |---|---|
 | `project`, `version` | Program codename and opaque version label |
-| `customer`, `compartments` | Customer identity and a nonempty set of access groups (usually one per customer) |
+| `customer`, `compartments` | Customer identity and a nonempty set of compartments (usually one per customer) |
 | `board` | Explicit board `name` and `version`, with an optional existing `digest` pin |
 | `spec_set` | Human-declared frozen specification release |
 | `documents` | Selected specification documents |

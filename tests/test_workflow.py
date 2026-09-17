@@ -21,7 +21,7 @@ def test_state_remembers_explicit_project_scopes_privately(tmp_path):
     assert load_state(root) == {'authorized_compartments': ['synthetic-alpha']}
     path = root / '.authoring-state.json'
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    # Only access groups persist: no customer, and no remembered project.
+    # Only compartments persist: no customer, and no remembered project.
     text = path.read_text()
     assert 'customer' not in text and 'demo' not in text and 'sha256' not in text
 

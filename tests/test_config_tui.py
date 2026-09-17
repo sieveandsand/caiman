@@ -103,7 +103,7 @@ async def test_project_catalog_scope_review_and_real_registration(tmp_path):
         assert app.reviewing, str(app.query_one("#status", Static).render())
         assert app.prepared.manifest["board"]["digest"] == board.digest
         assert app.prepared.manifest["documents"][0]["digest"] == pin["digest"]
-        assert "Access groups: synthetic-alpha" in app.review_text()
+        assert "Compartments: synthetic-alpha" in app.review_text()
         assert "Selected by digest" in app.review_text()
         assert "timing: required" in app.review_text()
         assert "Synthetic declared override" in app.review_text()

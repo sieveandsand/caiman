@@ -58,8 +58,8 @@ class SetupApp(NavigationApp):
                     yield Label('Board version')
                     yield Select([], prompt='Choose a registered board', id='board-choice')
                     yield from self.field('customer', 'Customer identity')
-                    yield from self.field('compartments', 'Project access groups (comma separated; required)')
-                    yield Static('Usually one per customer, such as oem-alpha. A project must include every group required by a document to use it.', classes='hint')
+                    yield from self.field('compartments', 'Project compartments (comma separated; required)')
+                    yield Static('Usually one per customer, such as oem-alpha. A project must include every compartment required by a document to use it.', classes='hint')
                     yield from self.field('spec_set', 'Specification set (exact release label)')
             yield Static('', id='review', markup=False)
         yield Static('', id='status', markup=False)
@@ -151,7 +151,7 @@ class SetupApp(NavigationApp):
         else:
             board = manifest['board']
             lines.extend([f"Customer: {manifest['customer']}",
-                          'Access groups: ' + ', '.join(manifest['compartments']),
+                          'Compartments: ' + ', '.join(manifest['compartments']),
                           f"Board: {board['name']} @ {board['version']}",
                           f"Board digest: {board['digest']}",
                           f"Specification set: {manifest['spec_set']}",

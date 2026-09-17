@@ -1,4 +1,4 @@
-"""Interactive launcher and private, explicitly chosen access-group preferences."""
+"""Interactive launcher and private, explicitly chosen compartment preferences."""
 
 from copy import deepcopy
 import json
@@ -33,7 +33,7 @@ def save_state(root: Path, state: dict) -> None:
 
 
 def remember_compartments(root: Path, state: dict, selections) -> None:
-    """Remember access groups of explicitly chosen projects; never which project."""
+    """Remember compartments of explicitly chosen projects; never which project."""
     scopes = set(state['authorized_compartments'])
     for selection in selections:
         manifest = (selection or {}).get('manifest', {})

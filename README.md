@@ -94,9 +94,9 @@ becomes a default: later actions ask which board or project to use. They can
 start with no documents. Use your hardware and project details, or synthetic
 values such as board `example-board`, version `Rev A`, part `example/example-mcu`,
 project `example-program`, version `Prototype`, customer `Synthetic Example
-Customer`, and access group `example-customer`. An access group keeps one
+Customer`, and compartment `example-customer`. A compartment keeps one
 customer's private documents separate from another's; usually use one per
-customer. Config files call these groups `compartments`.
+customer.
 
 The home screen provides document actions plus **Create** and **View** for
 boards and projects; press `e` while viewing a board or project to edit it. Use

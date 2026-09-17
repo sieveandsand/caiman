@@ -77,8 +77,8 @@ class ConfigApp(NavigationApp):
                     yield from self.field("customer", "Customer identity (private project information)")
                     compartments = self.draft.get("compartments", [])
                     compartment_text = ", ".join(compartments)
-                    yield from self.field("compartments", "Access groups (comma separated; required)", compartment_text)
-                    yield Static("Usually one per customer, such as oem-alpha. A project must include every group required by a document to use it.", classes="hint")
+                    yield from self.field("compartments", "Compartments (comma separated; required)", compartment_text)
+                    yield Static("Usually one per customer, such as oem-alpha. A project must include every compartment required by a document to use it.", classes="hint")
                     board = self.draft.get("board", {})
                     yield from self.field("board_name", "Board name", board.get("name", ""))
                     yield from self.field("board_version", "Board version", board.get("version", ""))
@@ -87,7 +87,7 @@ class ConfigApp(NavigationApp):
                 else:
                     yield Static("Board manifests are public. Keep customer information in projects.", classes="hint")
                 with Collapsible(title="Registered document catalog · copy exact pins", collapsed=True):
-                    yield Static("Refresh to list public documents" + (" and documents in the access groups entered above." if self.kind == "project" else "."), classes="hint")
+                    yield Static("Refresh to list public documents" + (" and documents in the compartments entered above." if self.kind == "project" else "."), classes="hint")
                     yield Button("Refresh catalog", id="refresh-catalog")
                     yield Static("", id="catalog-status", markup=False)
                     yield TextArea("", read_only=True, id="catalog", soft_wrap=True)
@@ -203,7 +203,7 @@ class ConfigApp(NavigationApp):
             board = manifest["board"]
             lines.extend([
                 f"Customer: {manifest['customer']}",
-                "Access groups: " + ", ".join(manifest["compartments"]),
+                "Compartments: " + ", ".join(manifest["compartments"]),
                 f"Board: {board['name']} @ {board['version']}",
                 f"Board digest: {board['digest']}",
                 f"Specification set: {manifest.get('spec_set', '')}",

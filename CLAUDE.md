@@ -234,7 +234,7 @@ The implementation is a Python package under `src/caiman/`: `cli.py`, `tui.py`,
 `ingest.py`, `models.py`, and `store.py` for documents; `configuration.py`,
 `config_store.py`, `config_files.py`, and `config_tui.py` for board/project
 authoring; `onboarding.py` and `workflow.py` for board/project creation, the home
-screen, and remembered access groups (never a default board or project);
+screen, and remembered compartments (never a default board or project);
 `dashboard_actions.py` for choosing a configuration and interactive edit, file,
 and catalog actions; `navigation.py` for shared Vim-style form and
 dashboard controls; `board_gallery.py`, `board_edit.py`, and `external_editor.py`
