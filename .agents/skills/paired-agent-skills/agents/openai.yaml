@@ -1,0 +1,3 @@
+interface:
+  display_name: "Paired Agent Skills"
+  short_description: "Keep custom skills paired for Claude Code and Codex"
