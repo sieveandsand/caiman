@@ -11,37 +11,23 @@ control, and the security test list.
 
 ## 1. Summary
 
-**The human picks the agent, and Caiman makes that choice consequential.** There
-is no software boundary here, by design.
+Caiman filters the documents written into a workspace according to explicit
+labels, project compartments, and a human-selected mode. It does not verify the
+model's authorization or isolate its process. A mistaken `sealed` choice can
+expose restricted documents.
 
-What exists instead is a decision made at the moment the human knows what the
-work is, plus a materialization step that makes a wrong choice surface as a
-missing file rather than a silent disclosure. Both error directions fail safe.
-
-Being precise about the limits matters more than claiming broad protection. A
-control that feels enforced but is not is worse than no control, because it
-invites false confidence.
-
----
+This is the target design; session materialization and audit hooks are not yet
+implemented. G17–G25 track unresolved assumptions and conflicting requirements.
 
 ## 2. Threat Model
 
 ### 2.1 What is being defended
 
-Two kinds of document arrive under something called an NDA, and treating them the
-same forces the expensive treatment onto the cheap case.
-
-| | Chip vendor documentation | Customer specifications |
-|---|---|---|
-| Examples | Reference manuals, datasheets, errata | Requirements for secure boot, SecOC, flashing, diagnostics; program deviations |
-| Who holds it | Hundreds of suppliers, click-through agreements, widely mirrored | A handful of suppliers |
-| Identifiable as whose? | No | Yes, from the contents |
-| Likely already in model training data | Yes | No |
-| Cost of a leak | Low | Commercial event with the party whose business you are keeping |
-| **Treatment** | **Public** | **Compartmented** |
-
-This is a deliberate prioritization. If a genuinely restricted vendor document
-arrives, the compartment mechanism handles it with no new machinery.
+The initial policy treats ordinary vendor manuals as public to sessions and
+customer specifications as compartmented (S-16). Restricted vendor documents
+can also be compartmented. “Public” here does not grant redistribution rights.
+Labels must be explicitly supplied; neither document contents nor missing
+provenance establishes permission.
 
 ### 2.2 The failure being prevented
 
@@ -67,84 +53,66 @@ else is contract plus diligence, with software raising the friction.
 
 ## 3. Classification
 
-There is no sensitivity scale. A document is either **public** or carries one or
-more **compartments** naming whose secret it is.
-
-A sensitivity scale cannot express what this data needs. Two customers'
-specifications are equally confidential and must be mutually invisible; whatever
-numbers you assign, one is greater than or equal to the other and sees it.
-Compartments are categories, not levels — membership in one tells you nothing
-about another.
+Every document is either explicitly **public** or belongs to **exactly one
+compartment**. A compartment names the group permitted to access it, such as a
+customer or project. Compartments are the storage and remote access boundaries;
+there is no separate domain abstraction (S-33).
 
 | Document | Label |
 |---|---|
 | NXP S32K3 reference manual | `public` |
 | OEM Alpha base spec set 3.2 | `compartment:oem-alpha` |
-| Falcon program deviations | `compartment:oem-alpha`, `compartment:falcon` |
+| Falcon program deviations | `compartment:falcon` |
 | OEM Beta spec set 2.0 | `compartment:oem-beta` |
 
-A project declares its compartments; a session inherits them from its project. A
-document is visible when its compartments are a **subset** of the session's. A
-Falcon session holds `oem-alpha` and `falcon`, so it sees rows one through three
-and never row four — not because row four is more secret, but because it belongs
-to someone else.
+A project/session may refer to several compartments because its documents can
+belong to different groups. A private document is eligible only when its one
+compartment is in the declared scope; public documents remain eligible in open
+mode. A Falcon session with `oem-alpha` and `falcon` can include the first three
+rows. Each teammate also needs host permission to fetch the corresponding private
+repositories. Config access does not grant access to its document dependencies.
 
-**Default to per-counterparty.** That is how the agreement is written, and it
-lets a base specification be shared across that customer's programs. Add a
-program compartment only to documents needing tighter scope, as in row three.
-Nothing needs migrating if you start simple and tighten later.
+The stored `labels.compartments` array is retained: public documents have `[]`,
+private documents have exactly one name. Multiple entries, including duplicates,
+are rejected at ingestion, registration and read time. Do not silently select a
+label or reinterpret an old multi-compartment object. Explicitly re-ingest it
+with one reviewed classification and update dependent pins; old bytes are not
+rewritten. Missing labels still fail closed.
 
-**Missing labels mean unreachable.** Neither public nor compartmented is not a
-third state; it is invisible (I-1). Both labels are supplied by a human at registration from
-provenance, never inferred from content, and never widened downstream. The label
-set applies to the entire unchanged Markdown document (S-25); there are no
-section- or chunk-level labels.
+Choose a customer compartment for shared customer material or a project
+compartment for project-specific material. Access to several groups belongs on
+the user/project/session, not as multiple labels on one document. The proposed
+Git backend uses one private repository per compartment, with a separate private
+repository for explicitly public material.
+
+Labels apply to the entire unchanged Markdown document and are supplied by a
+human from provenance, never inferred from its contents or filename. The generic
+scope representation and current multi-compartment project validation remain
+unchanged by the document-cardinality rule.
 
 ---
 
 ## 4. Why Content Inspection Cannot Work
 
-Commercial AI gateways classify by inspecting content — PII, PHI, credentials,
-regulated identifiers. None of those detectors fires on a register offset. There
-is no classifier for "confidential hardware specification", and there will not
-be, because confidentiality here is a property of *where the text came from*, not
-what it looks like.
-
-Chunking makes it worse: confidentiality is contextual, and a fragment stripped
-of its document is unclassifiable on its face.
-
-Hence provenance-carried labels. The label is deterministic and is the actual
-control. Content inspection, if ever added, is a second net and never the first.
-
----
+Document text does not establish who may receive it. The same technical fact can
+appear in a public manual or a restricted customer specification. Humans assign
+labels from provenance and the applicable agreement; content inspection cannot
+replace that declaration (S-03).
 
 ## 5. The Control
 
 ### 5.1 Why the decision sits with the human
 
-Every mechanism considered and rejected — a server that refuses, a kernel that
-returns `EACCES`, a filter that excludes — acts at the moment of *read*. At read
-time nothing knows what the work is for.
-
-At session start the human knows exactly: "I'm adding a diagnostic routine for
-Falcon" or "I'm fixing a CAN driver bug." The harness is already interrupting
-them to ask which project. Asking which agent costs nothing.
-
-There is also no alternative. **Model identity cannot be verified.** A process
-cannot tell which model is behind a caller; there is no attestation and no signed
-model identity. A check of the form "only allow self-hosted models" is the caller
-asserting its own identity, which is not a control.
+The engineer selects the model and decides which material it may receive.
+Caiman has no model-attestation mechanism. [S-19](DECISIONS.md#s-19-the-human-declares-the-session-mode-caiman-holds-no-agent-policy)
+records why the former agent-name policy was removed.
 
 ### 5.2 Differential materialization makes it consequential
 
-Human routing alone would be a policy in a document. What makes it a control is
-that Caiman materializes a different document set depending on the mode the human
-declares.
-
-| Mistake | Consequence |
-|---|---|
-| Chose `open`; work needs specifications | Material is absent. The agent reports it and the engineer restarts sealed. Loud, harmless, self-correcting |
-| Chose `sealed`; work was generic | A local model did work it did not need to. Slower; no disclosure |
+An `open` workspace omits compartmented documents. A `sealed` workspace includes
+eligible project pins. Missing documents can prompt a correction, but the agent
+may still guess. Selecting `sealed` does not imply a local or authorized model;
+that remains the engineer's responsibility.
 
 ### 5.3 The human declares the mode; Caiman stores no policy
 
@@ -165,54 +133,18 @@ fail closed *about*, because there is no lookup.
 
 #### Why there is no agent map
 
-An earlier version of this design had Caiman own
-`~/.config/caiman/agents.toml`, mapping agent names to what they could receive:
-`claude-code → public`, `codex-local → all`. It was removed.
-
-The map was an indirection between the human's decision and its effect, and it
-introduced three problems that the direct form does not have:
-
-1. **It had to be hand-maintained**, and it did not travel with the store, so two
-   machines could silently hold different policy.
-2. **It invented a vocabulary** — agent names — that nothing else defined and no
-   user could discover.
-3. **It could be wrong, silently.** A profile keyed on an agent name asserts
-   something about the *model*, and one harness can drive either kind. A map
-   saying `claude-code → public` is false the moment that harness is pointed at a
-   local model, and false in the other direction too.
-
-The third is disqualifying. A control that can be systematically wrong while
-appearing authoritative is the "shape of a gate with none of the substance" this
-document warns about in §5.1 — the same reason model identity checks were
-rejected. Removing it is not a relaxation of §5.1; it is §5.1 applied
-consistently.
-
-What replaces it is what §5.1 already argued for: the human knows, at session
-start, what model they are about to run and what the work touches. Asking them
-directly is strictly more accurate than asking a file that was written months ago
-about a name.
+See S-19 for the retired map and its trade-offs. Any future convenience layer
+may narrow the selected mode, never widen it.
 
 #### What this costs
 
-**A guardrail against a momentary lapse.** With a map, `claude-code` always
-resolved to `open`, so a distracted engineer could not accidentally hand a
-frontier session the full document set. Now they can, by typing `sealed`.
-
-That is a real loss, and it is accepted because the guardrail only worked when
-the map was right, and problem 3 says it cannot be relied on to be. A convenience
-layer could return later — a per-machine default a human opts into — on one
-condition: **it may narrow the mode, never widen it.** A file that can silently
-grant more than the human intended reintroduces exactly the failure just removed.
+There is no automatic guard against selecting `sealed` for an unauthorized
+model. Caiman must not describe either mode as model attestation.
 
 #### The audit annotation
 
-The hook adapter passes `--agent-label claude-code` because it is
-harness-specific and therefore knows which harness it is. This is recorded in the
-materialization log (§9.1) and is **not** an input to any decision.
-
-It is unverified as to the model — it names the harness, not what the harness is
-pointed at — and the log records it that way. A label is documentation; the mode
-is the decision.
+`--agent-label` records an unverified harness name in the materialization log.
+It is never an input to access decisions.
 
 ### 5.4 The agent is told, not merely constrained
 
@@ -226,56 +158,32 @@ session — do not infer, approximate, or work around a specification you
 cannot read.
 ```
 
-Twenty tokens, and it makes the agent a participant rather than something to be
-contained. It catches the case differential materialization alone would leave as
-a confusing absence.
+This explains an omission that would otherwise look like missing project data.
 
 Nothing enforces it. An agent can still guess, and a guess about a customer
 requirement is precisely the failure this system exists to prevent. That is a
 residual risk of the model, not a defect to be fixed.
 
-### 5.5 The brief is open, and that is safe
+<a id="55-the-brief-is-open-and-that-is-safe"></a>
 
-The brief describes parts, roles, links, mandated features, and the frozen
-specification release. It is public for every project, including those whose
-documentation is entirely compartmented.
+### 5.5 Brief visibility and its assumptions
 
-The reasoning is that existence is structure and detail is content. That a board
-contains a secure element, and that a program requires SecOC, are facts about the
-design. What the part's register map and the customer's specification *say* are
-facts from confidential documents.
+S-09/I-6 require an always-visible brief generated from manifests, with no access
+to document bodies and no customer legal identity. The program uses a codename.
 
-This buys one brief instead of two, and an agent that knows the restricted parts
-and features exist rather than being unaware of components on its own board —
-a different and arguably worse failure than knowing the wrong thing about them.
-
-Two obligations follow:
-
-**The generator cannot read document content** (I-6). It reads manifests only:
-names, versions, labels, digests. It cannot quote a register name, a timing
-value, or a requirement, because it cannot see them. Structural, not a filter —
-a filter can be bypassed by a later feature; a missing capability cannot.
-
-**The customer appears only by codename.** "We are building for OEM X" is
-frequently itself under NDA, and the customer *is* structure, so the reasoning
-above would wave it straight through. Programs have codenames precisely so people
-can discuss them. The legal identity stays in a compartmented project manifest.
-
-A residual case: if the existence of a program is secret to the point that a
-codename in a shared repository is too much, this model does not cover it. That
-would mean compartmenting the registry's listing, not just its contents. Not in
-scope; recorded so it is a decision rather than an oversight.
-
----
+Part selections, topology,
+feature names, document identities, and release names may themselves be
+confidential. G17 tracks review of that assumption; no visibility-policy change
+is settled here.
 
 ## 6. Enforcement Points, Ranked Honestly
 
 | # | Point | What it is | Strength |
 |---|---|---|---|
 | 1 | Human agent selection | The real decision, made with full knowledge of the task | Not enforced. It is a choice |
-| 2 | Differential materialization | A property of what exists on disk, not a claim any caller makes | Strong against accidents. An agent cannot read a file that was never written |
-| 3 | Store permissions | Compartments are separate trees at mode `0700` | Enforced by the kernel. A process without access fails at `open()` |
-| 3b | Remote repository access | One private repository for the whole store | Enforced by the host, at store granularity rather than per compartment. Adequate while there is one user; §7.3 states the migration |
+| 2 | Differential materialization | A property of what exists on disk, not a claim any caller makes | Limits the workspace document set; does not block access through other paths |
+| 3 | Store permissions | Compartments are separate trees at mode `0700` | Separates OS users; does not isolate processes running as the owner |
+| 3b | Remote repository access | One private repository per compartment | Planned transport; the Git host enforces repository access. Caiman does not hide files from a repository reader |
 | 4 | Label correctness | One generator for write-time and filter-time (I-2); fail closed on absence (I-1) | Strong for correctness. Does nothing about a session bypassing Caiman |
 
 There are exactly three fail-closed points, and they are distinct failure paths
@@ -302,8 +210,8 @@ form is the design hardest to reason about and easiest to get quietly wrong.
 This rule is carried entirely by human discipline. It is stated here rather than
 implied to be enforced.
 
-The brief is not an exception. It carries no confidential facts — only the
-structure of the board and program — which is exactly why it goes to any session.
+The brief follows the metadata-only rule; its visibility assumption is under
+review in G17 (§5.5).
 
 ### 7.2 Conversion happens outside Caiman
 
@@ -334,48 +242,20 @@ in the ingest checklist, not in the list of enforced controls.
 
 ### 7.3 The store is hosted by a third party, and its history is permanent
 
-The store is kept in git, in one private repository on GitHub (S-22). Three
-things follow.
+A private remote still gives the host a copy of the material. Check hosting
+permission per counterparty before publication. Privacy settings do not answer
+that question.
 
-**A third party holds the material.** Putting a customer's specification on
-GitHub means GitHub holds it. This is a question for the agreement, not a
-technical detail, and it is the same question Phase 0 asks about model providers
-— extended from processing to storage.
+S-33 supersedes the one-repository proposal: teammates have different access,
+so each compartment has its own private repository. Anyone with repository read
+access can obtain its entire history; local catalog filtering is not a remote
+access control. Repository administration and transport remain to be implemented.
 
-The default is one remote for everything, so this is one decision rather than
-one per counterparty. A customer whose agreement forbids third-party storage is
-handled by a **per-compartment remote override** — self-hosted, or none at all —
-without changing anything else (`STORAGE.md` §6.6.2).
-
-**There is no compartment separation on the remote.** One repository means one
-access boundary: anyone who can read it reads every compartment. This is
-deliberate and is adequate while there is one user — the separation that does the
-work is differential materialization (§5.2) and local file modes. It stops being
-adequate the moment a collaborator needs one compartment and not others, and the
-migration is to split that compartment into its own repository
-(`STORAGE.md` §6.6.2). Cheap by construction, because the store's value is its
-current tree rather than its history.
-
-One consequence today: a visibility mistake exposes everything rather than one
-customer. Push verifies the remote is private before sending anything, and
-`caiman init` deliberately does not create the repository, so the visibility
-choice stays an explicit human act.
-
-**Push is effectively irreversible.** Git history is permanent, so the deletion
-step in §8 is only cheap before a push:
-
-| Where the mistake is | Cost to fix |
-|---|---|
-| Working tree, uncommitted | Delete the file |
-| Committed locally, not pushed | `git reset`; nothing left the machine |
-| Pushed | History rewrite, force push, every clone reset, and a request to the host to clear cached views. Forks and CI caches may retain it regardless |
-
-So **ingest never pushes**. Publishing is a separate command with a label-review
-step, placed there deliberately: it is the only window in which the cheap fix
-exists (`STORAGE.md` §7.6, §9.5).
-
-Treat a push of a compartmented document with the same care as sending that
-document to a third party, because that is what it is.
+Git deletion does not remove earlier copies from history, clones, or host caches.
+Ingest therefore never pushes. Publication is separate and requires label review;
+[Storage §7.6](STORAGE.md#76-push-and-pull) owns that workflow and
+[§9.5](STORAGE.md#95-git-history-is-permanent-and-revocation-is-worse-because-of-it)
+explains its limits.
 
 ### 7.4 Harness residue
 
@@ -387,7 +267,7 @@ Consequences:
 
 - **Materialization is not reversible.** The revocation procedure in §8 removes
   the copy Caiman controls, not the transcript.
-- The gap is bounded for `public`-only profiles, because there is nothing
+- The gap is bounded for `open` sessions, because there is nothing
   compartmented to copy. It is **not** bounded for any agent with
   a `sealed` session.
 
@@ -479,20 +359,9 @@ this guards against is someone treating a gap as an all-clear.
 
 ### 9.3 What the access log actually buys
 
-The strongest argument for it is not compliance reporting. It is §7.4.
-
-Harness transcripts persist plaintext of every file an agent reads, outside
-Caiman's reach, indefinitely. Until now the forensic question — *which
-compartmented documents are sitting in which transcript* — had no answer, which
-made the residue an unbounded unknown.
-
-The access log answers it. If session `a3f9` recorded reads of three OEM Alpha
-documents, those three are what its transcript holds. That converts residue from
-"unknown quantity of unknown material" into an enumerable list, which is the
-difference between a gap you can act on and one you can only worry about.
-
-It is imperfect in the same ways §9.2 lists. It is still the only instrument
-pointed at that gap.
+Observed reads help identify documents that may remain in session transcripts.
+They provide leads for an investigation, not a complete inventory of transcript
+contents or proof that unrecorded documents were never read.
 
 ### 9.4 Storage and sensitivity
 
@@ -537,7 +406,7 @@ Write these before the mechanism they test.
 | S-T3 | Materialize for a project in compartment B | Nothing from compartment A appears |
 | S-T4 | Materialize with `--mode open` | No compartmented document, for any project |
 | S-T5 | Materialize with `--mode` omitted | Fails; nothing written. No implicit default |
-| S-T6 | A document carrying two compartments, session holds one | Not materialized |
+| S-T6 | A document carries multiple compartment entries, including duplicates | Rejected on ingestion, registration and read, even if the caller holds every named compartment; no refs published |
 | S-T7 | Write-time and filter-time label generation, property-tested | Identical output across generated inputs |
 | S-T8 | Generate a brief for a project with compartmented documents | No document body text appears |
 | S-T9 | Generate a brief; search for the customer string from the project manifest | Absent |
@@ -555,7 +424,7 @@ Write these before the mechanism they test.
 | S-T21 | Select an existing board or project during document ingestion | Metadata reuse does not assert public access; registration still requires explicit document labels |
 
 Architecture-level tests are in `ARCHITECTURE.md` §13; storage-level tests are in
-`STORAGE.md` §11. These three lists do not overlap.
+`STORAGE.md` §11. Some tests cover more than one layer; preserve their IDs when cross-referencing.
 
 ---
 
@@ -570,5 +439,5 @@ the options are not rediscovered.
 | **Encrypted disk image (macOS)** | `hdiutil create -encryption AES-256 -type SPARSEBUNDLE`, mounted only for sealed work, key in Keychain | Detached, the documents are ciphertext rather than merely unreadable. Sidesteps the multi-user pain; "did I unmount" is easier discipline than "am I the right user". The better option on this platform |
 | **Egress control** | Point the harness at a self-hosted gateway; block direct egress to model APIs at the firewall | An existing product category. Relevant only if human routing proves insufficient in practice |
 
-Note that none of these reaches harness residue (§7.3), which lives under `$HOME`
+Note that none of these reaches harness residue (§7.4), which lives under `$HOME`
 rather than in the document tree.

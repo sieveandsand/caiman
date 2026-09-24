@@ -3,7 +3,7 @@
 from copy import deepcopy
 import re
 
-from .models import ValidationError, valid_identifier
+from caiman.documents.models import ValidationError, accepted_schemas, current_schema, valid_identifier
 
 
 def _text(value):
@@ -79,6 +79,8 @@ class _Validator:
                 self.error(path + '.compartment', 'Document compartment is outside this configuration')
         if 'note' in value:
             self.string(value['note'], path + '.note')
+        if 'notes' in value:
+            self.string(value['notes'], path + '.notes')
         if 'requirements' in value:
             self.strings(value['requirements'], path + '.requirements', nonempty=True)
 
@@ -107,15 +109,28 @@ class _Validator:
         return data
 
 
+def declared_schema(data, kind):
+    """The accepted literal a snapshot declares, or the current one when absent.
+
+    Peeked before validation because the board's field rules follow its schema
+    version. An unrecognised literal reads as the current one here and is
+    reported by ``_base``.
+    """
+    declared = data.get('schema') if isinstance(data, dict) else None
+    return declared if declared in accepted_schemas(kind) else current_schema(kind)
+
+
 def _base(data, kind, allowed, required):
     validator = _Validator()
     if not validator.object(data, '', allowed | {'schema', 'derives_from', 'relation'}, required):
         validator.finish(data)
     data = deepcopy(data)
-    schema = f'caiman.{kind}/1'
-    if 'schema' in data and data['schema'] != schema:
-        validator.error('schema', f'Expected {schema}')
-    data['schema'] = schema
+    accepted = accepted_schemas(kind)
+    if 'schema' in data and data['schema'] not in accepted:
+        validator.error('schema', 'Expected ' + ' or '.join(accepted))
+    # Default, never overwrite: rewriting a stored literal would change the
+    # canonical bytes of a snapshot that is supposed to be immutable.
+    data.setdefault('schema', current_schema(kind))
     validator.string(data.get(kind), kind, True)
     validator.string(data.get('version'), 'version')
     validator.lineage(data)
@@ -133,12 +148,77 @@ def _endpoint(value, roles, validator, path):
     validator.error(path, 'Endpoint must name a declared part role or role.PERIPHERAL')
 
 
+LEGACY_BOARD_SCHEMA = 'caiman.board/1'
+
+
+def board_is_legacy(data) -> bool:
+    """True for a `caiman.board/1` snapshot: packed part identity, no notes."""
+    return declared_schema(data, 'board') == LEGACY_BOARD_SCHEMA
+
+
+def part_identity(part: dict) -> str:
+    """Render `vendor/part` from either schema; v1 already packs the two."""
+    if not isinstance(part, dict):
+        return ''
+    vendor, identity = part.get('vendor'), part.get('part', '')
+    return f'{vendor}/{identity}' if vendor else str(identity)
+
+
+def part_vendor_and_part(part: dict) -> tuple[str, str]:
+    """Split identity for either schema; v1 packs vendor and part into one field."""
+    if not isinstance(part, dict):
+        return '', ''
+    if part.get('vendor'):
+        return part['vendor'], str(part.get('part', ''))
+    vendor, _, name = str(part.get('part', '')).partition('/')
+    return vendor, name
+
+
+def part_aliases(part: dict) -> dict:
+    """Cross-domain identifiers, lifting a v1 `refdes` into the v2 shape."""
+    if not isinstance(part, dict):
+        return {}
+    aliases = dict(part.get('aliases') or {})
+    if part.get('refdes') and 'refdes' not in aliases:
+        aliases['refdes'] = part['refdes']
+    return aliases
+
+
+def _aliases(value, validator, path):
+    """Declared strings that nothing interprets; only their shape is checked."""
+    if not isinstance(value, dict) or not value:
+        validator.error(path, 'Expected a nonempty object of cross-domain identifiers')
+        return
+    for key in sorted(value, key=str):
+        if not valid_identifier(key):
+            validator.error(path, 'Alias names use letters, digits, dots, hyphens or underscores')
+        else:
+            validator.string(value[key], f'{path}.{key}')
+
+
 def validate_board(data: dict) -> dict:
-    validator, data = _base(data, 'board', {'board', 'version', 'parts', 'links'}, {'board', 'version', 'parts'})
+    legacy = board_is_legacy(data)
+    allowed = {'board', 'version', 'parts', 'links'}
+    if not legacy:
+        allowed |= {'vendor', 'notes', 'documents'}
+    validator, data = _base(data, 'board', allowed, {'board', 'version', 'parts'})
+    if not legacy:
+        if 'vendor' in data:
+            validator.string(data['vendor'], 'vendor', True)
+        if 'notes' in data:
+            validator.string(data['notes'], 'notes')
+        # Board-level documents resolve against <vendor>/<board>, mirroring the
+        # per-part rule, so the board's own vendor becomes required with them.
+        if data.get('documents') and 'vendor' not in data:
+            validator.error('vendor', 'Board-level documents need the vendor that issues them')
+        validator.selectors(data.get('documents', []), 'documents', {'public'}, ('notes',), board=True)
+    part_fields = {'role', 'part', 'silicon_revision', 'documents'}
+    part_fields |= {'refdes'} if legacy else {'vendor', 'aliases', 'notes'}
+    part_required = {'role', 'part', 'documents'} | (set() if legacy else {'vendor'})
     roles = set()
     for index, part in enumerate(validator.sequence(data.get('parts'), 'parts', True)):
         path = f'parts.{index}'
-        if not validator.object(part, path, {'role', 'part', 'silicon_revision', 'refdes', 'documents'}, {'role', 'part', 'documents'}):
+        if not validator.object(part, path, part_fields, part_required):
             continue
         role = part.get('role')
         if validator.string(role, path + '.role', True):
@@ -146,17 +226,29 @@ def validate_board(data: dict) -> dict:
                 validator.error(path + '.role', 'Duplicate part role')
             roles.add(role)
         identity = part.get('part')
-        if not isinstance(identity, str) or len(identity.split('/')) != 2 or not all(valid_identifier(x) for x in identity.split('/')):
-            validator.error(path + '.part', 'Expected issuer/part identity')
+        if legacy:
+            if not isinstance(identity, str) or len(identity.split('/')) != 2 or not all(valid_identifier(x) for x in identity.split('/')):
+                validator.error(path + '.part', 'Expected issuer/part identity')
+        else:
+            validator.string(part.get('vendor'), path + '.vendor', True)
+            validator.string(identity, path + '.part', True)
+            if 'aliases' in part:
+                _aliases(part['aliases'], validator, path + '.aliases')
+            if 'notes' in part:
+                validator.string(part['notes'], path + '.notes')
         for key in ('silicon_revision', 'refdes'):
             if key in part:
                 validator.string(part[key], path + '.' + key)
-        validator.selectors(part.get('documents'), path + '.documents', {'public'}, board=True)
+        validator.selectors(part.get('documents'), path + '.documents', {'public'},
+                            () if legacy else ('notes',), board=True)
+    link_fields = {'name', 'between', 'from', 'to'} | (set() if legacy else {'notes'})
     names = set()
     for index, link in enumerate(validator.sequence(data.get('links', []), 'links')):
         path = f'links.{index}'
-        if not validator.object(link, path, {'name', 'between', 'from', 'to'}, {'name'}):
+        if not validator.object(link, path, link_fields, {'name'}):
             continue
+        if 'notes' in link:
+            validator.string(link['notes'], path + '.notes')
         name = link.get('name')
         if validator.string(name, path + '.name', True):
             if name in names:

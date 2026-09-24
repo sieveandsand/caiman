@@ -3,10 +3,11 @@
 import pytest
 from textual.widgets import Button, Static
 
-from caiman.onboarding import LauncherApp
+from caiman.dashboard.onboarding import LauncherApp
 
 
-ACTIONS = ['ingest', 'documents', 'create-board', 'show-board', 'create-project', 'show-project']
+ACTIONS = ['ingest', 'documents', 'create-board', 'show-board', 'create-project', 'show-project', 'hooks-claude', 'hooks-codex',
+           'repo-add', 'repo-remove', 'repo-initialize']
 
 
 @pytest.mark.asyncio
@@ -49,15 +50,6 @@ async def test_dashboard_actions_are_reachable_by_keyboard(action):
     assert app.return_value == action
 
 
-def test_dashboard_tiles_use_the_dotted_border():
-    from caiman.theme import DOT_BORDER
-    assert DOT_BORDER == 'dotted'
-    css = LauncherApp.CSS
-    tile_rules = [line for line in css.splitlines() if line.strip().startswith('.dashboard-tile')]
-    assert tile_rules and all(f'border: {DOT_BORDER} ' in rule for rule in tile_rules)
-    assert 'border: round' not in ''.join(tile_rules)
-
-
 @pytest.mark.asyncio
 async def test_home_has_no_default_board_or_project():
     app = LauncherApp()
@@ -87,7 +79,7 @@ async def test_bottom_prompt_is_the_vim_hint_only():
 @pytest.mark.asyncio
 @pytest.mark.parametrize('width, height, shown', [(100, 40, True), (40, 40, False), (100, 24, False)])
 async def test_mascot_sits_top_right_and_steps_aside_when_cramped(width, height, shown):
-    from caiman.mascot import HEIGHT, LOWER_HALF, UPPER_HALF
+    from caiman.ui.mascot import HEIGHT, LOWER_HALF, UPPER_HALF
     app = LauncherApp()
     async with app.run_test(size=(width, height)) as pilot:
         await pilot.pause()
@@ -104,8 +96,8 @@ async def test_mascot_sits_top_right_and_steps_aside_when_cramped(width, height,
 
 
 def test_mascot_half_blocks_map_two_square_pixels_per_cell():
-    from caiman import mascot
-    from caiman.mascot import LOWER_HALF, PALETTE, UPPER_HALF, WIDTH, render_mascot
+    from caiman.ui import mascot
+    from caiman.ui.mascot import LOWER_HALF, PALETTE, UPPER_HALF, WIDTH, render_mascot
     original = mascot.SPRITE
     try:
         mascot.SPRITE = ('gd.', 'p..')
@@ -124,3 +116,38 @@ def test_mascot_half_blocks_map_two_square_pixels_per_cell():
         assert render_mascot().plain[0] == LOWER_HALF
     finally:
         mascot.SPRITE = original
+
+
+@pytest.mark.asyncio
+async def test_dashboard_cards_resize_and_move_shadow_without_layout_changes():
+    from caiman.dashboard.onboarding import DashboardTile
+    from caiman.ui.pixel_title import pixel_title
+
+    app = LauncherApp()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        first = app.query_one('#ingest', DashboardTile)
+        second = app.query_one('#documents', DashboardTile)
+        assert '\n'.join(pixel_title('Ingest document', 100)) in first.label.plain
+        assert 'Ingest document' not in first.label.plain
+        assert 'Register Markdown' in app.export_screenshot().replace('&#160;', ' ')
+        before = [card.region for card in (first, second)]
+        assert first.parent.query_one('.card-shadow').visible
+        await pilot.press('l')
+        assert not first.parent.query_one('.card-shadow').visible
+        assert second.parent.query_one('.card-shadow').visible
+        assert before == [card.region for card in (first, second)]
+        await pilot.resize_terminal(60, 30)
+        assert second.region.y > first.parent.region.bottom
+        app.query_one('#quit').focus()
+        await pilot.pause()
+        assert not second.parent.query_one('.card-shadow').visible
+
+
+def test_dashboard_card_fallback_keeps_exact_unicode_identity():
+    from caiman.dashboard.onboarding import DashboardTile
+
+    tile = DashboardTile('板-α / Rev B', '3 Documents', action='example')
+    tile.format_card(24)
+    assert '板-α / Rev B' in tile.label.plain
+    assert '3 Documents' in tile.label.plain

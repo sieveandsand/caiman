@@ -3,9 +3,9 @@
 import pytest
 from textual.widgets import Input, Select, TextArea
 
-from caiman.config_tui import ConfigApp
-from caiman.onboarding import LauncherApp, SetupApp
-from caiman.tui import IngestApp
+from caiman.configurations.tui import ConfigApp
+from caiman.dashboard.onboarding import LauncherApp, SetupApp
+from caiman.documents.tui import IngestApp
 
 
 @pytest.mark.asyncio

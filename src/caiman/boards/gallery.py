@@ -5,60 +5,68 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from pathlib import Path
-import textwrap
 
+from rich.console import Console
 from rich.text import Text
 from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
+from caiman.ui.cards import CARD_CSS, CardFrame, OverviewCard
 
-from .config_store import ConfigurationService
-from .navigation import NavigationApp
-from .store import Store
-from .theme import DOT_BORDER, TERMINAL_CSS, apply_theme
+from caiman.configurations.service import ConfigurationService
+from caiman.ui.pixel_title import pixel_title
+from caiman.ui.navigation import NavigationApp
+from caiman.storage.store import Store
+from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
-class BoardCard(Button):
-    """A complete board summary; no parts are omitted to make the card shorter."""
+class BoardCard(OverviewCard):
+    """A compact board overview with a prominent identity and hardware counts."""
 
     def __init__(self, record: dict, *, index: int):
-        super().__init__('', id=f'board-{index}', classes='dashboard-tile board-card')
+        super().__init__('', id=f'board-{index}', classes='dashboard-tile board-card card-face')
         self.record = record
-
-    def on_focus(self):
-        self.scroll_visible(animate=False, top=True)
 
     def format_card(self, width: int) -> int:
         manifest = self.record['manifest']
-        available = max(12, width - 4)
+        available = max(1, width - 6)
         label = Text(no_wrap=True, overflow='crop')
 
-        def line(value, style='', accent=0):
-            """One wrapped field; the first *accent* characters take the highlight."""
-            for index, wrapped in enumerate(textwrap.wrap(value, available, break_long_words=True, break_on_hyphens=False) or ['']):
-                start = len(label.plain)
-                label.append(wrapped + '\n', style=style)
-                if accent and not index:
-                    label.stylize('#7fdc4f', start, start + min(accent, len(wrapped)))
+        console = Console()
 
-        line(manifest['board'], 'bold')
-        version = 'Version ' + manifest['version']
-        line(f"{version} · Public · {self.record['digest'][7:19]}", '#8d9982', accent=len(version))
-        line(f"Parts ({len(manifest['parts'])})", 'bold')
-        for part in manifest['parts']:
-            line(f"{part['role']} · {part['part']}", accent=len(part['role']))
-            # Silicon revision, schematic reference and document count all stay on
-            # the card; they share one line rather than taking three.
-            details = [prefix + value for prefix, value in
-                       (('Silicon ', part.get('silicon_revision')), ('Ref ', part.get('refdes'))) if value]
-            details.append(f"Docs {len(part['documents'])}")
-            line(' · '.join(details), '#aab69c')
-        line(f"Hardware links {len(manifest.get('links', []))}", '#8d9982')
+        def line(value, style=''):
+            for wrapped in Text(value).wrap(console, available, overflow='fold'):
+                label.append(wrapped.plain + '\n', style=style)
+
+        def heading(value, caption, color):
+            pixels = pixel_title(value, available)
+            if pixels:
+                for row in pixels:
+                    label.append(row + '\n', style=color)
+            else:
+                line(caption, f'bold {color}')
+
+        heading(manifest['board'], manifest['board'], '#eef3e6')
+        line('')
+        heading(manifest['version'], 'Version ' + manifest['version'], '#7fdc4f')
+        line('')
+        parts = manifest['parts']
+        documents = len(manifest.get('documents', [])) + sum(len(part.get('documents', [])) for part in parts)
+        line(f"{len(parts)} Parts · {len(manifest.get('links', []))} Links · {documents} Docs", 'bold #aab69c')
+        if parts:
+            line('')
+        for part in parts:
+            line(part['part'], '#dfe6d3')
         label.rstrip()
         self.label = label
         height = len(label.plain.splitlines()) + 2
         self.styles.height = height
         return height
 
+
+class BoardCardFrame(CardFrame):
+    def __init__(self, card):
+        super().__init__(card)
+        self.add_class('board-card-frame')
 
 class BoardGalleryApp(NavigationApp):
     TITLE = 'Caiman · Boards'
@@ -67,11 +75,8 @@ class BoardGalleryApp(NavigationApp):
         ('pagedown', 'page_down', 'Scroll down'),
         ('pageup', 'page_up', 'Scroll up'),
     ]
-    CSS = TERMINAL_CSS + f'''
+    CSS = TERMINAL_CSS + CARD_CSS + f'''
     #gallery {{ height: auto; grid-size: 2; grid-columns: 1fr; grid-gutter: 1 1; }}
-    /* Button centres its label by default, which content-align alone does not undo. */
-    .board-card {{ width: 100%; min-width: 0; height: auto; margin: 0; padding: 0 1; content-align: left top; text-align: left; background: #000000; color: #dfe6d3; text-style: none; border: {DOT_BORDER} #33422e; }}
-    .board-card:hover, .board-card:focus {{ background: #000000; color: #dfe6d3; text-style: none; border: {DOT_BORDER} #7fdc4f; }}
     #gallery-status {{ height: auto; margin-bottom: 1; color: #aab69c; }}
     #back {{ width: auto; }}
     '''
@@ -104,9 +109,9 @@ class BoardGalleryApp(NavigationApp):
                 self.query_one('#gallery-status', Static).update('No boards registered. Create a board from the dashboard.')
                 return
             cards = [BoardCard(record, index=index) for index, record in enumerate(self.records)]
-            await self.query_one('#gallery', Grid).mount(*cards)
+            await self.query_one('#gallery', Grid).mount(*(BoardCardFrame(card) for card in cards))
             self.resize_cards(self.size.width)
-            self.query_one('#gallery-status', Static).update(f'{len(cards)} board snapshots · Select a card to edit its configuration in Vim.')
+            self.query_one('#gallery-status', Static).update(f'{len(cards)} Boards · Enter to Edit')
             self.call_after_refresh(cards[0].focus)
         except (OSError, ValueError) as error:
             self.query_one('#gallery-status', Static).update(f'Cannot load boards: {error}')
@@ -119,9 +124,9 @@ class BoardGalleryApp(NavigationApp):
         if not cards:
             return
         columns = 2 if terminal_width >= 100 else 1
-        # Four cells are the shared body padding; one cell separates columns.
-        width = max(16, (terminal_width - 4 - (columns - 1) - 1) // columns)
-        heights = [card.format_card(width) for card in cards]
+        # Reserve body padding and the two-cell scrollbar, plus column gutters.
+        width = max(16, (terminal_width - 6 - (columns - 1) - 2) // columns)
+        heights = [card.parent.resize_card(width) for card in cards]
         rows = [max(heights[index:index + columns]) for index in range(0, len(cards), columns)]
         grid = self.query_one('#gallery', Grid)
         grid.styles.grid_size_columns = columns

@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from caiman.dashboard_actions import revision_draft, run_dashboard_action
+from caiman.dashboard.actions import revision_draft, run_dashboard_action
 
 
 def test_revision_copy_preserves_pins_and_original():
@@ -24,7 +24,7 @@ def test_new_version_requires_distinct_label_and_declared_reason(version, relati
 
 @pytest.mark.parametrize('action', ['edit-board', 'export-project', 'template-board', 'validate-project'])
 def test_removed_home_actions_are_unknown(tmp_path, monkeypatch, action):
-    import caiman.dashboard_actions as actions
+    import caiman.dashboard.actions as actions
     shown = []
     class Viewer:
         def __init__(self, **kwargs):
@@ -38,7 +38,7 @@ def test_removed_home_actions_are_unknown(tmp_path, monkeypatch, action):
 
 
 def test_view_project_cancel_writes_nothing(tmp_path, monkeypatch):
-    import caiman.dashboard_actions as actions
+    import caiman.dashboard.actions as actions
     class Choose:
         def __init__(self, **kwargs):
             assert kwargs['kind'] == 'project'
@@ -50,8 +50,8 @@ def test_view_project_cancel_writes_nothing(tmp_path, monkeypatch):
 
 
 def test_project_edit_starts_from_view_and_returns_to_the_new_snapshot(tmp_path, monkeypatch):
-    import caiman.dashboard_actions as actions
-    import caiman.config_tui as config_tui
+    import caiman.dashboard.actions as actions
+    import caiman.configurations.tui as config_tui
     from types import SimpleNamespace
     chosen = {'manifest': {'project': 'demo', 'version': 'v1'}, 'digest': 'sha256:' + 'a' * 64}
     before = deepcopy(chosen)
@@ -92,7 +92,7 @@ def test_project_edit_starts_from_view_and_returns_to_the_new_snapshot(tmp_path,
 
 @pytest.mark.asyncio
 async def test_viewer_e_edits_only_when_editable():
-    from caiman.dashboard_actions import ViewerApp
+    from caiman.dashboard.actions import ViewerApp
     app = ViewerApp(title='Project snapshot', content='{}', editable=True)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -110,14 +110,14 @@ async def test_viewer_e_edits_only_when_editable():
 
 @pytest.mark.asyncio
 async def test_choose_lists_projects_only_in_entered_access_groups(tmp_path):
-    from caiman.config_store import ConfigurationService
-    from caiman.dashboard_actions import ChooseApp
-    from caiman.store import Store
+    from caiman.configurations.service import ConfigurationService
+    from caiman.dashboard.actions import ChooseApp
+    from caiman.storage.store import Store
     from textual.widgets import Select
     root = tmp_path / 'store'
     service = ConfigurationService(Store(root))
     service.register(service.prepare('board', {'board': 'demo', 'version': 'v1',
-        'parts': [{'role': 'main', 'part': 'synthetic/chip', 'documents': []}], 'links': []}))
+        'parts': [{'role': 'main', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}], 'links': []}))
     project = service.prepare('project', {'project': 'program', 'version': 'A', 'customer': 'Synthetic',
         'compartments': ['alpha'], 'board': {'name': 'demo', 'version': 'v1'},
         'spec_set': 'release A', 'documents': [], 'features': []})
@@ -139,7 +139,7 @@ async def test_choose_lists_projects_only_in_entered_access_groups(tmp_path):
 
 @pytest.mark.asyncio
 async def test_revision_form_uses_explicit_mode_and_preserves_opaque_versions():
-    from caiman.dashboard_actions import RevisionApp
+    from caiman.dashboard.actions import RevisionApp
     from textual.widgets import Input, Static
     app = RevisionApp(kind='board', selection={'manifest': {'board': 'demo', 'version': 'v1'},
                                               'digest': 'sha256:' + 'a' * 64})
@@ -155,7 +155,7 @@ async def test_revision_form_uses_explicit_mode_and_preserves_opaque_versions():
 
 @pytest.mark.asyncio
 async def test_catalog_launch_with_no_store_writes_nothing(tmp_path):
-    from caiman.dashboard_actions import DocumentCatalogApp
+    from caiman.dashboard.actions import DocumentCatalogApp
     from textual.widgets import Static
     root = tmp_path / 'absent-store'
     app = DocumentCatalogApp(root=root, compartments=[])
@@ -168,12 +168,12 @@ async def test_catalog_launch_with_no_store_writes_nothing(tmp_path):
 
 @pytest.mark.asyncio
 async def test_new_version_rejects_existing_label_before_editor(tmp_path):
-    from caiman.config_store import ConfigurationService
-    from caiman.store import Store
-    from caiman.dashboard_actions import RevisionApp
+    from caiman.configurations.service import ConfigurationService
+    from caiman.storage.store import Store
+    from caiman.dashboard.actions import RevisionApp
     from textual.widgets import Input, Static
     service = ConfigurationService(Store(tmp_path))
-    data = {'board': 'demo', 'version': 'v1', 'parts': [{'role': 'mcu', 'part': 'synthetic/chip', 'documents': []}]}
+    data = {'board': 'demo', 'version': 'v1', 'parts': [{'role': 'mcu', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}]}
     first = service.prepare('board', data)
     service.register(first)
     service.register(service.prepare('board', {**data, 'version': 'v2'}))

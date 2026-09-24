@@ -17,7 +17,7 @@ Instructions for AI agents working in this repository.
 
 Caiman supplies three kinds of context coding agents lack in firmware work:
 **descriptive** (what the hardware does), **structural** (what this design is),
-and **normative** (what this program must do). `VISION.md` §2 has the failure
+and **normative** (what this program must do). `docs/ARCHITECTURE.md` §2 has the failure
 mode each one prevents; the normative layer is where the unserved problem is, and
 the first two are substrate to build competently rather than inventively.
 
@@ -46,6 +46,13 @@ content must become unreachable, not world-readable.
 
 Two distinct failure paths, tested separately: no labels at all, and a
 compartment dropped while other fields survived.
+
+Every document is explicitly public or belongs to exactly one compartment.
+Reject multiple entries (including duplicates) during ingestion, registration
+and reads; never choose one or silently reinterpret a legacy multi-compartment
+document. Projects and sessions may still refer to multiple compartments, since
+their documents may belong to different compartments. No separate storage
+"domain" concept is needed (S-33).
 
 The same rule covers the session mode. `sync --mode` is required and has no
 default: omitting it fails and materializes nothing. Never infer a mode, never
@@ -230,33 +237,31 @@ Say so wherever the log is surfaced.
 
 ## Layout
 
-The implementation is a Python package under `src/caiman/`: `cli.py`, `tui.py`,
-`ingest.py`, `models.py`, and `store.py` for documents; `configuration.py`,
-`config_store.py`, `config_files.py`, and `config_tui.py` for board/project
-authoring; `onboarding.py` and `workflow.py` for board/project creation, the home
-screen, and remembered compartments (never a default board or project);
-`dashboard_actions.py` for choosing a configuration and interactive edit, file,
-and catalog actions; `navigation.py` for shared Vim-style form and
-dashboard controls; `board_gallery.py`, `board_edit.py`, and `external_editor.py`
-for board cards and reviewed Vim edits; `theme.py` for shared appearance and
-`mascot.py` for the half-block pixel-art caiman on the home screen. Tests live
-under `tests/`.
-Python and Textual are implementation choices for local authoring;
-the shared core does not depend on terminal widgets. The conceptual component
-layout below describes the full planned system, not existing directories.
+The Python implementation is organized by feature. Each feature keeps its
+terminal interface beside its supporting logic; shared UI components live in
+`ui/`. Board and project validation, drafts, and registration share
+`configurations/`, while board-specific visual editing lives in `boards/`.
+Core models and services do not depend on terminal widgets.
 
 ```
-caiman/
-  cli/            # sync, brief, ingest, board, project — the command surface
-  project/        # project model, versions, features, precedence, brief rendering
-  board/          # board model, versions, part instances, links
-  ingest/         # unchanged-file registration, heading validation, document labels
-  tui/            # ingestion form and review; calls the shared registration logic
-  store/          # blobs, manifests, refs, resolution — see docs/STORAGE.md
-  materialize/    # workspace assembly, linking, agent-profile filtering
-  fixtures/       # synthetic documents and synthetic spec sets ONLY
-  docs/           # design documentation
+src/caiman/
+  __init__.py     # package version
+  __main__.py     # python -m caiman entry point
+  cli/            # command parsing and dispatch; stable console entry point
+  documents/      # document models, ingestion validation, and ingestion TUI
+  boards/         # board gallery, guided form, and reviewed editing
+  configurations/ # shared board/project models, drafts, storage service, and TUI
+  dashboard/      # home screen, setup, workflow state, and dashboard actions
+  repositories/   # Repo Manager service and TUI
+  hooks/          # harness hook installation, callbacks, and TUI
+  storage/        # immutable blobs, manifests, refs, and resolution
+  ui/             # shared navigation, theme, mascot, and pixel title
 ```
+
+Tests live under `tests/`, synthetic fixtures under `fixtures/`, and design
+documentation under `docs/`. Session materialization remains planned; create
+new feature packages when their implementation arrives. Remembered workflow
+state contains compartments, never a default board or project.
 
 No `server/`. If semantic fallback is ever built (S-18) it arrives as one tool
 behind one server, and not before search and selective reading of the source documents have
@@ -266,7 +271,7 @@ demonstrably failed on real queries.
 
 ## What not to do
 
-`VISION.md` §8 explains why for each; this is the operational form.
+`docs/ARCHITECTURE.md` §4 explains why for each; this is the operational form.
 
 | Do not | Decision |
 |---|---|

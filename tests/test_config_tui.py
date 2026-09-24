@@ -6,15 +6,15 @@ import json
 import pytest
 from textual.widgets import Input, Static, TextArea
 
-from caiman.config_store import ConfigurationService
-from caiman.config_tui import ConfigApp
-from caiman.ingest import prepare_document
-from caiman.models import ValidationError
-from caiman.store import Store
+from caiman.configurations.service import ConfigurationService
+from caiman.configurations.tui import ConfigApp
+from caiman.documents.ingest import prepare_document
+from caiman.documents.models import ValidationError
+from caiman.storage.store import Store
 
 
 def board_draft():
-    return {"board": "synthetic-board", "version": "A", "parts": [{"role": "mcu", "part": "synthetic/chip", "documents": []}], "links": []}
+    return {"board": "synthetic-board", "version": "A", "parts": [{"role": "mcu", "vendor": "synthetic", "part": "chip", "documents": []}], "links": []}
 
 
 async def next_step(pilot):
@@ -118,11 +118,11 @@ async def test_project_catalog_scope_review_and_real_registration(tmp_path):
 async def test_nested_validation_keeps_json_for_correction(tmp_path):
     app = ConfigApp("board", tmp_path / "store", board_draft())
     async with app.run_test(size=(80, 24)) as pilot:
-        invalid = '[{"role":"mcu","part":"missing-issuer","documents":[]}]'
+        invalid = '[{"role":"mcu","part":"missing-vendor","documents":[]}]'
         app.query_one("#parts", TextArea).load_text(invalid)
         await next_step(pilot)
         assert not app.reviewing
-        assert "parts.0.part" in str(app.query_one("#error-parts", Static).render())
+        assert "parts.0.vendor" in str(app.query_one("#error-parts", Static).render())
         assert app.query_one("#parts", TextArea).text == invalid
         assert not (tmp_path / "store").exists()
 

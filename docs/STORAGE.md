@@ -1,107 +1,49 @@
 # Storage Design
 
-**Status:** Proposed. Resolves `DECISIONS.md` D-02 and D-10 for the MVP.
+**Status:** Local storage and repository setup are implemented; document Git
+transport and session materialization are proposed. S-33 specifies one private
+Git repository per compartment.
 **Scope:** The on-disk representation of documents, boards, and projects, and the
 procedure that builds a session workspace from them.
-**Related:** `ARCHITECTURE.md` §2 (Store) and §4 (Materialize), `SECURITY-MODEL.md`,
+**Related:** [Architecture §6.6](ARCHITECTURE.md#66-store) and [§6.8](ARCHITECTURE.md#68-materialize), `SECURITY-MODEL.md`,
 `harness.md`.
 
 ---
 
 ## 1. Summary
 
-Caiman stores three kinds of versioned object — document versions, board
-versions, and project versions — and assembles a subset of them into a
-per-session workspace on disk.
+For the proposed multi-user Git backend and Merkle context snapshots, see
+[Team storage](proposals/TEAM-STORAGE.md). That proposal incorporates the user's
+team-sharing requirements; it does not describe implemented remote commands.
 
-This document specifies a **content-addressed store on the local filesystem**,
-laid out as a strict subset of the OCI registry model: immutable objects named by
-their SHA-256 digest, plus a small mutable layer mapping human-readable names to
-digests. Access partitions, called **compartments**, are separate directory trees
-at the top level of the store.
-
-Three properties drive the design:
-
-1. A session pins a **digest**, not a name, so the documentation it saw remains
-   resolvable after the name is repointed.
-2. Changing a document's access labels changes its identity, which is what makes
-   reclassification detectable downstream.
-3. The store's on-disk shape is the same shape the materialization step needs,
-   so no separate caching concept is required while the store is local.
-
-The design uses no database and no running service.
-
----
+The store contains immutable blobs and JSON manifests addressed by SHA-256,
+plus mutable refs mapping names to manifest digests. Compartments occupy separate
+top-level directories. No database or running service is required.
 
 ## 2. Background and Problem
 
 ### 2.1 What changed
 
-An earlier design had the store feeding a retrieval service, which implied a
-queryable backend. `DECISIONS.md` S-18 removed that service: the filesystem is
-now the interface between Caiman and the coding agent. The store's remaining job
-is much narrower, and the backend decision should be re-made against the narrower
-job rather than inherited.
+S-18 removed the retrieval service. S-21 chose a filesystem store with an OCI-like
+layout; S-22 proposed Git for transport and backup.
 
 ### 2.2 The failure this design prevents
 
-`CLAUDE.md` I-4 requires that a session pin an immutable digest rather than a
-mutable name. The concrete scenario that makes this necessary is **re-conversion**.
-
-Caiman does not convert PDFs (S-08). The user converts documents with an external
-tool and supplies markdown. Those tools improve, and documents get converted
-again:
-
-| Date | Action | Result |
-|---|---|---|
-| August | Convert `S32K3XXRM.pdf` with `marker` 1.8.2 | Ingested as reference manual `rev-4` |
-| November | `marker` 2.0 fixes register-table extraction; re-convert the same PDF | Ingested as reference manual `rev-4` again |
-
-Both ingests are legitimately "reference manual rev-4". Same source PDF, same
-vendor document version, different bytes.
-
-If documents are stored under their human-readable names, the second ingest
-either overwrites the first or needs an ad-hoc `rev-4-v2` convention. In the
-overwrite case, **every session that recorded "rev-4" silently changes meaning**.
-A session from August, revisited in December, now resolves documentation that did
-not exist when it ran. Any citation produced by that session becomes unverifiable.
-
-Content addressing removes the ambiguity: August's session pinned
-`sha256:9f3c22de…71`, which still resolves to the exact bytes that were in
-context. November's conversion is a different digest. The name `rev-4` is
-repointed for new sessions, and both versions continue to exist.
+Re-converting the same vendor release produces different bytes under the same
+version label. Repointing its ref must not change existing board or project pins.
+Manifest digests preserve both versions without inventing a new vendor label.
 
 ### 2.3 Why access labels must be part of object identity
 
-`SECURITY-MODEL.md` requires a defined procedure when a document is
-reclassified — most importantly when a document was ingested against the wrong
-compartment, which is the likeliest hand-entry error and the one with the worst
-consequence.
-
-That procedure needs a signal: something must change so that downstream steps
-(re-materialization, cache eviction, brief regeneration) know what to act on. If
-labels live outside the pinned identity, they can change with no observable
-effect on any pin, and the procedure has nothing to trigger on.
-
-The design therefore hashes labels together with the rest of a document's
-metadata, so a label change produces a new object identity over unchanged
-content. §6.1 describes the mechanism.
-
----
+Labels are part of the hashed manifest. Correcting a compartment produces a new
+digest over unchanged content, making the correction visible to downstream pins.
+[Security §8](SECURITY-MODEL.md#8-reclassification-and-revocation) owns the
+reclassification procedure.
 
 ## 3. Goals
 
-| ID | Goal |
-|---|---|
-| G-1 | Store document, board, and project versions immutably, so a pinned reference resolves to identical bytes indefinitely |
-| G-2 | Resolve a human-readable name and version to a digest, and a digest to its content |
-| G-3 | Make a change to a document's access labels produce a new object identity |
-| G-4 | Keep compartments separated by a mechanism the operating system enforces, not by application logic |
-| G-5 | Materialize a session workspace without copying document bytes per session |
-| G-6 | Never lose an object that a board version or project version references |
-| G-7 | Require no running service and no database |
-| G-8 | Use a layout that maps directly onto an OCI registry, so migrating later is mechanical |
-| G-9 | Keep an off-machine copy, and let the same store be reachable from more than one machine |
+Store immutable versions, resolve names and digests, preserve every pinned object,
+and assemble workspaces efficiently. §5 lists the verifiable requirements.
 
 ## 4. Non-Goals
 
@@ -115,7 +57,7 @@ service.
 | Partial fetch within an object | Fetch whole files into the local store; agents can read selected ranges locally (§6.3) |
 | Concurrent-writer safety | Single engineer, single machine. Ingest is serialized by the CLI |
 | High throughput | Volume is hundreds of documents, not millions |
-| Authentication | POSIX permissions only. §12.3 states the threshold at which this becomes insufficient |
+| Authentication | POSIX permissions only. D-02 records the registry migration trigger |
 | Deleting unreachable objects | Garbage collection is specified (§8.5) but not implemented for the MVP; disk is cheaper than the risk of breaking a pin |
 
 ---
@@ -262,7 +204,7 @@ digest.
 
 **The layout is an OCI subset.** Blobs correspond to layers, manifests to
 manifests, refs to tags. G-8 is satisfied by construction rather than by a
-planned migration path. §12.3 describes when to make that move.
+planned migration path. D-02 records when to revisit that move.
 
 ### 6.3 One document, one content blob
 
@@ -296,7 +238,7 @@ Two manifests with the same logical content must produce the same digest.
 
 ```json
 {
-  "schema": "caiman.document/1",
+  "schema": "caiman.document.v1",
   "issuer": "nxp",
   "part": "s32k344",
   "doc_type": "reference-manual",
@@ -326,7 +268,7 @@ fields:
 | Field | Purpose |
 |---|---|
 | `structure` | All documents require usable headings. `requirement` additionally requires a valid declared ID pattern and matching IDs (I-5); no generated ID index |
-| `labels` | Human-supplied access labels for the entire document. Included in the manifest digest, per R-4 |
+| `labels` | Explicit public access with `compartments: []`, or private access with exactly one name in `compartments`. Multiple entries (including duplicates) are rejected on ingestion, registration and read. Included in the manifest digest, per R-4 |
 | `source` | Optional original-source metadata: `sha256` and `pages`, each optional. No source filename is stored. The Markdown digest is separate and always computed |
 | `converter` | Optional provenance: `name`, `version`, and `hosted`, each optional. Missing values mean unknown, including missing `hosted`; see `SECURITY-MODEL.md` §7.2 |
 | `silicon_revisions` | Which mask revisions this document applies to. Distinct from document version and board version — see `ARCHITECTURE.md`, Data model |
@@ -361,22 +303,33 @@ independently of whether provenance was supplied (S-26).
 
 ```json
 {
-  "schema": "caiman.board/1",
+  "schema": "caiman.board.v2",
   "board": "zonal-ctrl-rear",
   "version": "2.1",
+  "vendor": "acme",
+  "notes": "Rear zonal controller. Dual-MCU, safety rated.",
   "derives_from": "2.0",
   "relation": "special variant — adds redundant CAN, drops display header",
+  "documents": [
+    { "ref": "acme/zonal-ctrl-rear/board-user-guide/2.1",
+      "digest": "sha256:1d90ab47…5c",
+      "notes": "Connector pinout and jumper defaults." }
+  ],
   "parts": [
-    { "role": "application-mcu", "part": "nxp/s32k344",
-      "silicon_revision": "1.1", "refdes": "U1",
+    { "role": "application-mcu", "vendor": "nxp", "part": "s32k344",
+      "silicon_revision": "1.1",
+      "aliases": { "refdes": "U1", "mpn": "S32K344EHTAR", "devicetree": "cpu0" },
+      "notes": "Runs the safety-rated application image.",
       "documents": [
         { "ref": "nxp/s32k344/reference-manual/rev-4",
           "digest": "sha256:9f3c22de…71" },
         { "ref": "nxp/s32k344/errata/rev-6",
-          "digest": "sha256:b8d4109f…2e" }
+          "digest": "sha256:b8d4109f…2e",
+          "notes": "Errata 051234 applies at this mask revision." }
       ] },
-    { "role": "safety-companion", "part": "ti/tps65313",
-      "silicon_revision": "A", "refdes": "U4",
+    { "role": "safety-companion", "vendor": "ti", "part": "tps65313",
+      "silicon_revision": "A",
+      "aliases": { "refdes": "U4" },
       "documents": [
         { "ref": "ti/tps65313/datasheet/2024-03",
           "digest": "sha256:44ce8a71…d0" }
@@ -384,7 +337,8 @@ independently of whether provenance was supplied (S-26).
   ],
   "links": [
     { "name": "safety-link",
-      "between": ["application-mcu.LPSPI1", "safety-companion.SPI"] },
+      "between": ["application-mcu.LPSPI1", "safety-companion.SPI"],
+      "notes": "Watchdog handshake; the companion resets the MCU if the question and answer sequence stops." },
     { "name": "clock-tree",
       "from": "clock-generator",
       "to": ["application-mcu", "safety-companion"] }
@@ -392,16 +346,60 @@ independently of whether provenance was supplied (S-26).
 }
 ```
 
-`role` is the identity of a part instance; `refdes` is optional cross-reference
-metadata for schematic lookup and is never used as an identifier (S-12).
+##### Board fields
 
-Draft document entries accept a `ref` or `digest`, with an optional
-`compartment`. The implemented authoring contract is in `AUTHORING.md`. Review
-resolves and stores an explicit digest and storage compartment for every entry.
-A supplied `ref` is retained; digest-only selectors need not invent one. The digest is
-authoritative and is what resolution uses. The ref is retained for diagnostics —
-it lets a human read a manifest and understand it without dereferencing every
-digest — and must never be used to resolve at consumption time (I-4).
+Authoring writes `caiman.board.v2`.
+
+| Field | Meaning |
+|---|---|
+| `board`, `version` | Board identifier and opaque version label |
+| `vendor` | Assembly document issuer; required when board documents are present |
+| `notes` | Optional unstructured board notes |
+| `documents` | Assembly documents, such as a user guide or schematic |
+| `parts` | Nonempty list with unique `role` values |
+| `parts[].vendor`, `parts[].part` | Separate identity fields, matched to document `issuer` and `part` |
+| `parts[].documents` | Document selectors; may be empty |
+| `parts[].silicon_revision` | Optional declared revision |
+| `parts[].aliases` | Declared string pairs such as `refdes`, `mpn`, or `devicetree` |
+| `parts[].notes` | Optional unstructured part notes |
+| `links` | Named links with `between` or `from`/`to` endpoints and optional `notes` |
+| `*.documents[].notes` | Optional notes on a document selector |
+| `derives_from`, `relation` | Optional pair: predecessor label and human explanation |
+
+Roles identify parts. Aliases are cross-reference metadata, never the identity
+or display name (S-12). Link endpoints name a role or `role.PERIPHERAL`.
+A part's documents must match its vendor and part; documents carrying `program`
+instead of `part` cannot be pinned there. Board-level documents match
+`<vendor>/<board>`. When both document applicability and a part's silicon
+revision are supplied, they must agree; missing revisions are not inferred.
+Boards contain no customer or project fields and pin only public documents.
+
+Notes on boards, parts, links, and selectors remain unstructured; Caiman does
+not interpret them as facts or branch on their contents (S-15).
+
+**Schema literals are a table, not a formula** (S-31). The board is
+`caiman.board.v2`; documents and projects are `caiman.document.v1` and
+`caiman.project.v1`. Nothing derives one from a kind and a number. Readers also
+accept the older `caiman.board/1`, `caiman.document/1` and `caiman.project/1`
+spellings, and validation never rewrites a declared literal — doing so would
+change the canonical bytes of a snapshot that is immutable by construction
+(S-11). A stored `caiman.board/1` board keeps its packed `"part": "nxp/s32k344"`
+identity and its `refdes` field, and is never migrated. A missing schema literal
+defaults to the current schema; it is never inferred from the body. The guided
+editor does not author legacy boards; see [editing](../README.md#edit-an-existing-board-or-project).
+
+##### Document selectors
+
+Draft document entries accept `ref` or a full `sha256:…` manifest `digest`, with
+an optional `compartment`. Use the catalog's percent-encoded ref paths so opaque
+labels cannot become filesystem traversal. Ambiguous refs require an explicit
+compartment or digest.
+
+Review stores a resolved digest and storage compartment for every entry. A
+supplied ref remains diagnostic metadata; digest-only entries need not invent
+one. If both are supplied, the digest is authoritative. Loading or registering a
+snapshot never adopts a newer ref target. Feature selectors bind to already
+selected project pins. See the [README workflow](../README.md#json-drafts-and-document-selectors).
 
 Board manifests live under public; project manifests live under their declared
 compartments. Configuration refs use `refs/boards/<name>/<version>` or
@@ -425,7 +423,7 @@ resolves.
 
 ```json
 {
-  "schema": "caiman.project/1",
+  "schema": "caiman.project.v1",
   "project": "falcon",
   "version": "B-sample",
   "customer": "OEM Alpha Motors GmbH",
@@ -464,22 +462,31 @@ resolves.
 }
 ```
 
-Two fields deserve specific attention.
+##### Project fields
 
-`board` holds a **public** digest from inside a **compartmented** manifest. This
-is the only cross-compartment reference in the model and it is deliberate: it is
-what allows one board version to serve several customers. The reference direction
-matters — a compartmented manifest may name a public object, but no public
-manifest ever names a compartmented one. That asymmetry is what keeps the public
-tree readable by any session.
+| Field | Meaning |
+|---|---|
+| `project`, `version` | Program codename and opaque version label |
+| `customer`, `compartments` | Legal customer identity and a nonempty compartment set |
+| `board` | Explicit board name/version, with an optional existing digest pin in drafts |
+| `spec_set` | Human-declared frozen specification release |
+| `documents` | Selected specifications |
+| `precedence` | Selectors in governing order, highest authority first; optional `note` |
+| `features` | Named features with scope `required` or `not-used` |
+| `features[].governed_by` | Selected document references, optionally with requirement IDs |
+| `features[].realized_on` | Roles on the pinned board |
+| `features[].related` | Existing feature names with a human-written `relation` |
+| `derives_from`, `relation` | Optional predecessor and explanation |
 
-`customer` is the only place the customer's legal identity is stored. It never
-appears in a generated brief, which names the program by codename (I-6). Storing
-it in a compartmented manifest is what makes the codename convention enforceable
-rather than aspirational.
+Governing documents must belong to the project's document or precedence set.
+Requirement IDs and ranges remain declarations, without expansion or inferred
+obligations. Precedence is declared; feature implementation status is not tracked.
 
-`precedence` is an ordered list, highest authority first, declared by a human
-(I-8). Caiman renders it into the brief and does not compute over it.
+Projects must include the single compartment assigned to each selected private document.
+Project manifests stay in those compartments; they never enter the public store.
+They may reference public boards and documents, but public manifests must never
+reference compartmented objects. The customer legal identity remains in the
+project manifest; the brief uses the codename (I-6).
 
 ### 6.5 Configuration
 
@@ -516,128 +523,26 @@ pointing to two different digests, which is visible as a one-line difference.
 
 ### 6.6 Git-backed remote
 
-The store is kept off-machine in git: **one private repository containing the
-whole store**, compartments as directories inside it.
+**Planned, not implemented.** S-33 specifies one private repository per
+compartment, plus a private repository for explicitly public documents. Each
+private document belongs to one compartment and is stored in that compartment's
+repository only. There is no separate domain concept or multi-compartment
+replication. The host controls who can fetch each repository.
 
-```
-caiman-store/              one private repository
-├── public/
-├── oem-alpha/
-├── oem-beta/
-└── .gitattributes
-```
+The [team storage proposal](proposals/TEAM-STORAGE.md) owns repository format,
+remote mappings, dependency-first publication, reference conflicts, verified
+fetching, retention and backup. It supersedes the former single-repository design
+and resolves G23's topology conflict. Remaining configuration/schema changes in
+that proposal are still proposed, not implemented.
 
-#### 6.6.1 Why one repository
+Do not infer access from a successful project lookup: a project may reference
+documents in other compartments, which require separate repository access.
+Git history remains readable to everyone with access to that repository. A
+compartment correction does not remove already-published bytes from history.
 
-An earlier version of this design used one repository per compartment. Separate
-repositories buy exactly one thing: host-enforced access control *between*
-compartments, which matters when a person should see one and not another.
-
-There is no such person. Compartments here are one engineer holding several
-counterparties' secrets, not multi-tenancy. The separation that does the work is
-differential materialization (`SECURITY-MODEL.md` §5.2) and local file modes,
-neither of which needs a repository boundary.
-
-Two facts settle it:
-
-**Every store repository is private regardless.** `public` in this design means
-*visible to every session*, not publishable. Vendor reference manuals are under
-click-through agreements and redistributing them is a licensing violation
-(`VISION.md` §8). So a per-compartment boundary would be separating the engineer
-from themselves.
-
-**GitHub has no per-directory read permission.** Within git the choice is
-repository-level or nothing, so there is no middle option to reach for.
-
-The cost of the earlier design was recurring and real: per customer, create a
-repository, set its visibility, wire a remote, and clone it on every machine. One
-repository makes a new compartment a `mkdir`.
-
-#### 6.6.2 Splitting later, when a real boundary appears
-
-Because git here is transport and backup — the content-addressed tree is the
-source of truth (§6.1) — splitting is cheap:
-
-1. Create a new private repository.
-2. Copy `store/<compartment>/` into it and commit.
-3. Point that compartment's remote at it in `config.toml`.
-4. Remove the directory from the original repository.
-
-You lose commit history for that compartment, which is tamper evidence rather
-than correctness, and nothing else. No history rewriting is involved because you
-are not trying to erase anything — you are relocating a subtree whose contents
-are already immutable.
-
-This is the test that makes the simple default safe: **if the migration is cheap,
-do not build it early.**
-
-Note step 4 does not remove the directory from the original repository's
-*history*, which is fine for a split (the data is not being revoked, only
-relocated) and not fine for a mislabel (§9.5).
-
-The configuration therefore supports a per-compartment remote override, even
-though the default is one remote for everything:
-
-```toml
-[remote]
-default = "git@github.com:me/caiman-store.git"
-
-# [remote.overrides]
-# oem-gamma = "git@github.com:me/caiman-store-gamma.git"
-```
-
-An override is also how a counterparty whose agreement forbids third-party
-storage is handled — that compartment gets a self-hosted remote, or none (§9.4).
-
-#### 6.6.3 What git adds
-
-| Property | How |
-|---|---|
-| Off-machine copy | `git push` |
-| Multi-machine access | `git clone` on a second machine |
-| Authentication | Repository permissions. Weaker than per-compartment, and sufficient while there is one user |
-| Tamper evidence | Commit history records what was added, when |
-| Conflict-free concurrent ingest | See below |
-
-**Merge conflicts are confined to `refs/`.** Blobs and manifests are named by
-content, so two machines ingesting the same document produce the same filename
-with the same bytes and git sees no conflict. The only file that can genuinely
-diverge is a ref, where two machines repointed the same name to different
-digests. That surfaces as a one-line text conflict naming both digests, which a
-human resolves by deciding which conversion wins. This follows from §6.2 keeping
-mutable state in one directory, and it is the main reason the layout tolerates a
-distributed store at all.
-
-#### 6.6.4 What git does not do
-
-**Git does not carry file modes.** Only the executable bit is tracked, so the
-`0444` on blobs (R-6) is lost on clone and must be reapplied (R-13). The `0700`
-on compartment directories is likewise not carried — with a single repository
-this matters more than before, because a fresh clone produces every compartment
-at default permissions until Caiman fixes them.
-
-**Git history is permanent.** The significant cost, analyzed in §9.5.
-
-**Git does not compress this store usefully.** Blobs are immutable and never
-modified, so delta compression finds nothing. Repository size is the sum of every
-blob ever committed and only grows (§10).
-
-**Git is not the source of truth for immutability.** The content-addressed layout
-is. Do not use branches or tags to express document, board, or project versions —
-that is the model S-02 rejected, and the version axes in `ARCHITECTURE.md` §7.1
-do not map onto one HEAD.
-
-#### 6.6.5 Size limits
-
-| Limit | Value | Consequence |
-|---|---|---|
-| GitHub per-file hard block | 100 MB | A whole manual may exceed this limit. Report it before push; use a supported alternative remote/storage arrangement rather than splitting at ingest |
-| GitHub per-file warning | 50 MB | Expect warnings on large whole-document blobs |
-| GitHub repository soft limit | ~1 GB recommended; 5 GB draws attention | One repository holds every compartment, so this arrives sooner than it would have with a split store |
-
-Git LFS is the standard answer and is **not adopted yet** — see §13.1.
-
----
+Git can delta-compress similar immutable objects; savings for this layout require
+measurement. Host file-size limits and any future LFS support are transport
+concerns, not reasons to split documents at ingestion.
 
 ## 7. Data Flows
 
@@ -679,8 +584,9 @@ everything the session may materialize.
    available versions and stop — a bare name never resolves (R-3, I-7).
 2. Read the project manifest at the resulting digest.
 3. Read the board manifest at `board.digest` from the `public` tree.
-4. Collect every document digest from the board manifest's part entries and from
-   the project manifest's `documents` and `precedence` lists.
+4. Collect every document digest from the board manifest's assembly-level
+   `documents` and part entries, and from the project manifest's `documents` and
+   `precedence` lists.
 5. Read each document manifest and collect its blob digests.
 
 The result is the complete pin set. Nothing in steps 2–5 consults a ref: once
@@ -693,7 +599,7 @@ project exists.
 
 ### 7.3 Materialize
 
-Input: a resolved pin set, an agent name, and a destination directory. Output: a
+Input: a resolved pin set, an explicit mode, and a destination directory. Output: a
 session workspace.
 
 1. Read `--mode`. **If absent, fail and write nothing** (I-1, S-19). There is no
@@ -805,91 +711,40 @@ the permissions on the directory it was linked into (I-9).
 
 ### 7.5 Initialization
 
-`caiman init` prepares a store on a machine that does not have one.
+The dashboard's **Repo Manager** implements explicit repository registration,
+removal, and local initialization. Add checks the remote `caiman-store` branch's
+`store.json` schema and compartment, allowed tracked paths and file modes, and
+transport attributes before saving the URL. Validation fetches to a disposable
+private directory without checking out files. It does not import document objects
+or grant access, and does not attest to host privacy or membership.
 
-1. Create `store_root` and the state and cache roots.
-2. Write `config.toml` with default paths and, if `--remote` was given, the
-   default remote.
-3. Create `store/public/` with `blobs/`, `manifests/`, and `refs/`.
-4. `git init` at `store_root`, and write `.gitattributes` marking `blobs/` and
-   `manifests/` as binary so git attempts no line-ending conversion or textual
-   merge on them.
-5. Write `.gitignore` excluding nothing — the store is entirely tracked — but
-   present so it is obvious that omission was deliberate.
+The private local registry is `<store>/.repositories.json`; independent local
+repositories live under `<store>/.repositories/<compartment>/`. Initialize creates
+the compartment header, object/ref directories and approved attributes. Its
+optional push creates only the initial metadata commit in an empty, user-supplied
+remote. It never stages existing local documents or pushes existing local commits.
+The push uses a create-only branch lease; remote history is not overwritten.
+Local setup survives push failure and can be retried. Remove unregisters only.
 
-Adding a compartment is now a local operation:
+Configure each compartment's approved private remote explicitly; keep `public`
+in its own private repository. Never initialize the whole local store as a shared
+Git repository. Full object verification and document transport remain planned.
 
-```
-caiman compartment add oem-alpha
-```
-
-1. Create `store/oem-alpha/` at mode `0700` with the three subdirectories.
-2. Record it in `config.toml`.
-
-No repository to create, no visibility to choose, no remote to wire. A
-compartment with an agreement forbidding third-party storage takes
-`--remote <url>` or `--no-remote` to override the default (§6.6.2).
-
-**`caiman init` does not create the GitHub repository.** Creating it is a
-decision about visibility, and a store repository accidentally created public
-exposes every compartment at once. Caiman prints the command or URL and verifies
-on first push that the remote is private. A public remote is a hard error, never
-a warning.
-
-Joining an existing store on a second machine:
-
-```
-caiman clone --remote git@github.com:me/caiman-store.git
-```
-
-This clones, then restores file modes — `0444` on blobs, `0700` on compartment
-directories (R-13). The mode restoration is not cosmetic: a fresh clone has every
-compartment world-readable until it runs.
+The [team storage proposal](proposals/TEAM-STORAGE.md) describes onboarding and
+remote validation. Existing local ingestion continues without Git initialization,
+commits or pushes.
 
 ### 7.6 Push and pull
 
-Deliberately separate verbs from `caiman sync`, which materializes a session
-workspace. These move the store; `sync` builds a workspace from it.
+Transport is planned separately from `sync`, which materializes a session.
+Publication reviews an explicit dependency graph and target compartments, publishes
+dependencies first, and publishes the root last. A compartment selection limits
+what is actually sent, not merely which changes are displayed for review.
 
-```
-caiman push [--compartment NAME]   # default: the whole store, one commit
-caiman pull
-```
-
-With a single repository these are ordinary `git push` and `git pull` with
-checks around them. `--compartment` restricts the *review output*, not the push —
-git pushes commits, not directories — and exists so that a review of one
-customer's additions is readable. A compartment with an override remote (§6.6.2)
-is pushed separately and does appear as its own operation.
-
-**Push** is not automatic on ingest (R-12). Ingest writes locally; push is a
-separate, deliberate act. The reason is §9.5: a mislabeled document that has only
-been committed locally can be removed with `git reset`. Once pushed, it is in the
-remote's history. Putting a human step between the two makes the cheap fix
-available in the window where mistakes are actually found.
-
-Push therefore:
-
-1. Verifies the remote is private. Hard error if not — one repository holds every
-   compartment, so this check protects all of them at once.
-2. Reports what would be pushed: documents by name and version, and the
-   compartment each lands in. This is the label-review step.
-3. Commits anything uncommitted, with a message naming the added refs.
-4. Pushes.
-
-**Pull** fetches, then:
-
-1. **Restores file modes before anything else** (R-13). On a first clone every
-   compartment arrives world-readable.
-2. **Rejects any change to an existing blob or manifest** (R-14). Content
-   addressing means the same path always holds the same bytes, so a differing
-   blob at a known digest is corruption or tampering, not a merge. Fail and name
-   the object.
-3. Merges `refs/`. Conflicts are possible here and only here (§6.6.3); a conflict
-   lists both digests and requires a human decision.
-4. Verifies digests of newly fetched objects (§8.2).
-
----
+Fetching verifies digests, classification and reference conflicts before advancing
+the local verified view. No last-writer-wins or automatic version adoption.
+See [publication and concurrent writers](proposals/TEAM-STORAGE.md#7-publication-and-concurrent-writers)
+for the full proposed protocol and partial-publication recovery.
 
 ## 8. Failure Handling and Edge Cases
 
@@ -953,7 +808,7 @@ alone. See `harness.md` §*Implications*, and
 |---|---|---|
 | Pull would change an existing blob or manifest | Fail; name the object | Content addressing means a path always holds the same bytes. A difference is corruption or tampering (R-14) |
 | Ref conflict on pull | Fail; show both digests and both document identities | Two machines repointed the same name. A human decides which conversion wins; guessing would silently change what a name means |
-| Store remote is not private | Hard error on push | Not a warning. One repository holds every compartment, so a public remote exposes all of them at once |
+| Store remote is not private | Hard error on push | The target compartment must not be exposed through a public remote |
 | File modes wrong after clone or pull | Reapply `0444` on blobs and `0700` on compartment directories, before any other step | Git carries neither (R-13). A writable blob breaks I-9; a world-readable compartment directory breaks the local half of S-16 |
 | Push rejected because the remote moved ahead | Pull, resolve, push again | Normal git; no special handling |
 | Repository approaching host size limits | Warn at push | §6.6. Growth is monotonic and the warning needs to arrive before the wall |
@@ -1001,10 +856,10 @@ because the symptom otherwise is slow session startup with no stated cause.
 |---|---|---|
 | Compartment separation in the store | Directory permissions (`0700`) | Enforced by the kernel. A process without access fails at `open()` |
 | Compartment separation in a workspace | Documents outside the session's compartments are never written | Enforced by absence. An agent cannot read a file that does not exist |
-| Unknown agent | `sync` fails, writes nothing | Fail-closed, per I-1 |
+| Missing session mode | `sync` fails, writes nothing | Fail-closed, per I-1 |
 | Unlabeled document | Neither public nor compartmented; materialized nowhere | Fail-closed, per I-1, R-10 |
 | Tampering with stored content | Digest verification on read | Detects modification; does not prevent it |
-| Compartment separation on the remote | None. One repository, one access boundary | **This is the deliberate gap.** Adequate while there is one user; §6.6.2 is the migration when that stops being true |
+| Compartment separation on the remote | Planned private repository per compartment | The Git host enforces read access; every reader can obtain that repository's full history (S-33) |
 
 ### 9.2 Metadata is compartmented, not only content
 
@@ -1023,67 +878,23 @@ the property to check when adding any new reference to the model.
 
 ### 9.4 Hosting compartmented material on a third party
 
-Putting a compartmented store on GitHub means a third party holds a customer's
-specification. **This is a question for the agreement, not a technical detail**,
-and it is the same class of question `ROADMAP.md` Phase 0 asks about model
-providers — extended from processing to storage.
-
-What the design does about it:
-
-- **The default remote is one private repository**, so the decision is made once
-  — but a **per-compartment remote override** (§6.6.2) exists precisely for the
-  counterparty whose agreement forbids third-party storage. That compartment gets
-  a self-hosted remote or `--no-remote`, and the rest of the store is unaffected.
-- **Push verifies visibility** before sending anything (§7.6). With a single
-  repository this check covers every compartment at once, which makes it more
-  important rather than less.
-
-What it does not do: decide whether the agreement permits it. Read the agreement.
+Hosting permission must be checked per counterparty before publication.
+[Security §7.3](SECURITY-MODEL.md#73-the-store-is-hosted-by-a-third-party-and-its-history-is-permanent)
+owns the risk; §6.6 specifies the proposed remote configuration and S-33
+defines the per-compartment repository boundary.
 
 ### 9.5 Git history is permanent, and revocation is worse because of it
 
-The reclassification procedure in `SECURITY-MODEL.md` §8 assumes the wrongly
-placed object can be deleted. On a local filesystem that is `rm`. In git it is
-not.
-
-| Where the mistake is | Cost to fix |
-|---|---|
-| Working tree, uncommitted | Delete the file |
-| Committed locally, not pushed | `git reset`; nothing left the machine |
-| Pushed | History rewrite (`git filter-repo`), force push, every clone re-cloned or reset, and a request to the host to clear cached views. Forks and CI caches may retain it regardless |
-
-Three consequences:
-
-1. **Push is a separate, deliberate step with a label-review stage** (§7.6,
-   R-12). The cheap fix only exists in the window before push, so the design puts
-   a human there.
-2. **A push of a compartmented document is effectively irreversible.** Treat it
-   with the same care as sending the document to a third party, because it is
-   that.
-3. **`SECURITY-MODEL.md` §8 step 7 is incomplete for a pushed store** and says
-   so. A compartment correction after push is an incident, not a chore.
-
-This is a real cost of using git, accepted because the off-machine copy and the
-real authentication are worth more at this stage. §13.1 records what would change
-the answer.
+Removing a file from the current tree does not remove it from Git history or
+remote copies. Ingest therefore never pushes; §7.6 requires separate label review
+before publication. Reclassification after a push must account for every clone,
+fork, and host cache; deletion cannot be promised.
 
 ### 9.6 What this design does not protect against
 
-**Harness residue.** As described in §8.3, materializing a document causes a
-second plaintext copy to be written outside the store by the session harness. The
-store's guarantees end at the workspace boundary.
-
-**A determined local user.** Every control here is defeatable by someone with
-administrative access to the machine, which is the machine's owner. This matches
-the threat model stated in `SECURITY-MODEL.md`: the objective is to make an
-accidental disclosure require a deliberate act, not to make disclosure
-impossible.
-
-**Authentication.** There is none. Separation is POSIX permissions, which is
-sufficient for one engineer on one machine and insufficient the moment a second
-person or a second trust domain is involved (§12.3).
-
----
+[Security §2](SECURITY-MODEL.md#2-threat-model) defines the boundary. Local
+permissions do not separate processes running as the same user, and workspace
+cleanup cannot remove text retained by the harness.
 
 ## 10. Performance and Resource Considerations
 
@@ -1136,6 +947,9 @@ storage-specific cases; the full negative-test list is in `SECURITY-MODEL.md`.
 | T-14 | Resolve a project version whose board ref was repointed after pinning | Resolves the originally pinned board digest (I-4) |
 | T-15 | Ingest a `requirement` document with headings but no matching requirement IDs | Rejected at ingest (I-5) |
 | T-16 | Register and materialize Markdown with CRLF, tables, and code fences | Input and output bytes match exactly; one content blob and no generated map (S-25) |
+| T-17 | Load a stored `caiman.board/1` board after v2 exists | Validates unchanged, pins by its packed identity, keeps its `refdes`, and its declared literal is never rewritten (S-11, S-31) |
+| T-18 | Pin a board-level document whose issuer/part is not `<vendor>/<board>`, and a part document carrying a `program` | Both rejected; the packed v1 identity could express neither (S-31) |
+| T-19 | Validate a board body with a v1 shape and no `schema` field | Rejected: the literal is what says which rules apply, and is never inferred from the body |
 
 T-14 is the test that directly covers §2.2, and it should exist before the store
 is considered done.
@@ -1144,78 +958,14 @@ is considered done.
 
 ## 12. Alternatives Considered
 
-### 12.1 Name-addressed directories
+| Alternative | Why it was rejected or deferred |
+|---|---|
+| Name-addressed documents | Re-conversion would overwrite existing pins (§2.2) |
+| Object storage plus relational metadata | Canonical manifests suffice at this scale; a derived reporting index can be added later |
+| OCI registry now | Adds a service; revisit when retention or deletion becomes the constraint (D-02) |
+| lakeFS or DVC | Branch-oriented abstractions do not fit independently pinned snapshots |
 
-Store documents under readable paths:
-`store/documents/nxp/s32k344/reference-manual/rev-4/document.md`
-
-Simpler, browsable with `ls`, and no digest machinery.
-
-Rejected because of §2.2. A re-conversion under the same vendor version either
-overwrites the previous ingest — silently changing what every existing pin means
-— or requires an ad-hoc naming convention that reintroduces the same problem one
-level down. Labels would also sit outside object identity, leaving the
-reclassification procedure with nothing to trigger on (§2.3).
-
-The secondary losses are deduplication across revisions and immutability by
-construction, which would become a convention the code must uphold.
-
-This alternative would be defensible if re-conversion never happened. Given that
-Caiman explicitly does not own conversion and expects converter quality to
-improve (S-08), it will.
-
-### 12.2 Object store plus a relational manifest database
-
-Put blobs in object storage and model documents, boards, projects, and features
-as relational tables.
-
-Rejected for the MVP. D-10 already establishes that canonical JSON is the source
-of truth and any relational view is derived; at this volume, reading manifests
-directly is faster than maintaining a derived index, so the database has no work
-to do. It would also add a service to operate, which D-04 identifies as the
-scarcest resource on this project.
-
-This becomes attractive if queries across projects and features become routine —
-for example, "which programs require secure flashing" across many customers. That
-is a reporting need, not a session need.
-
-### 12.3 OCI registry via ORAS, immediately
-
-Use a registry from the start: compartments map to repositories with separate
-credentials, immutability is enforced by the registry, and retention is
-configuration rather than discipline.
-
-Rejected for now because it adds a service and an authentication system to a
-single-user, single-machine deployment, and provides nothing the filesystem
-layout does not already provide at that scale. Registry listing by name is also
-awkward compared with a directory walk.
-
-**That trigger has since been partly met, and git answered it instead.** The
-condition was compartment separation needing real authentication rather than
-POSIX permissions. Per-compartment git repositories with host-enforced access
-(§6.6) provide exactly that, at the cost of a remote rather than a service.
-
-What a registry would still add over git: immutability enforced by the system
-rather than by this design's conventions, retention as configuration rather than
-discipline, and **deletion that actually deletes** — which §9.5 shows git cannot
-do. The revised trigger:
-
-> Move to a registry when history permanence becomes the binding constraint —
-> when compartment corrections happen often enough that irreversible pushes are a
-> recurring incident, or when a counterparty requires demonstrable deletion.
-
-Because §6.2 is a strict OCI subset, that migration maps directly: blobs become
-layers, manifests become manifests, refs become tags.
-
-### 12.4 lakeFS or DVC
-
-Both provide versioning over object storage. Rejected as substantial systems
-whose primary abstraction — branching — is the wrong axis for this data. Board
-and project versions are not branches; they are independent immutable snapshots
-that coexist indefinitely. DVC's metadata and access-control model is also built
-for ML datasets and does not express compartments.
-
----
+See [S-21 and D-02](DECISIONS.md) for the backend decision and migration trigger.
 
 ## 13. Risks and Open Questions
 
@@ -1245,6 +995,6 @@ changing the registered source artifact.
 | The store repository created public by mistake | **Every** customer's specifications published, irreversibly. One repository concentrates this risk relative to a split store | Push verifies visibility before sending anything (§7.6); `caiman init` deliberately does not create the repository, so visibility stays an explicit human act. This is the accepted cost of §6.6.1 |
 | A mislabeled document pushed before the error is found | History rewrite, or permanent residue (§9.5) | Label review sits between ingest and push (R-12). This is the whole reason push is not automatic |
 | Repository growth outruns host limits | Pushes start failing | Warn at push (§8.4); Git LFS is the option (§13.1) |
-| Agreement forbids third-party storage of a customer's material | That compartment cannot use the default remote | Per-compartment remote overrides (§6.6.2); the compartment gets a self-hosted remote or none |
-| A collaborator needs one compartment and not others | The single-repository model no longer holds | Split that compartment out (§6.6.2). Cheap by construction: copy a directory into a new repository, repoint the remote. History is lost for that compartment; content is not |
+| Agreement forbids third-party storage of a customer's material | That compartment cannot use an unapproved host | Configure an approved self-hosted remote or leave that compartment local (§6.6) |
+| A collaborator needs one compartment and not others | Repository access must match that compartment | Grant only its private repository; dependency repositories require separate authorization (S-33) |
 | A fresh clone leaves compartments world-readable until modes are restored | A window where local separation does not hold | Mode restoration runs before any other step of `clone` and `pull` (§7.6). Do not reorder it |

@@ -1,5 +1,9 @@
 # Describing a board in an AGENTS.md
 
+Historical research. These observations are not implementation requirements;
+[S-31](../DECISIONS.md#s-31-the-board-schema-is-caimanboardv2-schema-literals-are-a-table)
+records the adopted board design. Recheck external claims before relying on them.
+
 Prior art: people hand-writing hardware context into agent context files, which
 is the thing Caiman generates. Searched GitHub 2026-09-16 via `gh api search/code`.
 

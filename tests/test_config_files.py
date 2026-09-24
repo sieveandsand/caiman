@@ -3,7 +3,7 @@ import stat
 
 import pytest
 
-from caiman.config_files import read_draft, template, write_draft
+from caiman.configurations.files import read_draft, template, write_draft
 
 
 def test_export_round_trip_and_private_mode(tmp_path):

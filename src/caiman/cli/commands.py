@@ -65,9 +65,9 @@ def _config_commands(commands) -> None:
 
 
 def _run_config(args, root: Path) -> int:
-    from caiman.config_files import read_draft, template, write_draft
-    from caiman.config_store import ConfigurationService
-    from caiman.store import Store
+    from caiman.configurations.files import read_draft, template, write_draft
+    from caiman.configurations.service import ConfigurationService
+    from caiman.storage.store import Store
 
     service = ConfigurationService(Store(root))
     scopes = set(getattr(args, "compartment", []))
@@ -96,7 +96,7 @@ def _run_config(args, root: Path) -> int:
         draft = copy.deepcopy(manifest)
         draft.update(version=args.version, derives_from=args.from_version, relation=args.relation)
 
-    from caiman.config_tui import ConfigApp
+    from caiman.configurations.tui import ConfigApp
 
     ConfigApp(kind=args.command, store_root=root, draft=draft).run()
     return 0
@@ -109,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"caiman {__version__}")
     parser.add_argument('--store', dest='launcher_store', metavar='PATH', type=Path, help='Local store (overrides config.toml)')
     commands = parser.add_subparsers(dest="command")
+    session = commands.add_parser('session', help='Non-interactive harness callbacks')
+    session.add_subparsers(dest='session_action', required=True).add_parser('start', help='Introduce Caiman to a session')
     ingest = commands.add_parser("ingest", help="Open the document ingestion TUI")
     ingest.add_argument("markdown", nargs="?", type=Path, help="Prepared Markdown file")
     ingest.add_argument("--store", type=Path, help="Local store path (overrides config.toml)")
@@ -118,6 +120,15 @@ def main(argv: list[str] | None = None) -> int:
     documents.add_argument("--compartment", action="append", default=[],
                            help="Include this compartment (usually a customer); repeat for all required compartments")
     args = parser.parse_args(argv)
+
+    if args.command == 'session':
+        from caiman.hooks.service import session_start
+
+        try:
+            return session_start(store_path(args.launcher_store))
+        except Exception:
+            # Harness callbacks must never prevent a session from starting.
+            return 0
 
     interactive = args.command in (None, "ingest") or getattr(args, "action", None) in {"configure", "new-version"}
     if interactive and (not sys.stdin.isatty() or not sys.stdout.isatty()):
@@ -130,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if getattr(args, "action", None) == "template":
-            from caiman.config_files import template, write_draft
+            from caiman.configurations.files import template, write_draft
 
             write_draft(args.output, template(args.command))
             print(f"Wrote editable {args.command} draft to {args.output}")
@@ -139,13 +150,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in {"board", "project"}:
             return _run_config(args, root)
         if args.command == "documents":
-            from caiman.config_store import ConfigurationService
-            from caiman.store import Store
+            from caiman.configurations.service import ConfigurationService
+            from caiman.storage.store import Store
 
             records = ConfigurationService(Store(root)).list_documents(compartments=set(args.compartment))
             print(json.dumps(records, ensure_ascii=False, indent=2))
             return 0
-        from caiman.workflow import run_workflow
+        from caiman.dashboard.workflow import run_workflow
 
         return run_workflow(root, source_path=getattr(args, 'markdown', None), ingest=args.command == 'ingest')
     except (OSError, ValueError) as error:

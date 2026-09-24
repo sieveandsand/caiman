@@ -1,5 +1,10 @@
 # Embedder
 
+Historical research, retained for its examples and sources. This is not a current
+product comparison or a Caiman requirement. Recheck capabilities before relying
+on them; [D-04](../DECISIONS.md#d-04-build-the-context-layer-or-adopt-a-platform)
+tracks the build-versus-buy question.
+
 ## Init command
 Looks in the repo for 
 - target hardware
@@ -197,11 +202,11 @@ bench equipment. Caiman deliberately does not model any of it, so the overlap wi
 a board manifest is much smaller than the name suggests.
 
 **94 lines.** Comfortably inside the ~150-line budget the `AGENTS.md` community
-converged on (`VISION.md` §4.3). A second data point for that number.
+converged on ([Roadmap’s historical survey](../ROADMAP.md#competitive-landscape-historical)). A second data point for that number.
 
 ### What it means here
 
-The competitive read stays as `VISION.md` §4 has it, but sharper: the trade is
+The competitive read stays as [Roadmap’s historical survey](../ROADMAP.md#competitive-landscape-historical) has it, but sharper: the trade is
 **derived-but-opaque versus declared-but-manual**. Embedder derives board context
 automatically, which is better ergonomics and is why D-04 concedes the point — but
 you cannot read, diff, review, or version-control the result. Caiman declares it

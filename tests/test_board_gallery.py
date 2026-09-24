@@ -1,20 +1,20 @@
-"""The board gallery shows complete snapshots and returns exact editor selections."""
+"""The board gallery shows concise summaries and returns exact editor selections."""
 
 
 import pytest
 from textual.widgets import Static
 
-from caiman.board_gallery import BoardCard, BoardGalleryApp
-from caiman.config_store import ConfigurationService
-from caiman.store import Store
+from caiman.boards.gallery import BoardCard, BoardGalleryApp
+from caiman.configurations.service import ConfigurationService
+from caiman.storage.store import Store
 
 
 def register_board(root, name='alpha', version='A', parts=1):
     service = ConfigurationService(Store(root))
     draft = {
         'board': name, 'version': version,
-        'parts': [{'role': f'role-{index:02d}', 'part': f'synthetic/chip-{index}',
-                   'silicon_revision': 'mask-A', 'refdes': f'U{index + 1}', 'documents': []}
+        'parts': [{'role': f'role-{index:02d}', 'vendor': 'synthetic', 'part': f'chip-{index}',
+                   'silicon_revision': 'mask-A', 'aliases': {'refdes': f'U{index + 1}'}, 'documents': []}
                   for index in range(parts)],
         'links': [],
     }
@@ -48,14 +48,14 @@ async def test_gallery_two_columns_complete_parts_and_keyboard_edit(tmp_path):
         for card, count in zip(cards, (2, 3)):
             text = card.label.plain
             for index in range(count):
-                assert f'role-{index:02d}' in text
-                assert f'synthetic/chip-{index}' in text
-                assert f'Ref U{index + 1}' in text
-            assert 'Silicon mask-A' in text
-            assert f'Parts ({count})' in text
-            # The logo spells the version too, but an opaque label must also
-            # appear as literal text (CLAUDE.md I-7).
-            assert 'Version A' in text
+                assert f'chip-{index}' in text
+                assert f'role-{index:02d}' not in text
+                assert f'refdes U{index + 1}' not in text
+            assert 'Silicon mask-A' not in text
+            assert f'{count} Parts · 0 Links · 0 Docs' in text
+            from caiman.ui.pixel_title import pixel_title
+            assert '\n'.join(pixel_title('A', 48)) in text
+            assert 'Version A' not in text
         await pilot.press('l', 'e')
     assert app.return_value['digest'] == beta['digest']
     assert app.return_value['digest'] != alpha['digest']
@@ -86,10 +86,10 @@ async def test_long_part_list_is_scrollable_and_cancel_writes_nothing(tmp_path):
     async with app.run_test(size=(80, 24)) as pilot:
         await ready(pilot, app)
         card = app.query_one(BoardCard)
-        assert 'role-14' in card.label.plain
-        assert 'synthetic/chip-14' in card.label.plain
-        assert card.region.height > 24
+        assert 'chip-14' in card.label.plain
+        assert 'role-14' not in card.label.plain
         body = app.query_one('#body')
+        assert card.region.height > body.region.height
         before = body.scroll_y
         await pilot.press('pagedown')
         await pilot.pause()
@@ -130,26 +130,6 @@ async def test_different_height_cards_navigate_by_grid_row(tmp_path):
         assert app.focused.record['manifest']['board'] == 'alpha'
 
 
-def test_board_cards_use_a_registered_dotted_border():
-    """Textual ships no dotted border, so Caiman registers one.
-
-    Registration reaches into Textual internals and falls back to the built-in
-    dashed border if they move. That fallback must never pass silently: this is
-    where a Textual upgrade gets noticed.
-    """
-    from textual._border import BORDER_CHARS
-    from textual.css.constants import VALID_BORDER
-
-    from caiman.theme import DOT, DOT_BORDER
-
-    assert DOT_BORDER == 'dotted', 'Textual internals moved; the border degraded to dashed'
-    assert 'dotted' in VALID_BORDER
-    assert BORDER_CHARS['dotted'] == ((DOT, DOT, DOT), (DOT, ' ', DOT), (DOT, DOT, DOT))
-    # Latin-1, so it renders in any terminal font — unlike Braille or block dots.
-    assert DOT.encode('latin-1') == b'\xb7'
-    assert f'border: {DOT_BORDER} ' in BoardGalleryApp.CSS
-
-
 @pytest.mark.asyncio
 async def test_board_card_text_is_left_aligned(tmp_path):
     """Button centres its label by default; a card is a left-aligned document."""
@@ -160,3 +140,71 @@ async def test_board_card_text_is_left_aligned(tmp_path):
         await ready(pilot, app)
         card = next(iter(app.query(BoardCard)))
         assert card.styles.text_align == 'left'
+
+
+def test_card_counts_board_and_part_docs_and_omits_details():
+    record = {'digest': 'sha256:' + 'f' * 64, 'manifest': {
+        'board': 'falcon', 'version': 'Rev B', 'vendor': 'hidden-vendor',
+        'notes': 'Hidden board note', 'documents': [{'ref': 'board-guide'}],
+        'parts': [{'part': 'mcu-1', 'role': 'hidden-role', 'vendor': 'hidden-vendor',
+                   'notes': 'Hidden part note', 'silicon_revision': 'hidden-mask',
+                   'aliases': {'refdes': 'hidden-refdes'}, 'documents': [{'ref': 'manual'}, {'ref': 'errata'}]}],
+        'links': [{'name': 'hidden-link', 'between': ['a', 'b']}],
+    }}
+    card = BoardCard(record, index=0)
+    height = card.format_card(48)
+    text = card.label.plain
+    from caiman.ui.pixel_title import pixel_title
+    assert '\n'.join(pixel_title('falcon', 44)) in text
+    assert '\n'.join(pixel_title('Rev B', 44)) in text
+    assert 'falcon' not in text and 'Version Rev B' not in text
+    assert '1 Parts · 1 Links · 3 Docs' in text
+    assert 'mcu-1' in text
+    assert 'hidden' not in text.lower() and 'sha256' not in text and 'Public' not in text
+    assert any('\u2801' <= char <= '\u28ff' for char in text)
+    assert not any('\u2580' <= char <= '\u259f' for char in text)
+    assert height == len(text.splitlines()) + 2
+    assert max(map(len, text.splitlines())) <= 44
+
+
+def test_pixel_titles_fall_back_for_long_or_unicode_identifiers():
+    from caiman.ui.pixel_title import pixel_title
+
+    assert len(pixel_title('Falcon-2', 32)) == 2
+    assert pixel_title('long-board-name', 12) == []
+    assert pixel_title('板-α', 40) == []
+    record = {'manifest': {'board': '板-α', 'version': 'Revision B / prototype build', 'parts': [], 'links': []}}
+    card = BoardCard(record, index=0)
+    card.format_card(20)
+    assert '板-α' in card.label.plain
+    assert 'Revision' in card.label.plain and 'prototype' in card.label.plain
+    assert '0 Parts' in card.label.plain and '0 Docs' in card.label.plain
+
+
+@pytest.mark.asyncio
+async def test_dotted_shadow_tracks_selection_without_moving_cards(tmp_path):
+    root = tmp_path / 'store'
+    register_board(root, 'alpha')
+    register_board(root, 'beta')
+    app = BoardGalleryApp(root)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await ready(pilot, app)
+        first, second = app.query(BoardCard)
+        shadows = [card.parent.query_one('.card-shadow', Static) for card in (first, second)]
+        assert shadows[0].visible and not shadows[1].visible
+        regions = [card.region for card in (first, second)]
+        assert shadows[0].region.x == first.region.x + 1
+        assert shadows[0].region.y == first.region.y + 1
+        assert shadows[0].region.right == first.region.right + 1
+        assert shadows[0].region.bottom == first.region.bottom + 1
+        assert '⠢⠔' in str(shadows[0].render())
+        await pilot.press('l')
+        assert not shadows[0].visible and shadows[1].visible
+        assert [card.region for card in (first, second)] == regions
+        await pilot.resize_terminal(80, 30)
+        assert second.region.y > first.parent.region.bottom
+        assert shadows[1].region.right <= second.parent.region.right
+        assert shadows[1].region.bottom <= second.parent.region.bottom
+        app.query_one('#back').focus()
+        await pilot.pause()
+        assert not any(shadow.visible for shadow in shadows)

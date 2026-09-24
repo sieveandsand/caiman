@@ -2,25 +2,14 @@
 
 ## What this document is for
 
-Caiman does not own the session, the worktree, or the agent process (S-01). But
-the harness running the session **writes a persistent, plaintext record of every
-file the agent reads**, in a location Caiman does not control and none of its
-invariants reach.
+Historical measurements of session persistence, taken on 2026-09-10. This is
+research evidence, not a current harness contract or a source of Caiman policy.
+No measurements were repeated during the documentation cleanup.
 
-That is a fact about the environment, not a design choice available to us, and it
-lands squarely on the security model. This document records what two harnesses
-actually persist, measured rather than assumed, and states what follows.
-
-The short version: **materializing a compartmented document into a worktree
-causes a second, unlabeled copy of its contents to be written to `$HOME`, where it
-persists after the documents are re-materialized.** For the agent map as currently
-written this is mostly bounded, because the frontier harnesses are `public`-only.
-It is not bounded for any agent with `receives = "all"`.
-
-Nothing here resolves an open decision. Implications route to D-07 and to
-`SECURITY-MODEL.md`; proposals are marked as proposals.
-
----
+The observations show that tool output can persist outside Caiman's workspaces.
+[Security §7.4](SECURITY-MODEL.md#74-harness-residue) owns the implications for
+revocation; G20/G21 track policy and coverage review. The agent map mentioned in
+the original analysis was retired by S-19 on 2026-09-15.
 
 ## Method
 
@@ -287,9 +276,8 @@ Concretely: a sealed session that greps a customer specification writes the
 matched requirement text into `~/.codex/sessions/…`, unlabeled, in plaintext,
 outside the worktree.
 
-This does not defeat the primary control. S-19 routing still decides *which
-model* sees the material, and a local model with no egress remains a local model
-with no egress. What it defeats is the assumption that a compartment's contents
+This does not defeat the primary control. The engineer still chooses which model sees the material; Caiman does not
+verify that choice. What it defeats is the assumption that a compartment's contents
 live only where Caiman put them.
 
 ### 2. Revocation is incomplete
@@ -327,17 +315,10 @@ a demonstrated leak**, and it should be verified before it informs any decision.
 
 ### 4. What the current agent map already handles
 
-Being fair to the design as written: in `agents.toml`, `claude-code` and `cursor`
-are `receives = "public"`. In the intended configuration the frontier harnesses
-never see compartmented material, so their transcripts contain only public vendor
-documentation — which the security model already treats as semi-public and
-explicitly declines to gate.
-
-**The exposure is confined to agents with `receives = "all"`.** That is a small,
-named set, which is what makes this tractable rather than alarming. The gap is
-that the corresponding disk residue is currently undocumented and unmanaged.
-
----
+Historical note: this analysis originally assumed an `agents.toml` map with
+`receives = "public"` or `"all"`. S-19 retired that map after these measurements.
+It is not a current control. The planned `open`/`sealed` mode filters workspace
+materialization and does not verify which model the harness uses.
 
 ## Open questions
 

@@ -4,8 +4,8 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
-from .models import canonical_json, valid_identifier
-from .store import Store, StoreError
+from caiman.documents.models import canonical_json, valid_identifier
+from caiman.storage.store import Store, StoreError
 
 
 STATE_FILE = '.authoring-state.json'
@@ -46,9 +46,9 @@ def remember_compartments(root: Path, state: dict, selections) -> None:
 
 def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -> int:
     """Home screen loop. Every action names its board or project; none is remembered."""
-    from .dashboard_actions import run_dashboard_action
-    from .onboarding import LauncherApp, SetupApp
-    from .tui import IngestApp
+    from caiman.dashboard.actions import run_dashboard_action
+    from caiman.dashboard.onboarding import LauncherApp, SetupApp
+    from caiman.documents.tui import IngestApp
 
     state = load_state(root)
     action = 'ingest' if ingest else None
@@ -66,6 +66,18 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
                 ingest_context[kind] = selection
                 remember_compartments(root, state, [selection])
             action = 'ingest' if ingest_state is not None else None
+            continue
+        if action in {'hooks-claude', 'hooks-codex'}:
+            from caiman.hooks.tui import HooksApp
+
+            HooksApp(harness=action.removeprefix('hooks-'), store_root=root).run()
+            action = None
+            continue
+        if action in {'repo-add', 'repo-remove', 'repo-initialize'}:
+            from caiman.repositories.tui import RepoManagerApp
+
+            RepoManagerApp(store_root=root, action=action.removeprefix('repo-')).run()
+            action = None
             continue
         if action != 'ingest':
             remember_compartments(root, state, [run_dashboard_action(action, root, state['authorized_compartments'])])

@@ -1,14 +1,24 @@
 {
-  "board": "example-board",
-  "version": "Rev A",
+  "schema": "caiman.board.v2",
+  "board": "falcon",
+  "version": "2.0",
+  "vendor": "in-hosue",
+  "notes": "Synthetic board. Every identifier here is invented; see docs/DECISIONS.md D-08.",
   "parts": [
     {
       "role": "application-mcu",
-      "part": "example/example-mcu",
+      "vendor": "example",
+      "part": "example-mcu",
+      "aliases": {
+        "refdes": "U1",
+        "mpn": "EXAMPLE-MCU-0001"
+      },
+      "notes": "Runs the application image.",
       "documents": [
         {
           "ref": "example/example-mcu/reference-manual/Rev%20A",
-          "compartment": "public"
+          "compartment": "public",
+          "notes": "Peripheral register descriptions and pin multiplexing."
         }
       ]
     }

@@ -7,14 +7,15 @@ from copy import deepcopy
 from pathlib import Path
 
 from textual.app import ComposeResult
-from caiman.navigation import NavigationApp
+from caiman.ui.navigation import NavigationApp
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static
 
-from caiman.ingest import PreparedDocument, ValidationError, prepare_document, validate_headings
-from caiman.config_store import ConfigurationService
-from caiman.store import Store
-from caiman.theme import TERMINAL_CSS, apply_theme
+from caiman.documents.ingest import PreparedDocument, ValidationError, prepare_document, validate_headings
+from caiman.configurations.service import ConfigurationService
+from caiman.configurations.models import part_identity, part_vendor_and_part
+from caiman.storage.store import Store
+from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
 class IngestApp(NavigationApp):
@@ -83,11 +84,11 @@ class IngestApp(NavigationApp):
                     yield from self.field("pattern", "Requirement ID pattern")
                 yield from self.field("silicon_revisions", "Silicon revisions (comma separated; optional)")
                 yield Label("Access — choose explicitly")
-                yield Select([("Public", "public"), ("Private — compartments", "compartments")], prompt="Choose access", id="visibility")
+                yield Select([("Public", "public"), ("Private — compartment", "compartments")], prompt="Choose access", id="visibility")
                 yield Static("", id="error-labels", classes="error", markup=False)
                 with VerticalScroll(id="compartment-fields", classes="step"):
-                    yield from self.field("compartments", "Compartments (comma separated)")
-                    yield Static("Usually one per customer, such as oem-alpha. A project needs every compartment listed here to use this document.", classes="hint")
+                    yield from self.field("compartments", "Compartment (exactly one)")
+                    yield Static("Choose one customer or project compartment, such as oem-alpha. A project must include this compartment to use the document.", classes="hint")
             with VerticalScroll(id="step-2", classes="step"):
                 yield Static("Provenance is optional. Continue to skip; missing information remains unknown.")
                 with Collapsible(title="Original source and converter", collapsed=True):
@@ -133,9 +134,9 @@ class IngestApp(NavigationApp):
             for index, option in enumerate(self.boards):
                 if option["digest"] == record["digest"]:
                     self.query_one("#board_choice", Select).value = str(index)
-            identity = self.value("issuer") + "/" + self.value("part")
+            identity = (self.value("issuer"), self.value("part"))
             for index, part in enumerate(record["manifest"]["parts"]):
-                if part["part"] == identity:
+                if part_vendor_and_part(part) == identity:
                     self.query_one("#board_part", Select).value = str(index)
                     break
         if "project" in self.context:
@@ -196,7 +197,7 @@ class IngestApp(NavigationApp):
             self.select_board(self.boards[int(event.value)])
         elif event.select.id == "board_part" and isinstance(event.value, str) and self.selected_board is not None:
             part = self.selected_board["manifest"]["parts"][int(event.value)]
-            issuer, name = part["part"].split("/", 1)
+            issuer, name = part_vendor_and_part(part)
             self.query_one("#issuer", Input).value = issuer
             self.query_one("#part", Input).value = name
             self.query_one("#program", Input).value = ""
@@ -218,7 +219,7 @@ class IngestApp(NavigationApp):
         self.selected_board = record
         self.context["board"] = record
         parts = record["manifest"]["parts"]
-        self.query_one("#board_part", Select).set_options([(f"{part['role']} · {part['part']}", str(index)) for index, part in enumerate(parts)])
+        self.query_one("#board_part", Select).set_options([(f"{part['role']} · {part_identity(part)}", str(index)) for index, part in enumerate(parts)])
         self.query_one("#context-status", Static).update(f"Board {record['manifest']['board']} @ {record['manifest']['version']}. Choose a part; access remains your explicit choice.")
 
     async def apply_project(self, record: dict, *, update_board: bool = True) -> None:
@@ -232,7 +233,7 @@ class IngestApp(NavigationApp):
         self.query_one("#part", Input).value = ""
         self.query_one("#issuer", Input).value = ""
         self.query_one("#silicon_revisions", Input).value = ""
-        self.query_one("#compartments", Input).value = ", ".join(manifest["compartments"])
+        self.query_one("#compartments", Input).value = manifest["compartments"][0] if len(manifest["compartments"]) == 1 else ""
         scopes = set(self.csv("project_scope")) | set(manifest["compartments"])
         self.query_one("#project_scope", Input).value = ", ".join(sorted(scopes))
         self.query_one("#visibility", Select).value = Select.NULL
@@ -320,7 +321,7 @@ class IngestApp(NavigationApp):
         labels = manifest["labels"]
         source = manifest.get("source", {})
         converter = manifest.get("converter", {})
-        access = "Public" if labels["public"] else "Compartments: " + ", ".join(labels["compartments"])
+        access = "Public" if labels["public"] else "Compartment: " + labels["compartments"][0]
         hosted = {True: "Hosted", False: "Local"}.get(converter.get("hosted"), "Unknown")
         lines = [
             "Review before registering locally",

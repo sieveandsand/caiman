@@ -8,15 +8,16 @@ import json
 from pathlib import Path
 
 from textual.app import ComposeResult
-from caiman.navigation import NavigationApp
+from caiman.ui.navigation import NavigationApp
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Label, Static, TextArea
 
-from caiman.config_files import template, unique_keys
-from caiman.config_store import ConfigurationService
-from caiman.models import ValidationError
-from caiman.store import Store
-from caiman.theme import TERMINAL_CSS, apply_theme
+from caiman.configurations.files import template, unique_keys
+from caiman.configurations.service import ConfigurationService
+from caiman.configurations.models import part_aliases, part_identity
+from caiman.documents.models import ValidationError
+from caiman.storage.store import Store
+from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
 class ConfigApp(NavigationApp):
@@ -55,7 +56,7 @@ class ConfigApp(NavigationApp):
 
     @property
     def collections(self) -> tuple[str, ...]:
-        return ("parts", "links") if self.kind == "board" else ("documents", "precedence", "features")
+        return ("documents", "parts", "links") if self.kind == "board" else ("documents", "precedence", "features")
 
     def field(self, key: str, label: str, value=None) -> ComposeResult:
         yield Label(label)
@@ -85,6 +86,8 @@ class ConfigApp(NavigationApp):
                     yield from self.field("board_digest", "Board manifest digest (optional; blank pins the exact version during review)", board.get("digest", ""))
                     yield from self.field("spec_set", "Specification set")
                 else:
+                    yield from self.field("vendor", "Board vendor (required only for board-level documents)")
+                    yield from self.field("notes", "Notes (optional, unstructured; nothing parses them)")
                     yield Static("Board manifests are public. Keep customer information in projects.", classes="hint")
                 with Collapsible(title="Registered document catalog · copy exact pins", collapsed=True):
                     yield Static("Refresh to list public documents" + (" and documents in the compartments entered above." if self.kind == "project" else "."), classes="hint")
@@ -107,11 +110,12 @@ class ConfigApp(NavigationApp):
             yield Button("Cancel", id="cancel")
         yield self.navigation_hint()
 
-    @staticmethod
-    def collection_hint(key: str) -> str:
+    def collection_hint(self, key: str) -> str:
+        if self.kind == "board" and key == "documents":
+            return 'Documents about the assembly itself, issued by the board vendor: {"ref": "…", "digest": "sha256:…", "notes": "why it is pinned"}.'
         return {
-            "parts": 'Each part has role, part (issuer/part), and documents. A document pin uses {"ref": "…", "digest": "sha256:…"}.',
-            "links": 'Declare links between part roles: {"name": "bus", "between": ["mcu.SPI1", "sensor.SPI"]}.',
+            "parts": 'Each part has role, vendor, part, and documents. A document pin uses {"ref": "…", "digest": "sha256:…"}. Optional: silicon_revision, aliases, notes.',
+            "links": 'Declare links between part roles: {"name": "bus", "between": ["mcu.SPI1", "sensor.SPI"], "notes": "why it exists"}.',
             "documents": 'Reuse catalog pins: {"ref": "…", "digest": "sha256:…"}. Exact references are pinned during review.',
             "precedence": 'Declare governing order with a note: {"ref": "…", "digest": "sha256:…", "note": "program deviation"}.',
             "features": 'Declare scope as required or not-used. Include governed_by, realized_on, and related relationships where applicable.',
@@ -141,7 +145,8 @@ class ConfigApp(NavigationApp):
 
     def collect_draft(self) -> dict:
         data = deepcopy(self.draft)
-        for key in (self.kind, "version", "derives_from", "relation"):
+        optional = ("vendor", "notes") if self.kind == "board" else ()
+        for key in (self.kind, "version", "derives_from", "relation", *optional):
             value = self.value(key)
             if value or key in {self.kind, "version"}:
                 data[key] = value
@@ -193,9 +198,13 @@ class ConfigApp(NavigationApp):
         manifest = self.prepared.manifest
         lines = [f"{self.kind.capitalize()}: {manifest[self.kind]}", f"Version: {manifest['version']}"]
         if self.kind == "board":
-            lines.extend(["Access: public", f"Parts: {len(manifest.get('parts', []))}", f"Links: {len(manifest.get('links', []))}"])
+            lines.extend(["Access: public", f"Vendor: {manifest.get('vendor', 'not declared')}",
+                          f"Notes: {manifest.get('notes', 'none')}",
+                          f"Board documents: {len(manifest.get('documents', []))}",
+                          f"Parts: {len(manifest.get('parts', []))}", f"Links: {len(manifest.get('links', []))}"])
             for part in manifest.get("parts", []):
-                lines.append(f"  {part['role']}: {part['part']} · silicon {part.get('silicon_revision', 'unknown')} · refdes {part.get('refdes', 'unknown')}")
+                aliases = ", ".join(f"{key} {value}" for key, value in sorted(part_aliases(part).items()))
+                lines.append(f"  {part['role']}: {part_identity(part)} · silicon {part.get('silicon_revision', 'unknown')} · aliases {aliases or 'none'}")
             for link in manifest.get("links", []):
                 endpoints = " ↔ ".join(link["between"]) if "between" in link else f"{link['from']} → {link['to']}"
                 lines.append(f"  Link {link['name']}: {endpoints}")
@@ -222,7 +231,9 @@ class ConfigApp(NavigationApp):
                     lines.append(f"    Related to {relationship['feature']}: {relationship['relation']}")
         if manifest.get("derives_from"):
             lines.extend([f"Derived from: {manifest['derives_from']}", f"Relationship: {manifest.get('relation', '')}"])
-        pins = manifest.get("documents", []) if self.kind == "project" else [pin for part in manifest.get("parts", []) for pin in part.get("documents", [])]
+        pins = list(manifest.get("documents", []))
+        if self.kind == "board":
+            pins += [pin for part in manifest.get("parts", []) for pin in part.get("documents", [])]
         lines.extend(["", "Pinned documents"])
         lines.extend(f"{pin.get('ref', 'Selected by digest')} [{pin['compartment']}]\n  {pin['digest']}" for pin in pins)
         if not pins:

@@ -9,7 +9,7 @@ import re
 
 from markdown_it import MarkdownIt
 
-from .models import AccessLabel, ValidationError, canonical_json, valid_identifier
+from caiman.documents.models import AccessLabel, ValidationError, canonical_json, current_schema, is_schema, valid_identifier
 
 
 METADATA_FIELDS = frozenset({'issuer', 'part', 'program', 'doc_type', 'version', 'structure',
@@ -102,13 +102,15 @@ def validate_metadata(metadata: dict) -> dict:
     labels = metadata.get('labels')
     try:
         if not isinstance(labels, dict) or labels.keys() - {'public', 'compartments'}:
-            raise ValueError('Supply explicit public access or named compartments')
+            raise ValueError('Supply explicit public access or exactly one compartment')
         compartments = labels.get('compartments', [])
         if not isinstance(compartments, list) or any(not isinstance(c, str) for c in compartments):
             raise ValueError('Compartments must be a list of names')
+        if len(compartments) > 1:
+            raise ValueError('A private document requires exactly one compartment')
         label = AccessLabel(labels.get('public', False), frozenset(compartments))
         if not label.prefixed_labels():
-            raise ValueError('Choose public access or at least one compartment')
+            raise ValueError('Choose public access or exactly one compartment')
         result['labels'] = {'public': label.is_public, 'compartments': sorted(label.compartments)}
     except (ValueError, TypeError) as error:
         errors['labels'] = str(error)
@@ -181,7 +183,7 @@ def prepare_document(path: Path, metadata: dict) -> PreparedDocument:
         if not any(pattern.fullmatch(candidate) for candidate in candidates):
             raise ValidationError({'requirements.pattern': 'No matching requirement IDs found in the document'})
     blob_digest = digest(content)
-    manifest.update(schema='caiman.document/1', original_filename=path.name,
+    manifest.update(schema=current_schema('document'), original_filename=path.name,
                     pipeline_version='caiman-ingest/0.1',
                     ingested_at=datetime.now(timezone.utc).isoformat(timespec='microseconds').replace('+00:00', 'Z'),
                     files=[{'path': 'document.md', 'sha256': blob_digest[7:], 'size': len(content)}])
@@ -201,7 +203,7 @@ def verify_prepared(prepared: PreparedDocument) -> None:
                      digest(canonical_json(manifest)) == prepared.manifest_digest and
                      manifest.keys() <= METADATA_FIELDS | GENERATED_FIELDS and
                      validated == metadata and manifest.get('files') == expected_files and
-                     manifest.get('schema') == 'caiman.document/1' and
+                     is_schema('document', manifest.get('schema')) and
                      manifest.get('pipeline_version') == 'caiman-ingest/0.1' and
                      manifest.get('original_filename') == prepared.source_path.name and
                      timestamp.tzinfo is not None)

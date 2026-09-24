@@ -9,10 +9,10 @@ from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
-from .config_store import ConfigurationService
-from .navigation import NavigationApp
-from .store import Store
-from .theme import TERMINAL_CSS, apply_theme
+from caiman.configurations.service import ConfigurationService
+from caiman.ui.navigation import NavigationApp
+from caiman.storage.store import Store
+from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
 def revision_draft(manifest: dict, *, mode: str, version='', relation='') -> dict:
@@ -258,7 +258,7 @@ def run_dashboard_action(action: str, root: Path, compartments) -> dict | None:
             DocumentCatalogApp(root=root, compartments=compartments).run()
             return None
         if action == 'show-board':
-            from .board_edit import run_board_gallery
+            from caiman.boards.edit import run_board_gallery
             return run_board_gallery(root)
         if action != 'show-project':
             raise ValueError('Unknown dashboard action')
@@ -271,7 +271,7 @@ def run_dashboard_action(action: str, root: Path, compartments) -> dict | None:
             draft = RevisionApp(kind='project', selection=selection, root=root).run()
             if draft is None:
                 continue
-            from .config_tui import ConfigApp
+            from caiman.configurations.tui import ConfigApp
             editor = ConfigApp(kind='project', store_root=root, draft=draft)
             editor.run()
             if editor.registration is not None:

@@ -3,7 +3,30 @@ import stat
 
 import pytest
 
-from caiman.workflow import load_state, remember_compartments, run_workflow, save_state
+
+@pytest.mark.parametrize('action', ['add', 'remove', 'initialize'])
+def test_home_routes_repo_manager(tmp_path, monkeypatch, action):
+    import caiman.dashboard.onboarding as onboarding
+    import caiman.repositories.tui as repo_tui
+    actions = ['repo-' + action, 'quit']
+    calls = []
+
+    class Home:
+        def run(self):
+            return actions.pop(0)
+
+    class Manager:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+        def run(self):
+            return None
+
+    monkeypatch.setattr(onboarding, 'LauncherApp', Home)
+    monkeypatch.setattr(repo_tui, 'RepoManagerApp', Manager)
+    assert run_workflow(tmp_path) == 0
+    assert calls == [{'store_root': tmp_path, 'action': action}]
+
+from caiman.dashboard.workflow import load_state, remember_compartments, run_workflow, save_state
 
 
 def test_state_missing_does_not_write(tmp_path):
@@ -56,7 +79,7 @@ def test_invalid_or_symlinked_state_rejected(tmp_path):
 
 
 def test_launch_opens_home_without_setup_or_writes(tmp_path, monkeypatch):
-    import caiman.onboarding as onboarding
+    import caiman.dashboard.onboarding as onboarding
 
     launched = []
 
@@ -80,7 +103,7 @@ def test_launch_opens_home_without_setup_or_writes(tmp_path, monkeypatch):
 
 
 def test_ingest_starts_without_a_preselected_board_or_project(tmp_path, monkeypatch):
-    import caiman.tui as tui
+    import caiman.documents.tui as tui
 
     calls = []
 
@@ -99,11 +122,11 @@ def test_ingest_starts_without_a_preselected_board_or_project(tmp_path, monkeypa
 
 
 def configurations(root):
-    from caiman.config_store import ConfigurationService
-    from caiman.store import Store
+    from caiman.configurations.service import ConfigurationService
+    from caiman.storage.store import Store
     service = ConfigurationService(Store(root))
     board = service.prepare('board', {'board': 'demo', 'version': 'v1',
-        'parts': [{'role': 'main', 'part': 'synthetic/chip', 'documents': []}], 'links': []})
+        'parts': [{'role': 'main', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}], 'links': []})
     service.register(board)
     project = service.prepare('project', {'project': 'program', 'version': 'A', 'customer': 'Synthetic',
         'compartments': ['alpha'], 'board': {'name': 'demo', 'version': 'v1'},
@@ -114,8 +137,8 @@ def configurations(root):
 
 
 def test_selections_do_not_carry_into_the_next_ingest(tmp_path, monkeypatch):
-    import caiman.onboarding as onboarding
-    import caiman.tui as tui
+    import caiman.dashboard.onboarding as onboarding
+    import caiman.documents.tui as tui
     root = tmp_path / 'store'
     context = configurations(root)
     actions = ['ingest', 'ingest', 'quit']
@@ -139,8 +162,8 @@ def test_selections_do_not_carry_into_the_next_ingest(tmp_path, monkeypatch):
 
 
 def test_inline_create_cancel_restores_ingest_values(tmp_path, monkeypatch):
-    import caiman.onboarding as onboarding
-    import caiman.tui as tui
+    import caiman.dashboard.onboarding as onboarding
+    import caiman.documents.tui as tui
     root = tmp_path / 'store'
     context = configurations(root)
     inputs = {'version': 'typed-version', 'issuer': 'typed-issuer'}
@@ -164,8 +187,8 @@ def test_inline_create_cancel_restores_ingest_values(tmp_path, monkeypatch):
 
 
 def test_inline_create_hands_new_configuration_back_to_ingest(tmp_path, monkeypatch):
-    import caiman.onboarding as onboarding
-    import caiman.tui as tui
+    import caiman.dashboard.onboarding as onboarding
+    import caiman.documents.tui as tui
     root = tmp_path / 'store'
     context = configurations(root)
     calls = []
@@ -183,3 +206,27 @@ def test_inline_create_hands_new_configuration_back_to_ingest(tmp_path, monkeypa
     monkeypatch.setattr(onboarding, 'SetupApp', Create)
     assert run_workflow(root, ingest=True) == 0
     assert calls[1]['context'] == {'board': context['board']}
+
+
+@pytest.mark.parametrize('harness', ['claude', 'codex'])
+def test_home_routes_hooks_and_returns_to_home(tmp_path, monkeypatch, harness):
+    import caiman.dashboard.onboarding as onboarding
+    import caiman.hooks.tui as hooks_tui
+
+    actions = [f'hooks-{harness}', 'quit']
+    calls = []
+
+    class Home:
+        def run(self):
+            return actions.pop(0)
+
+    class Hooks:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+        def run(self):
+            return None
+
+    monkeypatch.setattr(onboarding, 'LauncherApp', Home)
+    monkeypatch.setattr(hooks_tui, 'HooksApp', Hooks)
+    assert run_workflow(tmp_path) == 0
+    assert calls == [{'harness': harness, 'store_root': tmp_path}]

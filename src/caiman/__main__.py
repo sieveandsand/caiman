@@ -1,3 +1,3 @@
-from caiman.cli import main
+from caiman.cli.commands import main
 
 raise SystemExit(main())

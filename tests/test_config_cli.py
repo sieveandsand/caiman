@@ -6,10 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from caiman.cli import main
-from caiman.config_store import ConfigurationService
-from caiman.ingest import prepare_document
-from caiman.store import Store
+from caiman.cli.commands import main
+from caiman.configurations.service import ConfigurationService
+from caiman.documents.ingest import prepare_document
+from caiman.storage.store import Store
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ def configured(tmp_path):
     service = ConfigurationService(store)
     board = service.prepare("board", {
         "board": "example-board", "version": "Rev A",
-        "parts": [{"role": "application-mcu", "part": "example/mcu",
+        "parts": [{"role": "application-mcu", "vendor": "example", "part": "mcu",
                    "documents": [{"digest": doc.manifest_digest}]}], "links": [],
     })
     service.register(board)
@@ -81,7 +81,7 @@ def test_document_catalog_uses_exact_digest(configured, capsys):
 
 
 def test_new_version_opens_copy_with_pins_and_declared_lineage(configured, monkeypatch):
-    import caiman.config_tui
+    import caiman.configurations.tui
 
     class Terminal(io.StringIO):
         def isatty(self):
@@ -96,7 +96,7 @@ def test_new_version_opens_copy_with_pins_and_declared_lineage(configured, monke
 
     monkeypatch.setattr(sys, "stdin", Terminal())
     monkeypatch.setattr(sys, "stdout", Terminal())
-    monkeypatch.setattr(caiman.config_tui, "ConfigApp", app)
+    monkeypatch.setattr(caiman.configurations.tui, "ConfigApp", app)
     assert main(["board", "new-version", "example-board", "--from-version", "Rev A",
                  "--version", "Rev B", "--relation", "Synthetic revision",
                  "--store", str(root)]) == 0

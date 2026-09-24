@@ -14,8 +14,8 @@ import stat
 import tempfile
 from urllib.parse import quote
 
-from .ingest import PreparedDocument, validate_metadata, verify_prepared
-from .models import AccessLabel, canonical_json
+from caiman.documents.ingest import PreparedDocument, validate_metadata, verify_prepared
+from caiman.documents.models import AccessLabel, canonical_json, is_schema
 
 
 class StoreError(ValueError):
@@ -65,8 +65,8 @@ def _compartments(manifest: dict) -> tuple[str, ...]:
         if names:
             raise StoreError("Public and compartment labels cannot be mixed")
         return ("public",)
-    if not names or any(not isinstance(n, str) for n in names):
-        raise StoreError("A non-public document needs explicit compartments")
+    if len(names) != 1 or any(not isinstance(n, str) for n in names):
+        raise StoreError("A private document requires exactly one compartment")
     if len(set(names)) != len(names) or "public" in names:
         raise StoreError("Invalid compartment labels")
     for name in names:
@@ -75,7 +75,7 @@ def _compartments(manifest: dict) -> tuple[str, ...]:
 
 
 def _validate_manifest(manifest: dict) -> None:
-    if not isinstance(manifest, dict) or manifest.get("schema") != "caiman.document/1":
+    if not isinstance(manifest, dict) or not is_schema("document", manifest.get("schema")):
         raise StoreError("Not a document manifest")
     generated = {"schema", "original_filename", "pipeline_version", "ingested_at", "files"}
     validate_metadata({key: value for key, value in manifest.items() if key not in generated})
@@ -166,7 +166,7 @@ class Store:
             allowed = (set() if compartment == "public" else {compartment}) if allowed_compartments is None else allowed_compartments
             labels = AccessLabel(manifest["labels"]["public"], frozenset(manifest["labels"]["compartments"]))
             if not labels.permits(allowed):
-                raise AccessDenied("All document compartments must be authorized")
+                raise AccessDenied("The document compartment must be authorized")
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise StoreError("Invalid manifest JSON") from exc
         return manifest

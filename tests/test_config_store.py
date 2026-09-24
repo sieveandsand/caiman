@@ -3,9 +3,9 @@ from copy import deepcopy
 
 import pytest
 
-from caiman.config_store import ConfigurationService
-from caiman.ingest import prepare_document
-from caiman.store import AccessDenied, Store, StoreError
+from caiman.configurations.service import ConfigurationService
+from caiman.documents.ingest import prepare_document
+from caiman.storage.store import AccessDenied, Store, StoreError
 
 
 def document(tmp_path, store, *, compartments=(), version="v1", text="# Manual\n\n## Registers\nSynthetic text\n", part="chip", silicon_revisions=()):
@@ -22,7 +22,7 @@ def document(tmp_path, store, *, compartments=(), version="v1", text="# Manual\n
 
 def board(selector):
     return {"board": "demo", "version": "v/one", "parts": [
-        {"role": "main", "part": "synthetic/chip", "documents": [selector]}], "links": []}
+        {"role": "main", "vendor": "synthetic", "part": "chip", "documents": [selector]}], "links": []}
 
 
 def project(selector, *, compartments=("alpha",)):
@@ -76,7 +76,7 @@ def test_project_board_ref_repoint_does_not_change_prepared_pin(tmp_path, setup)
     prepared = service.prepare("project", project(selector))
     original = prepared.manifest["board"]["digest"]
     data = board(ref)
-    data["parts"][0]["refdes"] = "U99"
+    data["parts"][0]["aliases"] = {"refdes": "U99"}
     newer = service.register(service.prepare("board", data))
     assert newer.digest != original
     service.register(prepared)
@@ -110,7 +110,7 @@ def test_cross_customer_and_public_board_rejected(tmp_path, setup):
 
 def test_multi_compartment_project_requires_all_labels(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha", "program"), part="spec")
+    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
     data = project(selector, compartments=("alpha", "program"))
     service.register(service.prepare("project", data))
     with pytest.raises(StoreError, match="authorized"):
@@ -165,7 +165,11 @@ def test_list_documents_default_public_only(tmp_path, setup):
 def test_board_document_applicability(tmp_path, setup):
     _, service, ref = setup
     data = board(ref)
-    data["parts"][0]["part"] = "synthetic/other"
+    data["parts"][0]["part"] = "other"
+    with pytest.raises(StoreError, match="part"):
+        service.prepare("board", data)
+    data = board(ref)
+    data["parts"][0]["vendor"] = "another"
     with pytest.raises(StoreError, match="part"):
         service.prepare("board", data)
 
@@ -203,22 +207,22 @@ def test_scope_requires_explicit_names_collection(setup, compartments):
         service.list_documents(compartments=compartments)
 
 
-def test_catalog_omits_documents_requiring_additional_compartments(tmp_path, setup):
+def test_catalog_omits_documents_in_other_compartments(tmp_path, setup):
     store, service, _ = setup
     document(tmp_path, store, compartments=("alpha",), part="visible")
-    restricted = document(tmp_path, store, compartments=("alpha", "program"), part="restricted")
+    restricted = document(tmp_path, store, compartments=("program",), part="restricted")
     records = service.list_documents(compartments={"alpha"})
     assert {entry["manifest"]["part"] for entry in records} == {"chip", "visible"}
-    assert len(service.list_documents(compartments={"alpha", "program"})) == 4
-    with pytest.raises(AccessDenied):
-        service.prepare("project", project({**restricted, "compartment": "alpha"}))
+    assert len(service.list_documents(compartments={"alpha", "program"})) == 3
+    with pytest.raises(ValueError):
+        service.prepare("project", project({**restricted, "compartment": "program"}))
 
 
 def test_version_catalog_omits_project_with_additional_compartments(tmp_path, setup):
     store, service, _ = setup
     visible = document(tmp_path, store, compartments=("alpha",), part="visible")
     service.register(service.prepare("project", project(visible)))
-    restricted = document(tmp_path, store, compartments=("alpha", "program"), part="restricted")
+    restricted = document(tmp_path, store, compartments=("alpha",), part="restricted")
     data = project(restricted, compartments=("alpha", "program"))
     data["version"] = "restricted"
     service.register(service.prepare("project", data))
@@ -227,18 +231,18 @@ def test_version_catalog_omits_project_with_additional_compartments(tmp_path, se
         service.load("project", "flight", "restricted", compartments={"alpha"})
 
 
-def test_unqualified_ref_skips_restricted_match_for_public_alternative(tmp_path, setup):
+def test_unqualified_ref_ignores_undeclared_compartment_for_public_alternative(tmp_path, setup):
     store, service, ref = setup
-    document(tmp_path, store, compartments=("alpha", "program"))
+    document(tmp_path, store, compartments=("program",))
     prepared = service.prepare("project", project(ref))
     assert prepared.manifest["documents"][0]["compartment"] == "public"
-    with pytest.raises(AccessDenied):
-        service.prepare("project", project({**ref, "compartment": "alpha"}))
+    with pytest.raises(ValueError, match="outside this configuration"):
+        service.prepare("project", project({**ref, "compartment": "program"}))
 
 
 def test_catalog_does_not_hide_corrupt_restricted_manifest(tmp_path, setup):
     store, service, _ = setup
-    document(tmp_path, store, compartments=("alpha", "program"), part="restricted")
+    document(tmp_path, store, compartments=("alpha",), part="restricted")
     path = next(store.root.glob("alpha/manifests/sha256/*/*"))
     path.chmod(0o600)
     path.write_bytes(b"corrupt")
@@ -263,7 +267,7 @@ def test_configuration_catalog_boards_and_explicit_project_scopes(tmp_path, setu
 
 def test_configuration_catalog_omits_restricted_and_deduplicates_copies(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha", "program"), part="spec")
+    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
     service.register(service.prepare("project", project(selector, compartments=("alpha", "program"))))
     assert service.list_configs("project", compartments={"alpha"}) == []
     assert len(service.list_configs("project", compartments={"alpha", "program"})) == 1
@@ -291,7 +295,7 @@ def test_load_digest_retains_board_selection_after_ref_moves(setup):
     _, service, ref = setup
     selected = service.list_configs("board")[0]
     updated = board(ref)
-    updated["parts"][0]["refdes"] = "U99"
+    updated["parts"][0]["aliases"] = {"refdes": "U99"}
     service.register(service.prepare("board", updated))
     assert service.load_digest("board", selected["digest"]) == selected["manifest"]
     assert service.load("board", "demo", "v/one") != selected["manifest"]
@@ -299,7 +303,7 @@ def test_load_digest_retains_board_selection_after_ref_moves(setup):
 
 def test_load_digest_project_requires_explicit_location_and_full_scope(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha", "program"), part="spec")
+    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
     prepared = service.prepare("project", project(selector, compartments=("alpha", "program")))
     service.register(prepared)
     with pytest.raises(StoreError):
@@ -318,3 +322,58 @@ def test_load_digest_rejects_malformed_pins(setup, digest):
     _, service, _ = setup
     with pytest.raises(StoreError):
         service.load_digest("board", digest)
+
+
+def test_board_level_document_pins_the_assembly(tmp_path, setup):
+    """A board user guide is issued by the board vendor and names the assembly,
+    which no part instance can express (D-13)."""
+    store, service, _ = setup
+    guide = document(tmp_path, store, part="demo", text="# Guide\n\n## Connectors\nSynthetic text\n")
+    data = board(document(tmp_path, store))
+    data.update(vendor="synthetic", documents=[dict(guide, notes="Connector pinout and jumper defaults.")])
+    prepared = service.prepare("board", data)
+    assert prepared.manifest["documents"][0]["digest"].startswith("sha256:")
+    assert prepared.manifest["documents"][0]["notes"] == "Connector pinout and jumper defaults."
+    service.register(prepared)
+    assert service.load("board", "demo", "v/one")["documents"][0] == prepared.manifest["documents"][0]
+
+
+def test_board_level_document_must_match_the_board_vendor_and_name(tmp_path, setup):
+    store, service, _ = setup
+    guide = document(tmp_path, store, part="demo")
+    data = board(document(tmp_path, store))
+    data.update(vendor="elsewhere", documents=[guide])
+    with pytest.raises(StoreError, match="assembly"):
+        service.prepare("board", data)
+    # A document about a part is not a document about the board that carries it.
+    data.update(vendor="synthetic", documents=[document(tmp_path, store)])
+    with pytest.raises(StoreError, match="assembly"):
+        service.prepare("board", data)
+
+
+def test_board_part_document_cannot_be_a_program_document(tmp_path, setup):
+    """The packed v1 identity could not say this; two field comparisons can."""
+    store, service, _ = setup
+    path = tmp_path / "program.md"
+    path.write_text("# Spec\n\n## Boot\nSynthetic text\n")
+    prepared = prepare_document(path, {
+        "issuer": "synthetic", "program": "flight", "doc_type": "spec", "version": "v1",
+        "structure": "prose", "labels": {"public": True, "compartments": []}})
+    registered = store.register(prepared)
+    ref = registered.ref_path.relative_to(store.root / "public" / "refs" / "documents").as_posix()
+    with pytest.raises(StoreError, match="part"):
+        service.prepare("board", board({"ref": ref}))
+
+
+def test_legacy_board_snapshot_keeps_resolving_after_v2(tmp_path, setup):
+    """Stored snapshots are immutable (S-11): a caiman.board/1 board still loads,
+    pins by its packed identity, and is never rewritten into the v2 shape."""
+    store, service, ref = setup
+    legacy = {"schema": "caiman.board/1", "board": "legacy", "version": "v/one", "links": [],
+              "parts": [{"role": "main", "part": "synthetic/chip", "refdes": "U1", "documents": [ref]}]}
+    prepared = service.prepare("board", legacy)
+    assert prepared.manifest["schema"] == "caiman.board/1"
+    assert prepared.manifest["parts"][0]["part"] == "synthetic/chip"
+    service.register(prepared)
+    assert service.load("board", "legacy", "v/one") == prepared.manifest
+    assert service.load_digest("board", prepared.digest)["parts"][0]["refdes"] == "U1"

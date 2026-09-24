@@ -6,9 +6,9 @@ from dataclasses import replace
 
 import pytest
 
-from caiman.ingest import prepare_document
-from caiman.models import canonical_json
-from caiman.store import AccessDenied, Store, StoreError
+from caiman.documents.ingest import prepare_document
+from caiman.documents.models import canonical_json
+from caiman.storage.store import AccessDenied, Store, StoreError
 
 
 def prepared(tmp_path, *, public=True, compartments=(), version="rev/one"):
@@ -57,19 +57,38 @@ def test_source_changed_after_review_writes_nothing(tmp_path):
     assert not store.root.exists()
 
 
+@pytest.mark.parametrize("compartments", [["alpha", "falcon"], ["alpha", "alpha"]])
+def test_multiple_document_compartments_rejected_on_registration_and_read(tmp_path, compartments):
+    document = prepared(tmp_path, public=False, compartments=("alpha",))
+    manifest = copy.deepcopy(document.manifest)
+    manifest["labels"]["compartments"] = compartments
+    content = canonical_json(manifest)
+    digest = "sha256:" + hashlib.sha256(content).hexdigest()
+    store = Store(tmp_path / "store")
+    with pytest.raises(ValueError):
+        store.register(replace(document, manifest=manifest, manifest_digest=digest))
+    assert not store.root.exists()
+    # Even a correctly hashed legacy/externally supplied object is invalid.
+    store._write_object("alpha", "manifests", digest, content)
+    with pytest.raises(ValueError, match="exactly one compartment"):
+        store.read_manifest("alpha", digest, allowed_compartments={"alpha", "falcon"})
+    assert not list(store.root.glob("*/refs/**/*"))
+
+
 def test_labels_change_identity_and_separate_storage(tmp_path):
     public = prepared(tmp_path)
-    private = prepared(tmp_path, public=False, compartments=("alpha", "program"))
+    private = prepared(tmp_path, public=False, compartments=("alpha",))
     store = Store(tmp_path / "store")
     a, b = store.register(public), store.register(private)
     assert a.blob_digest == b.blob_digest
     assert a.manifest_digest != b.manifest_digest
-    assert b.compartments == ("alpha", "program")
+    assert b.compartments == ("alpha",)
     with pytest.raises(AccessDenied, match="authorized"):
-        store.read_manifest("alpha", b.manifest_digest)
-    assert store.read_manifest("alpha", b.manifest_digest, allowed_compartments={"alpha", "program"})["labels"]["compartments"] == ["alpha", "program"]
+        store.read_manifest("alpha", b.manifest_digest, allowed_compartments={"program"})
+    assert store.read_manifest("alpha", b.manifest_digest, allowed_compartments={"alpha", "program"})["labels"]["compartments"] == ["alpha"]
     blobs = list(store.root.glob("*/blobs/sha256/*/*"))
-    assert len({p.stat().st_ino for p in blobs}) == 3
+    assert len({p.stat().st_ino for p in blobs}) == 2
+    assert not (store.root / "program").exists()
 
 
 def test_corruption_blocks_read_and_registration(tmp_path):

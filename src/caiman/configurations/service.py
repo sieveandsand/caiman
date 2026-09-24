@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 from urllib.parse import unquote
 
-from .configuration import validate_board, validate_project, validate_project_links
-from .models import AccessLabel, canonical_json, valid_identifier
-from .store import AccessDenied, Store, StoreError, _component, _hex
+from caiman.configurations.models import board_is_legacy, validate_board, validate_project, validate_project_links
+from caiman.documents.models import AccessLabel, canonical_json, is_schema, valid_identifier
+from caiman.storage.store import AccessDenied, Store, StoreError, _component, _hex
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,7 @@ class ConfigurationService:
             manifest = json.loads(content)
         except (UnicodeError, json.JSONDecodeError) as error:
             raise StoreError("Invalid configuration JSON") from error
-        if not isinstance(manifest, dict) or manifest.get("schema") != f"caiman.{kind}/1":
+        if not isinstance(manifest, dict) or not is_schema(kind, manifest.get("schema")):
             raise StoreError("Configuration schema does not match selected kind")
         validated = validate_board(manifest) if kind == "board" else validate_project(manifest)
         if canonical_json(validated) != content:
@@ -138,11 +138,30 @@ class ConfigurationService:
     def _pin(self, kind: str, manifest: dict, *, pinned: bool = False) -> dict:
         result = deepcopy(manifest)
         if kind == "board":
+            legacy = board_is_legacy(result)
+            if not legacy and "documents" in result:
+                # A board-level document is issued by the board's own vendor and
+                # names the assembly, not a part: the board user guide, stackup
+                # or assembly errata that no part instance can carry.
+                documents = []
+                for selector in result["documents"]:
+                    selected, document = self._document(selector, set(), pinned=pinned)
+                    if (document["issuer"], document.get("part")) != (result.get("vendor"), result["board"]):
+                        raise StoreError("Board document issuer/part does not match this board assembly")
+                    documents.append(selected)
+                result["documents"] = documents
             for part in result["parts"]:
                 documents = []
                 for selector in part.get("documents", []):
                     selected, document = self._document(selector, set(), pinned=pinned)
-                    if part["part"] != document["issuer"] + "/" + document.get("part", ""):
+                    if legacy:
+                        matches = part["part"] == document["issuer"] + "/" + document.get("part", "")
+                    else:
+                        # Two field comparisons, not a rebuilt string: this is
+                        # also where a document carrying a program rather than a
+                        # part is rejected, which the packed form could not say.
+                        matches = (document["issuer"], document.get("part")) == (part["vendor"], part["part"])
+                    if not matches:
                         raise StoreError("Board document issuer/part does not match its part instance")
                     revisions = document.get("silicon_revisions", [])
                     if revisions and "silicon_revision" in part and part["silicon_revision"] not in revisions:

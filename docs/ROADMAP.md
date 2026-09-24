@@ -1,210 +1,165 @@
 # Roadmap
 
-**Purpose:** Sequencing, exit criteria, and what gets cut under time pressure.
-**Owns:** Phasing and schedule risk. Product non-goals are in `VISION.md` §8;
-design risks are in `ARCHITECTURE.md` §15 and `STORAGE.md` §13.
+This document owns MVP success criteria, delivery order, and validation context. [GAPS.md](GAPS.md) owns
+review tasks; [DECISIONS.md](DECISIONS.md) owns unsettled choices. The original
+six-week estimate was a planning assumption, not a current delivery commitment.
 
-Target: a working MVP in roughly six weeks, single-engineer scope.
+## Current status
 
-**Implementation checkpoint (2026-09-15):** local document ingestion and
-board/project configuration are implemented with TUIs, editable JSON drafts,
-validation, immutable pins, and local version registration. The home screen
-creates boards and projects without a default selection; ingestion reuses
-existing configurations or offers creation (S-29). Phase 1 is not
-complete: Git initialization, remote review/push/pull/clone, and multi-machine
-validation remain. Phase 2 still needs automated adoption cascades, status/verify,
-and briefs; session integration remains Phase 3. README.md and AUTHORING.md
-describe the implemented commands.
+Local document ingestion and board/project authoring are implemented: TUIs, JSON
+drafts, validation, immutable pins, local registration, and guided board editing.
+See [README.md](../README.md) for usable commands.
 
-**Phasing rule:** if work stops at any phase boundary, what exists is coherent
-and correct. Never end up with three half-built layers and a security model that
-has never been tested end to end.
+Still planned: Git transport, automatic adoption cascades, workspace status and
+verification, brief generation, session materialization, and harness hooks.
+The phases below describe completion criteria, not claims that a whole phase
+has shipped.
 
-Two decisions shrank this considerably. Conversion left scope (S-08), removing
-the parser bake-off. The server left scope (S-18), removing the serve layer, the
-semantic index, and the MCP tool surface.
+## Success Criteria for the MVP
 
----
+1. A session starts with the selected board, features, specification release,
+   project version, and explicit mode correctly represented.
+2. Register-field answers cite the correct document, version, and locator.
+3. Requirement answers identify the governing source and any declared deviation.
+4. Different project or silicon versions produce appropriately different answers.
+5. Tests show that `open` materialization writes no compartmented documents and
+   each project's workspace excludes other compartments. This is a workspace
+   property, not proof of model authorization or process isolation.
+6. Missing labels never make content available.
+7. The engineer spends less time opening manuals and correcting context mistakes.
+
+The last criterion measures usefulness. [GAPS.md](GAPS.md) defines the baseline
+comparison, governing-source evaluation, and remaining validation work.
 
 ## Phase 0 — Answer the expensive question (day 1)
 
-Read the actual agreement language, for the customer specifically. Vendor
-documentation is treated as public (S-16), so the questions are narrow — and
-there are now two:
+Before using real restricted material, establish which processing and storage
+arrangements each counterparty permits. S-33 resolves G23 with one private
+repository per compartment; implement and validate the proposed publication
+protocol before sharing real material.
 
-1. **Processing.** What does the agreement permit regarding third-party models,
-   and does a zero-retention arrangement satisfy it?
-2. **Storage.** Does it permit the material to sit in a private repository on a
-   third party's infrastructure? S-22 puts the store on GitHub, and git history
-   is permanent, so this is harder to walk back than a model choice.
-
-The default is one remote for everything, so question 2 is one decision. A
-customer whose agreement forbids it gets a per-compartment remote override — self
-hosted, or none — and nothing else in the design changes.
-
-**Compartmentation does not collapse whatever the answer.** One customer's
-specifications must not reach another customer's session regardless of any
-model-provider agreement. That is an internal correctness property, not a routing
-one.
-
-One hour, potentially large payoff. Do it before writing code.
-
----
+Product validation is also outstanding (G01–G07). G26 proposes moving an
+end-to-end baseline comparison earlier; its evaluation and continue/stop criteria
+still need agreement. Do not treat the implementation checkpoint as product
+validation.
 
 ## Phase 1 — Documents in, labeled, citable (weeks 1–2)
 
-| Deliverable | Reference |
-|---|---|
-| **Ingestion TUI** — file selection, metadata form, optional provenance section, inline validation, review/back/cancel/submit; shared registration logic independent of terminal widgets | `ARCHITECTURE.md` §6.4.3, S-27 |
-| Register one unchanged Markdown file plus human-supplied metadata; source and converter information optional, input filename automatic; no AI dependency | `ARCHITECTURE.md` §6.4, S-25 |
-| Labels supplied by a human for the whole document — `public` or compartments — and carried through | I-1, S-16 |
-| Access-label model: frozen set, prefixed strings, one generator for write and filter paths | I-2 |
-| Fail-closed default, with the two failure paths tested separately | I-1, S-T1, S-T2 |
-| Byte-preserving registration: one content blob per document; no splitting, rewriting, or generated artifacts | S-25, T-16 |
-| Locators: requirement IDs where available, heading paths as the floor | I-5, S-06 |
-| Admission: usable headings on every document; requirement-structured documents additionally need a declared pattern and matching IDs. Actionable rejection; no automatic repair | `ARCHITECTURE.md` §6.4.2, S-T11 |
-| Registration workflow: select file, supply metadata, review identity/version/labels, register locally; board and project authoring are separate | `ARCHITECTURE.md` §6.4.3 |
-| Content-addressed store: blobs, manifests, refs, write ordering | `STORAGE.md` §6, §7.1 |
-| `caiman init` / `compartment add`: store directories, `git init` at the store root, remote wiring. `compartment add` is local only — no repository to create. `init` does **not** create the remote repository; visibility stays an explicit human act | `STORAGE.md` §7.5 |
-| `caiman push` / `pull`: label review before publishing, private-remote verification, mode restoration (`0444` blobs, `0700` compartments) before any other step, ref-conflict handling | `STORAGE.md` §7.6 |
-| `caiman clone`: join an existing store from a second machine | `STORAGE.md` §7.5 |
+Local registration is implemented. Remaining work is store initialization,
+reviewed publication, pull/clone, and multi-machine validation.
 
-**Exit:** an unlabeled record is unreachable, nothing from one compartment is
-reachable from another, and uncitable content cannot be ingested — all enforced
-by tests rather than inspection. The TUI can register a document with no
-original-source or converter information; cancellation leaves no version or ref
-update. A second machine can clone the store and resolve
-the same digests. A large manual registers as one blob and materializes
-byte-for-byte unchanged; no split files or generated maps appear.
+Contracts: [Architecture §6.4](ARCHITECTURE.md#64-ingest) for admission;
+[Storage §7](STORAGE.md#7-data-flows) for writes and proposed transport;
+[Security §10](SECURITY-MODEL.md#10-test-fixtures-and-security-tests) for negative tests.
 
----
+Exit criteria:
+
+- Invalid labels or locators cannot publish a document version.
+- Cancellation leaves no version or ref update; unknown provenance is accepted.
+- Registered bytes are unchanged and resolve to the same digest on a second machine.
+- Publication requires label review and a permitted private destination.
+- Clone/pull restores permissions before other operations and reports ref conflicts.
 
 ## Phase 2 — The project, and the brief (weeks 3–4)
 
-The differentiated half. Where "I'm working on program X" becomes real.
+Board/project authoring and manual adoption are implemented. Remaining work:
 
-| Deliverable | Reference |
-|---|---|
-| **Board and project authoring input** — implemented TUI plus JSON drafts, validation/review/register, private export, and new-version copying | S-28, `AUTHORING.md` |
-| Board model: versions with opaque labels, parts in roles, per-instance silicon revisions, links | `ARCHITECTURE.md` §6.5.1 |
-| Project model: codenames, compartments, board composition, pinned specification releases, declared precedence | `ARCHITECTURE.md` §6.5.2 |
-| Features: `governed_by`, `realized_on`, `related`, scope of `required` or `not-used` — never status | S-14 |
-| Declared lineage on both; nothing inferred anywhere | I-8 |
-| Versions stored whole, authored by delta | S-11 |
-| Resolution: `project @ version` yields the complete transitive pin set | S-07 |
-| **`caiman project version new --adopt <doc>`** — the version cascade in one command. Without it the most common operation is the most painful, and stale pins are the predictable outcome | `ARCHITECTURE.md` §8.6 Gap D |
-| **`caiman status` and `caiman verify`** — is this workspace current; is the store internally consistent | `ARCHITECTURE.md` §8.6 Gap E |
-| Bare names return the version list rather than resolving | I-7 |
-| Brief rendering: parts, features, precedence, change summary, rules block | `ARCHITECTURE.md` §6.9 |
-| Brief generator has no access to document content and never emits customer identity | I-6, S-T8, S-T9 |
+- Specify and implement reviewed document-adoption cascades (G15).
+- Add workspace status and store verification commands.
+- Generate the metadata-only brief, including features, precedence, and declared
+  changes, with no access to document text or customer legal identity.
 
-**Exit:** two project versions sharing one board version but different customers
-each render a correct brief, and the change summary correctly describes what
-differs between two project versions.
+Contracts: [Configuration guide](../README.md#configure-boards-and-projects), [Architecture §6.7](ARCHITECTURE.md#67-resolve)
+and [§6.9](ARCHITECTURE.md#69-the-brief). Resolve agent-facing formats through G16.
 
----
+Exit: two projects sharing a board but using different specification sets each
+produce the correct pinned structure and brief. Existing pins survive ref updates.
+The visibility assumption for brief metadata remains G17.
 
 ## Phase 3 — Sessions (weeks 5–6)
 
-Where it becomes a tool you use rather than a model you admire.
+Implement explicit-mode materialization, dry runs, omission notices,
+reclassification, and the two audit layers. Add thin harness adapters for session
+start, observed reads, and session end; keep manual brief injection available.
 
-| Deliverable | Reference |
-|---|---|
-| `caiman sync --project P --version V --mode open\|sealed --into DIR` | `ARCHITECTURE.md` §9.1 |
-| `--mode` required, no default, no policy file. Omitting it fails closed | S-19, I-1, S-T5 |
-| `--agent-label` recorded in the materialization log as an unverified annotation | S-19 |
-| Differential materialization by project compartments × declared mode | `SECURITY-MODEL.md` §5.2 |
-| Session mode in the brief, including the stop-and-ask rule | `SECURITY-MODEL.md` §5.4 |
-| Workspace layout: `project.md`, `project.json`, `documents/` with one unchanged `document.md` per document | `STORAGE.md` §7.3 |
-| Blob cache keyed by compartment; clone/reflink/hardlink by platform | S-20, I-9 |
-| `--dry-run`, the answer to "what could this session see" | `ARCHITECTURE.md` §9.1 |
-| Reclassification path: re-materialization, cache eviction, brief regeneration | `SECURITY-MODEL.md` §8 |
-| Materialization log: project, version, agent, profile, compartments, digests | `SECURITY-MODEL.md` §9.1 |
-| `caiman session start`: confirm, warn on staleness, or inject project **and mode** choices | `ARCHITECTURE.md` §6.10.2 |
-| `caiman session record` / `end`: access log, identities only, never blocking | `ARCHITECTURE.md` §6.10.3, I-10 |
-| `caiman hooks install`: adapter config, printed and confirmed before writing | `ARCHITECTURE.md` §9.2 |
-| **Verify subagent tool-call coverage before relying on the access log** | `ARCHITECTURE.md` §15.1 |
-| **Retrieval miss log** | See below |
-| Manual injection path documented: `@.caiman/project.md` | `DECISIONS.md` D-07 |
+Contracts: [Architecture §9](ARCHITECTURE.md#9-interfaces),
+[Storage §7.3](STORAGE.md#73-materialize), and
+[Security §9](SECURITY-MODEL.md#9-audit). Settle content-free shell logging (G22)
+and measure hook/subagent coverage (G21) before relying on access records.
 
-The **miss log** records queries where search and selective reading of source documents fail.
-S-18 defers the semantic tool on a specific trigger, and that trigger is only
-usable if the misses are recorded. Cheap now, impossible to reconstruct later.
+Record retrieval misses so the S-18 semantic-search trigger has evidence.
 
-**Exit:** two sessions, on two projects sharing one board version but different
-customers, each start with a correct brief and correct document set, and neither
-can reach the other's specifications. A session started with a frontier-agent
-profile contains no specification on disk.
-
-Then validate against the seven success criteria in `VISION.md` §7 on a real
-project.
-
----
+Exit: independent workspaces contain the correct brief and complete permitted
+pin set. `open` writes no compartmented documents; missing mode writes nothing.
+These tests establish materialization behavior, not process isolation or model
+authorization. Then evaluate [MVP success criteria](#success-criteria-for-the-mvp).
 
 ## After the MVP
 
 | Item | Trigger or condition |
 |---|---|
-| **Artifact store backend swap** (D-02) | When history permanence becomes the binding constraint — compartment corrections frequent enough that irreversible pushes are a recurring incident, or a counterparty requiring demonstrable deletion. The original trigger (real authentication) was met by S-22 instead |
-| **Git LFS for blobs** (`STORAGE.md` §13.1) | At the first push warning about repository size. Growth is monotonic |
-| **MCP server for semantic fallback** (S-18, D-03) | When the miss log shows concept-known, identifier-unknown queries defeating source-document search and selective reading more than occasionally. Evaluate `ByteAsk-Embedded-MCP`'s pluggable backend before writing one |
-| **Structured deviation handling** (D-12) | When deviations stop arriving as one document naming the requirement IDs it amends |
-| **Machine-readable specification companions** | ARXML, DBC, ODX/PDX, Fibex, CDD. A different pipeline — structured and queryable rather than Markdown searched as text. The artifact model should not assume every document is markdown |
-| **Native macOS app for authoring / curation** (S-27) | Future GUI, reusing the TUI's shared validation and registration operations; schedule and detailed editing flows to be designed |
-| **Harness integration** (D-07) | Requires a harness with per-session agent selection. Caiman does not build it |
-| **Cross-document reasoning** | Depends on everything below it being correct. The project and feature models are the prerequisite that was previously missing |
-| **Multi-user, teams, SSO** | No second user yet |
-
----
+| Registry backend (D-02) | Git history or deletion requirements become the constraint |
+| Git LFS | Blob growth approaches the remote's limits |
+| Semantic retrieval (S-18/D-03) | Logged concept-based queries repeatedly defeat ordinary search |
+| Structured deviations (D-12) | Real documents no longer work as ID-linked amendments |
+| Machine-readable specification companions | A concrete need for ARXML, DBC, ODX/PDX, Fibex, or CDD inputs |
+| Native macOS authoring app (S-27) | Reuse shared validation/registration; schedule undecided |
+| Harness adoption (D-07) | Verify per-session model selection and transcript handling |
+| Cross-document reasoning | Validate the underlying model and retrieval first |
+| Multi-user administration and SSO | A real second-user requirement |
 
 ## Cut Order Under Time Pressure
 
-Cut from the bottom:
+The recorded candidates, in order, are linking optimizations (copy instead),
+access logging, materialization logging, then the brief's change summary.
 
-1. **Blob cache and linking** — copy instead. Wasteful, not wrong; the I-9 rules
-   still apply to copied documents
-2. **Access log** — the materialization log answers the question a customer
-   actually asks; the access log is the finer, incomplete second layer. Cut it
-   before cutting the first
-3. **Materialization log** — valuable, not load-bearing for a solo MVP
-4. **Change summary in the brief** — lineage is informational by design and the
-   brief is correct without it
-
-Splitting, generated maps, and AI processing at ingest have already been removed
-by S-25; they are not deferred MVP deliverables.
-
-The ingestion TUI is required MVP scope (S-27), not a later convenience.
-
-Session-start hooks are **not** on this list. They are the difference between a
-tool the engineer must remember to run and one that configures itself, which is
-most of whether it gets used at all.
-
-Never cut:
-
-- Fail-closed labels, and the unknown-agent refusal
-- Citations, and the ingest-time locator requirement behind them
-- Differential materialization by declared mode
-- The board and project models, the feature set, and the brief
-
-The first two make an answer trustworthy. The third is the only thing between a
-wrong agent choice and a silent disclosure. The fourth makes an answer
-trustworthy *for this board and this program* — without it Caiman is a faster way
-to produce a confident, well-cited answer about the wrong hardware or against the
-wrong specification, which is worse than no tool because it survives review.
-
----
+Keep ingestion review, session-start integration, fail-closed labels and mode
+selection, citations, differential materialization, and the board/project brief.
+Splitting, generated maps, and AI ingestion are already outside scope (S-25).
 
 ## Schedule Risks
 
-Design and operational risks live with their designs — `ARCHITECTURE.md` §15.3,
-`STORAGE.md` §13.2, `SECURITY-MODEL.md` §7. These are risks to the plan.
+| Risk | Response |
+|---|---|
+| Basic document/board work consumes the program-context budget | Revisit build-versus-buy (D-04) |
+| A platform serves the same use case | Recheck differentiation with evidence (G04) |
+| Sample lacks part diversity or multiple versions | Confirm D-08 before evaluating version behavior |
+| Requirement IDs vary or deviations omit them | Test real formats early; resolve D-12/G06 |
+| Hosting permission is absent | Decide an allowed destination before publication |
+| Retrieval misses go unrecorded | Include measurement in session delivery |
 
-| Risk | Impact on schedule | Response |
-|---|---|---|
-| The descriptive and structural halves consume more than their two weeks | Phase 2, the differentiated half, gets squeezed | They are substrate, not differentiator (D-04). Overrun is the signal to re-examine build-versus-buy, not to push through |
-| A platform closes the normative gap first | The project's premise weakens mid-build | Not controllable. The hedge is scope: a small, files-on-disk, harness-agnostic layer is adoptable where a platform is not, and its ideas are portable |
-| Phase 0 is skipped because building tiering is more interesting | Weeks spent on a distinction the agreement may not require | One hour, day one, before code |
-| The sample project turns out to lack part diversity or version history | Phase 2 cannot be demonstrated | Confirm D-08 before phase 2 begins; the synthetic specification sets are writable in a day regardless |
-| Requirement IDs turn out to be renumbered between releases | The citation model needs rework mid-phase | Verify early against a real specification set. The existing version-pinning model should handle it, but that is untested |
-| Phase 0's storage question comes back negative for a key customer | That compartment needs a self-hosted remote before phase 1 ends | Per-compartment remotes make this a configuration change, not a redesign. Ask the question before the first push, not after |
-| The miss log is skipped as non-essential | The S-18 trigger cannot fire; the decision reverts to intuition | It is a phase-3 deliverable, not an optional extra |
+Design risks remain in Architecture §15, Storage §13, and Security §7.
+
+## Competitive landscape (historical)
+
+Historical survey: 2026-08-20, updated 2026-09-16. These are the recorded survey
+findings, not verified current capabilities. Recheck them before making a
+build-versus-buy decision (D-04/G04).
+
+| | BYO docs | Descriptive | Structural | Normative | Domain model |
+|---|---|---|---|---|---|
+| `ByteAsk-Embedded-MCP` | ✗ hosted, not yours | ✓ | ✗ | ✗ | none |
+| `sheetsdata-mcp` | ✗ | ✓ component-level | ✗ | ✗ | none |
+| Generic RAG-over-MCP | ✓ | agnostic | agnostic | agnostic | none |
+| Onyx / RAGFlow | ✓ | agnostic | agnostic | agnostic | none, but real ACLs |
+| `kicad-happy` / `kicad-sch-api` | ✓ design files | ✗ | ✓ design-side | ✗ | schematic only |
+| `AutonomousGuy` | ✗ ships standards | ✗ | ✗ | ✓ public standards only | none |
+| *Embedder* (not open source) | ✓ | ✓ | ✓ EDA-derived | ✗ | board |
+| *Microchip MCP server* (vendor-hosted) | ✗ its own catalogue | ✓ its own parts | ✗ | ✗ | vendor catalogue |
+| *Veecle*, *Embroid* (not open source) | ✗ | ✗ | ✓ target model | ✗ | execution target |
+
+“Agnostic” means a system can index these documents without explicitly modelling
+boards, frozen releases, features, or program precedence. The survey found the
+closest overlap in Embedder's hardware/document context. It did not establish
+that no competitor could serve the program use case.
+
+The context-file mechanism itself is established. Caiman's proposed value is
+generating it from pinned declarations. Keep the brief short and load detailed
+structure on demand; the earlier survey used roughly 150 lines as a working
+budget, not a guaranteed harness limit.
+
+Detailed observations remain in [board context research](research/agents_md_research.md)
+and [Embedder research](research/embedder_research.md). They are historical
+references, not implementation requirements. Silicon-vendor document interfaces
+and external hardware execution tools are possible complements, outside Caiman's
+own service and orchestration scope.

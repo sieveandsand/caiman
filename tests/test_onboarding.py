@@ -1,9 +1,9 @@
 import pytest
 from textual.widgets import Input, Select
 
-from caiman.config_store import ConfigurationService
-from caiman.onboarding import SetupApp
-from caiman.store import Store
+from caiman.configurations.service import ConfigurationService
+from caiman.dashboard.onboarding import SetupApp
+from caiman.storage.store import Store
 
 
 async def fill(app, values):
@@ -24,7 +24,7 @@ async def test_guided_board_then_project_without_documents(tmp_path):
     board_app = SetupApp(kind='board', store_root=tmp_path / 'store')
     async with board_app.run_test(size=(110, 45)) as pilot:
         await pilot.pause()
-        await fill(board_app, {'name': 'demo', 'version': 'v1', 'issuer': 'synthetic', 'part': 'chip'})
+        await fill(board_app, {'name': 'demo', 'version': 'v1', 'vendor': 'synthetic', 'part': 'chip'})
         await pilot.click('#next')
         await wait_for(pilot, lambda: board_app.reviewing and not board_app.busy)
         assert board_app.reviewing
@@ -65,7 +65,7 @@ async def test_project_requires_an_explicitly_chosen_board(tmp_path):
     root = tmp_path / 'store'
     service = ConfigurationService(Store(root))
     service.register(service.prepare('board', {'board': 'demo', 'version': 'v1',
-        'parts': [{'role': 'main', 'part': 'synthetic/chip', 'documents': []}], 'links': []}))
+        'parts': [{'role': 'main', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}], 'links': []}))
     app = SetupApp(kind='project', store_root=root)
     async with app.run_test(size=(110, 45)) as pilot:
         await wait_for(pilot, lambda: app.boards and not app.busy)

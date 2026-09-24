@@ -7,35 +7,6 @@ the animal's hide in sunlight, and pale reed-coloured text.
 from textual.app import App
 from textual.theme import Theme
 
-# Textual ships no dotted border, so Caiman registers one. U+00B7 is Latin-1 and
-# renders in any terminal font at any size — which Braille and block-drawing dots
-# do not, and that is the whole reason this is a middle dot.
-DOT = "\u00b7"
-
-
-def _register_dot_border() -> str:
-    """Add a dotted border to Textual, returning the border name to use in CSS.
-
-    This reaches into Textual's internals, so it degrades to the built-in dashed
-    border rather than failing the whole TUI if they move. A test asserts the
-    real thing is registered, so an upgrade that breaks it is noticed there
-    instead of silently changing how every board card looks.
-    """
-    try:
-        from textual._border import BORDER_CHARS, BORDER_LOCATIONS
-        from textual.css.constants import VALID_BORDER
-
-        BORDER_CHARS["dotted"] = ((DOT, DOT, DOT), (DOT, " ", DOT), (DOT, DOT, DOT))
-        BORDER_LOCATIONS["dotted"] = ((0, 0, 0), (0, 0, 0), (0, 0, 0))
-        # A set shared by reference with the CSS parser, so this reaches it too.
-        VALID_BORDER.add("dotted")
-        return "dotted"
-    except (ImportError, AttributeError, TypeError):  # pragma: no cover - upgrade guard
-        return "dashed"
-
-
-DOT_BORDER = _register_dot_border()
-
 TERMINAL_CSS = """
 Screen { layout: vertical; background: #000000; color: #dfe6d3; }
 #brand { height: 2; padding: 0 2; color: #7fdc4f; text-style: bold; }

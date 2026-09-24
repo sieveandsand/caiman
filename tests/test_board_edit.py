@@ -1,9 +1,9 @@
 from copy import deepcopy
 import pytest
 
-from caiman.board_edit import BoardEditReviewApp, run_board_gallery
-from caiman.config_store import ConfigurationService
-from caiman.store import Store
+from caiman.boards.edit import BoardEditReviewApp, run_board_gallery
+from caiman.configurations.service import ConfigurationService
+from caiman.storage.store import Store
 
 
 @pytest.fixture
@@ -11,10 +11,10 @@ def board_setup(tmp_path):
     root = tmp_path / 'store'
     service = ConfigurationService(Store(root))
     original = service.prepare('board', {'board': 'demo', 'version': 'v1', 'parts': [
-        {'role': 'mcu', 'part': 'synthetic/chip', 'documents': [], 'refdes': 'U1'}], 'links': []})
+        {'role': 'mcu', 'vendor': 'synthetic', 'part': 'chip', 'documents': [], 'aliases': {'refdes': 'U1'}}], 'links': []})
     service.register(original)
     edited = deepcopy(original.manifest)
-    edited['parts'][0]['refdes'] = 'U2'
+    edited['parts'][0]['aliases'] = {'refdes': 'U2'}
     prepared = service.prepare('board', edited)
     return root, service, original, prepared
 
@@ -75,7 +75,7 @@ async def test_invalid_review_offers_reedit_but_cannot_register(board_setup):
 
 
 def gallery_once(monkeypatch, selection):
-    import caiman.board_gallery as gallery
+    import caiman.boards.gallery as gallery
     choices = [selection, None]
     class Gallery:
         def __init__(self, **kwargs):
@@ -85,41 +85,51 @@ def gallery_once(monkeypatch, selection):
     monkeypatch.setattr(gallery, 'BoardGalleryApp', Gallery)
 
 
-@pytest.mark.parametrize('cancel', [True, False])
-def test_vim_cancel_or_unchanged_draft_does_not_review_or_register(board_setup, monkeypatch, cancel):
-    import caiman.board_edit as editing
-    import caiman.external_editor as editor
+def form_returning(monkeypatch, outcomes, seen=None):
+    """Stand in for the guided form, recording the draft it was handed."""
+    import caiman.boards.form as form
+    class Form:
+        def __init__(self, **kwargs):
+            if seen is not None:
+                seen.append(kwargs)
+        def run(self):
+            return outcomes.pop(0)
+    monkeypatch.setattr(form, 'BoardFormApp', Form)
+
+
+@pytest.mark.parametrize('cancelled', [True, False])
+def test_guided_form_cancel_or_unchanged_draft_never_reviews_or_registers(board_setup, monkeypatch, cancelled):
+    import caiman.boards.edit as editing
+    import caiman.configurations.editor as editor
     root, service, original, prepared = board_setup
     before = snapshot(root)
     gallery_once(monkeypatch, {'manifest': original.manifest, 'digest': original.digest})
-    class Draft:
-        def __init__(self, manifest):
-            self.manifest = manifest
-        def __enter__(self):
-            return self
-        def __exit__(self, *args):
-            pass
-        def edit(self):
-            return not cancel
-        def read(self):
-            assert not cancel
-            return self.manifest
-    monkeypatch.setattr(editor, 'VimDraft', Draft)
+    # Cancelling leaves; an unchanged draft returns to the form, and the second
+    # visit cancels. Neither reaches review, so neither can register.
+    outcomes = [None] if cancelled else [('review', deepcopy(original.manifest)), None]
+    seen = []
+    form_returning(monkeypatch, outcomes, seen)
+    monkeypatch.setattr(editor, 'VimDraft', lambda *a, **k: pytest.fail('Unexpected Vim'))
     monkeypatch.setattr(editing, 'BoardEditReviewApp', lambda **kwargs: pytest.fail('Unexpected review'))
     assert run_board_gallery(root) is None
     assert snapshot(root) == before
+    if not cancelled:
+        assert 'nothing to register' in seen[1]['message']
 
 
-def test_invalid_vim_draft_reopens_same_session_then_registers_on_review(board_setup, monkeypatch):
-    import caiman.board_edit as editing
-    import caiman.external_editor as editor
+def test_raw_json_returns_to_the_form_and_an_invalid_draft_keeps_its_file(board_setup, monkeypatch):
+    """Vim is the escape hatch at the bottom of the form, not a separate path:
+    what it returns is reviewed by the same guided form it came from."""
+    import caiman.boards.edit as editing
+    import caiman.configurations.editor as editor
     root, service, original, prepared = board_setup
     before = snapshot(root)
     gallery_once(monkeypatch, {'manifest': original.manifest, 'digest': original.digest})
-    calls = {'created': 0, 'entered': 0, 'edits': 0, 'reads': 0, 'reviews': 0, 'closed': 0}
+    calls = {'created': 0, 'entered': 0, 'edits': 0, 'reads': 0, 'errors': 0, 'reviews': 0, 'closed': 0}
     class Draft:
         def __init__(self, manifest):
             calls['created'] += 1
+            assert manifest == original.manifest
         def __enter__(self):
             calls['entered'] += 1
             return self
@@ -132,23 +142,72 @@ def test_invalid_vim_draft_reopens_same_session_then_registers_on_review(board_s
             calls['reads'] += 1
             if calls['reads'] == 1:
                 raise ValueError('Invalid JSON retained for retry')
-            return prepared.manifest
+            return deepcopy(prepared.manifest)
     class Review:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
         def run(self):
-            calls['reviews'] += 1
             assert snapshot(root) == before
-            if calls['reviews'] == 1:
-                assert self.kwargs['prepared'] is None
+            if self.kwargs.get('prepared') is None:
+                calls['errors'] += 1
                 assert 'Invalid JSON' in self.kwargs['error']
                 return 'edit'
-            assert self.kwargs['error'] is None
+            calls['reviews'] += 1
             reviewed = self.kwargs['prepared']
             registration = service.register(reviewed)
             return {'manifest': reviewed.manifest, 'digest': registration.digest}
+    seen = []
+    form_returning(monkeypatch, [('raw', deepcopy(original.manifest)), ('review', deepcopy(prepared.manifest))], seen)
     monkeypatch.setattr(editor, 'VimDraft', Draft)
     monkeypatch.setattr(editing, 'BoardEditReviewApp', Review)
     assert run_board_gallery(root) == {'manifest': prepared.manifest, 'digest': prepared.digest}
-    assert calls == {'created': 1, 'entered': 1, 'edits': 2, 'reads': 2, 'reviews': 2, 'closed': 1}
+    # One Vim file across both edits, then the form again carrying what it read.
+    assert calls == {'created': 1, 'entered': 1, 'edits': 2, 'reads': 2, 'errors': 1, 'reviews': 1, 'closed': 1}
+    assert seen[1]['draft'] == prepared.manifest
     assert service.load_digest('board', original.digest) == original.manifest
+
+
+def test_abandoning_vim_returns_to_the_form_with_the_draft_it_left(board_setup, monkeypatch):
+    import caiman.boards.edit as editing
+    import caiman.configurations.editor as editor
+    root, service, original, prepared = board_setup
+    before = snapshot(root)
+    gallery_once(monkeypatch, {'manifest': original.manifest, 'digest': original.digest})
+    edited = deepcopy(original.manifest)
+    edited['notes'] = 'Typed in the guided form, not yet registered.'
+    class Draft:
+        def __init__(self, manifest):
+            assert manifest == edited
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def edit(self):
+            return False
+        def read(self):
+            pytest.fail('An abandoned Vim session is never read')
+    seen = []
+    form_returning(monkeypatch, [('raw', deepcopy(edited)), None], seen)
+    monkeypatch.setattr(editor, 'VimDraft', Draft)
+    monkeypatch.setattr(editing, 'BoardEditReviewApp', lambda **kwargs: pytest.fail('Unexpected review'))
+    assert run_board_gallery(root) is None
+    assert seen[1]['draft'] == edited
+    assert snapshot(root) == before
+
+
+def test_invalid_draft_reports_in_the_form_without_writing(board_setup, monkeypatch):
+    import caiman.boards.edit as editing
+    import caiman.configurations.editor as editor
+    root, service, original, prepared = board_setup
+    before = snapshot(root)
+    gallery_once(monkeypatch, {'manifest': original.manifest, 'digest': original.digest})
+    broken = deepcopy(original.manifest)
+    broken['parts'][0]['vendor'] = ''
+    seen = []
+    form_returning(monkeypatch, [('review', broken), None], seen)
+    monkeypatch.setattr(editor, 'VimDraft', lambda *a, **k: pytest.fail('Unexpected Vim'))
+    monkeypatch.setattr(editing, 'BoardEditReviewApp', lambda **kwargs: pytest.fail('Unexpected review'))
+    assert run_board_gallery(root) is None
+    assert 'parts.0.vendor' in seen[1]['message']
+    assert seen[1]['draft'] == broken
+    assert snapshot(root) == before

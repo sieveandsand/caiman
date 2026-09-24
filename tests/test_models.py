@@ -1,6 +1,6 @@
 import pytest
 
-from caiman.models import AccessLabel, canonical_json
+from caiman.documents.models import AccessLabel, canonical_json
 
 
 def test_missing_and_dropped_labels_fail_closed():

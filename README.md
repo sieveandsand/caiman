@@ -5,78 +5,21 @@ agent needs to know about **the hardware**, **the board**, and **the customer's
 specification**, writes it into the session's worktree as ordinary files, and
 gets out of the way.
 
-## The problem
-
-Coding agents are competent at firmware code and unreliable about firmware
-*context*. That shows up as three failures, in ascending order of cost:
-
-| Failure | What happens | Found |
-|---|---|---|
-| **Wrong fact** | A hallucinated register offset. Compiles cleanly, fails on hardware | In an afternoon |
-| **Right fact, wrong board** | Configures a peripheral the board does not route, or reads documentation for a silicon revision never populated. The retrieved text was accurate; the work is still discarded — and because it is confident and well-cited, it survives review | At integration |
-| **Correct and non-compliant** | Right by the datasheet, right for the board, in violation of the customer's specification — an unknown mandated feature, a default applied where a deviation amended it, or a newer specification release than the program is frozen at | At the customer's acceptance test, months later |
-
-Retrieval quality fixes only the first. The other two need an explicit model of
-what you are building and who you are building it for.
-
-## What Caiman does
-
-1. **Models the board.** Parts in named roles, wired together, at a stated
-   version. Versions are immutable and their labels are opaque — `2.1`,
-   `Rev B`, `EVT2-B`; Caiman never interprets them — with lineage declared
-   rather than inferred.
-2. **Models the program.** A *project* composes a board version with a customer
-   specification release, the features that program requires, and a declared
-   precedence order putting deviations above the base specification. The same
-   hardware ships to two customers as two projects, in two compartments.
-3. **Registers** one already-converted Markdown file unchanged, plus
-   document metadata and access labels entered through a TUI. Original-source
-   and converter information are optional. Usable headings are required. No PDF
-   parsing, splitting, generated maps, or AI processing.
-4. **Pins.** A project version *is* the pin set — resolving it yields the board,
-   every document digest, the specification release, the precedence order, and
-   the feature set. No lockfile in your code repo to drift out of sync.
-5. **Writes the session's context to disk.** A one-page brief loaded into the
-   agent before turn one, the resolved structure as JSON, and the unchanged
-   documents. No server, no retrieval service, no tool schemas eating
-   context every turn. Exact-identifier lookup is a lexical problem and `grep` is
-   good at those — register identifiers on one side, requirement IDs on the
-   other. Grepping a requirement ID returns the base requirement *and* any
-   deviation amending it, together.
-6. **Configures the session and records what it read.** A session-start hook
-   confirms which project the worktree is on — or warns that the brief has gone
-   stale, or asks which project to use if there isn't one. Tool-use hooks append
-   a per-session log of which managed documents were actually read. The hooks
-   observe only: they never block a tool call, never fail a session, and record
-   document identities rather than content.
-7. **Makes the session's scope consequential.** You declare each session `open`
-   or `sealed` — public documents only, or everything the program pins. Caiman
-   materializes accordingly, so a wrong call surfaces as a missing file rather
-   than a silent disclosure. Both error directions fail safe. There is no policy
-   file deciding this on your behalf: the person starting the session knows which
-   model it runs and what the work touches, and a config file written months ago
-   does not.
-
-Every returned fact carries a citation: document, version, and locator.
-
-## What Caiman is not
-
-- **Not a platform.** Not an agent, not a harness, not a test runner. Platforms
-  in this category bundle all of it — see `docs/VISION.md` §4. Caiman is one
-  layer, deliberately.
-- Not a PDF converter. You convert; Caiman ingests markdown.
-- Not a requirements or compliance tool. It cites a requirement; it does not
-  track whether you have met it.
-- Not a conflict detector. Precedence is declared by a human, never computed —
-  inferring it means interpreting contracts.
-- Not an enforcement boundary. The human picks the agent; Caiman makes that
-  choice have physical effect. It does not police it, and does not pretend to.
-
 ## Status
 
-Pre-MVP. Local ingestion and board/project authoring are implemented, with TUIs,
-editable JSON configurations, validation, and immutable digest pins. Session
-materialization, hooks, and Git remote operations remain roadmap work.
+Pre-MVP. Local Markdown ingestion and board/project authoring are implemented,
+with TUIs, JSON drafts, validation, and immutable digest pins. Session
+materialization, brief generation, access-log hooks, and document Git transport are planned.
+Repo Manager supports repository validation and initialization with an optional metadata push.
+Startup guidance hooks can be installed for Claude Code and Codex from the home menu.
+
+Caiman models hardware as boards and customer programs as projects. Each project
+pins a board and its specification documents, with human-declared features and
+precedence. The planned session workflow writes that context as ordinary files
+for the agent to search and cite.
+
+[Architecture](docs/ARCHITECTURE.md#2-background-and-problem) explains the problem and product boundaries;
+[Roadmap](docs/ROADMAP.md) tracks remaining work.
 
 ## First launch and document ingestion
 
@@ -96,7 +39,8 @@ values such as board `example-board`, version `Rev A`, part `example/example-mcu
 project `example-program`, version `Prototype`, customer `Synthetic Example
 Customer`, and compartment `example-customer`. A compartment keeps one
 customer's private documents separate from another's; usually use one per
-customer.
+customer. Each document is explicitly public or belongs to exactly one
+compartment. Projects may reference documents from several compartments.
 
 The home screen provides document actions plus **Create** and **View** for
 boards and projects; press `e` while viewing a board or project to edit it. Use
@@ -108,6 +52,42 @@ ingestion is:
 ```bash
 .venv/bin/caiman ingest fixtures/reference-manual.md
 ```
+
+Use **Repo Manager** on the home screen to manage one repository per compartment:
+
+- **Add repo**: enter the compartment and an existing SSH or HTTPS URL. Caiman
+  fetches the `caiman-store` branch into a temporary private directory and checks
+  its format, compartment, file layout, and transport attributes before saving it.
+- **Remove repo**: unregister the repository. Local files and the hosted
+  repository are preserved.
+- **Initialize repo**: create a local compartment repository. Optionally select
+  **Push initial metadata to this remote** and supply an empty private remote
+  that you have created on your Git host. Only the initial Caiman metadata is
+  pushed. You can also initialize locally and return later to push.
+
+Each action has a review before applying. Git and working SSH or HTTPS
+authentication are required for remote operations. Remote privacy and teammate
+permissions are managed on the Git host; a format check does not verify them.
+Use `public` for the separate repository of public documents.
+The registry lives at `<store>/.repositories.json`, with local repositories at
+`<store>/.repositories/<compartment>/`. Registration grants no document access.
+Document/configuration publication and retrieval remain planned. If an initial
+push fails, the local setup is retained and Initialize can retry the push.
+
+Use **Hooks → Claude Code** or **Hooks → Codex** to add a startup hook to a
+project directory. Choose **Preview** to review the exact settings diff, then
+**Install**. Existing settings and hooks are preserved; repeated installation
+does not add duplicates. Claude Code uses `.claude/settings.json`; Codex uses
+`.codex/hooks.json`. Restart the harness after installation. In Codex, open
+`/hooks` to review and trust the hook (the project must also be trusted).
+See the official [Claude Code hook reference](https://code.claude.com/docs/en/hooks)
+and [Codex hook reference](https://learn.chatgpt.com/docs/hooks).
+
+The hook introduces available Caiman commands without reading document bodies
+or private catalogs. It does not yet sync a workspace or log document access.
+It uses the Python installation running Caiman and the selected store, so
+reinstall it if that Python environment moves. A missing store produces no
+context, and a missing installation or callback error leaves the session running.
 
 The example manual contains only synthetic text. Select your existing board and
 its `example/example-mcu` part to populate issuer and part. Enter document type
@@ -149,9 +129,114 @@ selected. The TUI supports top-level fields, nested JSON collections, a document
 catalog, and review before registration.
 
 For a fresh draft, run `caiman board configure` or `caiman project configure`.
-Use `template`, `validate`, `show`, `export`, and `new-version` for file authoring
-and version management. See [the authoring guide](docs/AUTHORING.md) for fields,
-examples, and compartment selection.
+Both use the same validation as JSON drafts. **Review** resolves document and
+board references into digest pins; **Register** checks those pins again and
+stores a complete snapshot. Going back to edit invalidates the previous review.
+Cancelling before registration writes no version; loading a JSON file never
+modifies that file.
+
+**Refresh catalog** lists registered documents. Boards can select public
+documents; projects can also select documents within their explicitly entered
+compartments. Selecting a board or project during ingestion reuses metadata but
+does not add the document to its existing pins. Adopt it through a configuration
+edit. A customer's name is not automatically a document's publisher.
+
+Caiman remembers compartments from projects you explicitly choose, but never a
+default board or project. It does not scan undeclared compartments for private
+projects. These preferences do not select a session mode.
+
+### Keyboard navigation
+
+| Context | Keys |
+|---|---|
+| Dashboard or board grid | `h/j/k/l` moves; Enter opens; `q` returns or quits |
+| Form navigation | `h/k` previous control; `j/l` next; Enter or `i` edits |
+| Text editing | Letters type normally; Escape returns to navigation |
+| Dropdown | `j/k` moves; Enter or `l` selects; Escape or `h` closes |
+
+Tab and Shift+Tab also move between controls. Clicking a text field starts
+editing. In navigation mode, `q` closes a dropdown first, otherwise leaves the
+form; while editing it types normally. Leaving discards unsubmitted changes but
+cannot interrupt a registration already being written. The mode hint shows the
+available controls; there are no Ctrl shortcuts or command palette.
+
+### Edit an existing board or project
+
+Choose **View boards**, select a card, then press Enter or `e` for the guided
+editor. Cards emphasize the board name and version with dot-matrix headings
+where they fit, and show only part names and counts of parts, links, and document
+pins (board and part documents combined). Page Up/Down scroll long cards.
+Board-level fields stay at the top;
+board documents, parts, and links each appear in a responsive card grid. Click
+a card or press Enter to expand its editor in place, and choose **Done** to
+collapse it while keeping draft edits. Each grid has a large **+** card for
+adding an entry. Part document pins are edited inside the part card; enter
+aliases as comma-separated `name = value` pairs. Vendor completion suggests
+common spellings and vendors already on the board, but accepts any value.
+
+**Review changes** shows a field-level diff before registration. An unchanged
+draft returns to the form. Fields the form does not expose survive unchanged,
+including lineage (`derives_from` and `relation`). To edit lineage, use raw JSON,
+`board configure`, or `board new-version`.
+
+**Edit raw JSON in Vim** opens the whole current draft, including unregistered
+form edits. Vim must be on `PATH`. Use `:wq` to return changes or `:cq` to keep
+the prior form draft. Invalid JSON reopens in the same temporary file so edits
+are not lost. Legacy `caiman.board/1` boards and boards with `from`/`to` links
+are shown without guided editing; use raw JSON to preserve their shape.
+
+For projects, choose **View projects**, select a snapshot, and press `e` or
+**Edit**. Nested project collections use JSON editors. Choose a new version label
+or explicitly replace the selected label's ref, then review and register.
+Repointing a label never changes an existing digest pin. Editing a board does
+not update projects that pin it; adopt the changed board in each project explicitly.
+
+### JSON drafts and document selectors
+
+```bash
+caiman board template --output .caiman/board.json
+caiman board validate .caiman/board.json
+caiman board configure .caiman/board.json
+```
+
+The same commands work with `project`. Templates are incomplete: fill them in
+before validation. `validate` prints a resolved configuration without writing a
+version; `configure` opens it for review. Unknown fields, duplicate JSON keys,
+and invalid relationships are errors. Template and export files use mode `0600`
+and never overwrite an existing file. Keep private drafts in `.caiman/` or
+outside the firmware repository.
+
+List document selectors with `caiman documents`, adding `--compartment NAME`
+for private documents. For the synthetic manual above:
+
+```json
+{"ref": "example/example-mcu/reference-manual/Rev%20A", "compartment": "public"}
+```
+
+Use the catalog's encoded ref, or a full `sha256:…` manifest digest. A supplied
+digest is authoritative even if the ref moves. See [board fields](docs/STORAGE.md#board-fields),
+[project fields](docs/STORAGE.md#project-fields), and
+[selector rules](docs/STORAGE.md#document-selectors) for the field contract.
+
+### Inspect, export, and derive versions
+
+```bash
+caiman board show example-board
+caiman board show example-board --version 'Rev A'
+caiman board export example-board --version 'Rev A' --output .caiman/exported-board.json
+caiman board new-version example-board --from-version 'Rev A' --version 'Rev B' \
+  --relation 'Adds a second serial peripheral'
+caiman project show example-program --version Prototype --compartment example-customer
+caiman project export example-program --version Prototype \
+  --compartment example-customer --output .caiman/exported-project.json
+```
+
+Omitting the version on `show` lists labels; it never chooses the latest.
+`new-version` works for boards and projects: it opens a complete copy in the TUI,
+with the supplied lineage and existing pins. Pins change only when explicitly
+edited. Project reads require every declared compartment; repeat `--compartment`
+when needed. Store-backed commands accept `--store /absolute/path/to/store`.
+These operations register locally and never commit or push.
 
 ## Development
 
@@ -166,21 +251,34 @@ workflow. All fixtures are synthetic; do not add vendor or customer documents.
 
 ## Documentation
 
-Each document owns one topic and cross-references the rest rather than restating
-it.
+Source code is grouped by feature under `src/caiman/`: `documents`, `boards`,
+`configurations`, `dashboard`, `repositories`, `hooks`, `storage`, and `cli`.
+Shared terminal components live in `ui`. See the [source layout](CLAUDE.md#layout)
+for package responsibilities.
 
-| File | Owns |
+Start with the guide for the task; there is no need to read the whole folder.
+
+| If you need to… | Read |
 |---|---|
-| [`docs/VISION.md`](docs/VISION.md) | Why this exists, the competitive landscape, product non-goals, MVP success criteria |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design: components, models, data flows, interfaces |
-| [`docs/AUTHORING.md`](docs/AUTHORING.md) | Implemented board/project TUI and JSON workflows, fields, pinning, and version commands |
-| [`docs/STORAGE.md`](docs/STORAGE.md) | On-disk layout: blobs, manifests, refs, and the session workspace |
-| [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md) | Threat model, compartments, agent selection, and the honest limits |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Settled, open, and retired decisions with their alternatives |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phasing, exit criteria, cut order, schedule risk |
-| [`docs/GAPS.md`](docs/GAPS.md) | Assessment checklist: validation, correctness, authoring, security, and delivery gaps |
-| [`docs/harness.md`](docs/harness.md) | Measured harness transcript behavior and what it implies |
-| [`CLAUDE.md`](CLAUDE.md) | Hard invariants and working rules for AI agents in this repo |
+| Use the implemented board/project workflows | [Configuration guide](#configure-boards-and-projects) |
+| See what works and what comes next | [ROADMAP.md](docs/ROADMAP.md) |
+| Understand the product rationale and scope | [Architecture §2–4](docs/ARCHITECTURE.md#2-background-and-problem) |
+| Evaluate MVP success | [Roadmap criteria](docs/ROADMAP.md#success-criteria-for-the-mvp) |
+| Change components, resolution, or session interfaces | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Change stored objects or workspace layout | [STORAGE.md](docs/STORAGE.md) |
+| Review the proposed shared Git backend and Merkle session identity | [Team storage proposal](docs/proposals/TEAM-STORAGE.md) |
+| Review labels, visibility, audit, or revocation | [SECURITY-MODEL.md](docs/SECURITY-MODEL.md) |
+| Understand a choice or resolve an open decision | [DECISIONS.md](docs/DECISIONS.md) |
+| Find outstanding validation and review tasks | [GAPS.md](docs/GAPS.md) |
+| Work as an AI agent in this repository | [CLAUDE.md](CLAUDE.md) |
+
+[harness.md](docs/harness.md) and [research/](docs/research/) contain historical
+observations, not implementation requirements. Design docs include planned
+features; use this README for commands available today.
+
+Keep each topic in its owning document and link to it elsewhere. Decisions record
+why, guides explain how, and the roadmap records delivery status. Preserve decision
+IDs and distinguish proposed behavior from implemented commands.
 
 ## Name
 

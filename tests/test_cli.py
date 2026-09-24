@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from caiman.cli import main, store_path
+from caiman.cli.commands import main, store_path
 
 
 def test_noninteractive_ingestion_does_not_create_store(tmp_path, monkeypatch, capsys):
@@ -25,14 +25,14 @@ def test_bare_launcher_requires_terminal_without_writes(tmp_path, monkeypatch, c
 
 @pytest.mark.parametrize('before', [True, False])
 def test_store_option_routes_before_or_after_ingest(tmp_path, monkeypatch, before):
-    import caiman.workflow
+    import caiman.dashboard.workflow
     class Terminal(io.StringIO):
         def isatty(self):
             return True
     monkeypatch.setattr(sys, 'stdin', Terminal())
     monkeypatch.setattr(sys, 'stdout', Terminal())
     captured = []
-    monkeypatch.setattr(caiman.workflow, 'run_workflow', lambda root, **kwargs: captured.append(root) or 0)
+    monkeypatch.setattr(caiman.dashboard.workflow, 'run_workflow', lambda root, **kwargs: captured.append(root) or 0)
     args = ['--store', str(tmp_path), 'ingest'] if before else ['ingest', '--store', str(tmp_path)]
     assert main(args) == 0
     assert captured == [tmp_path]
@@ -71,12 +71,12 @@ def test_default_store_is_outside_working_directory(tmp_path, monkeypatch):
 
 
 def test_help_and_version_do_not_load_tui(monkeypatch, capsys):
-    monkeypatch.delitem(sys.modules, "caiman.tui", raising=False)
+    monkeypatch.delitem(sys.modules, "caiman.documents.tui", raising=False)
     with pytest.raises(SystemExit) as exc:
         main(["--version"])
     assert exc.value.code == 0
     assert "0.1.0" in capsys.readouterr().out
-    assert "caiman.tui" not in sys.modules
+    assert "caiman.documents.tui" not in sys.modules
 
 
 @pytest.mark.parametrize("kind", ["board", "project"])
@@ -89,7 +89,7 @@ def test_configure_requires_terminal_without_writes(kind, tmp_path, monkeypatch,
 
 
 def test_template_can_be_written_without_a_terminal(tmp_path, monkeypatch):
-    from caiman.config_files import read_draft
+    from caiman.configurations.files import read_draft
 
     monkeypatch.setattr(sys, "stdin", io.StringIO())
     path = tmp_path / "board.json"

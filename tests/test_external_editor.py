@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from caiman.external_editor import VimDraft
+from caiman.configurations.editor import VimDraft
 
 
 def test_private_copy_never_edits_input_and_is_cleaned_up():

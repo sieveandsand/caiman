@@ -8,7 +8,7 @@ import stat
 import subprocess
 import tempfile
 
-from .config_files import read_draft
+from caiman.configurations.files import read_draft
 
 
 class VimDraft:

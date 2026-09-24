@@ -2,23 +2,16 @@
 
 Review date: 2026-09-15.
 
-Ingest scope updated 2026-09-15: [S-25](DECISIONS.md#s-25-ingest-registers-one-unchanged-markdown-file)
-selects one unchanged Markdown file, usable headings, and human-supplied
-whole-document labels. Splitting, maps, stored chunks, and AI processing are
-removed. S-26 makes source/converter provenance optional and keeps only the
-Markdown input filename. S-27 specifies an ingestion TUI for the MVP and a
-future native macOS GUI. These decisions narrow the tasks below; they do not
-close untested workflows.
-
-Tracks the 26 gaps identified in the project assessment. Some are already named
-in the design docs; others challenge assumptions that need validation. These are
-review tasks, not changes to settled decisions or commitments to expand scope.
+This is the review backlog: each item needs evidence, a recorded decision, or an
+explicitly accepted limitation. [ROADMAP.md](ROADMAP.md) owns delivery order;
+[DECISIONS.md](DECISIONS.md) owns policy choices. Checked items close only the
+stated criterion, not every related implementation task.
 
 Check an item when its completion criterion is met. Add a link to the resulting
 decision, document, or evaluation beside it. An explicit, justified deferral or
 accepted limitation can close an item without implementing a new feature.
 
-Suggested starting order: **G01, G06, G13, G17, G23, G25**.
+Suggested starting order: **G01, G06, G17, G25**. G13 is complete.
 
 ## Product and validation
 
@@ -36,7 +29,7 @@ Suggested starting order: **G01, G06, G13, G17, G23, G25**.
 - [ ] **G04 — Update the competitive analysis and differentiation.** Recheck
   private-document retrieval, firmware platforms, requirements baselines and
   variants, and requirements-to-agent integrations. Cite current sources and
-  distinguish verified capabilities from unclear or untested ones in VISION.md.
+  distinguish verified capabilities from unclear or untested ones in ROADMAP.md’s historical survey.
 - [ ] **G05 — Identify the commercial buyer.** State the initial user, buyer,
   purchasing trigger, and evidence needed to establish willingness to pay. If
   commercial adoption is not a goal, record that explicitly.
@@ -70,9 +63,9 @@ Suggested starting order: **G01, G06, G13, G17, G23, G25**.
 - [x] **G12 — Specify provenance input.** [Architecture §6.4.3](ARCHITECTURE.md#643-registration-and-reading-workflow)
   specifies the TUI fields, review, errors, and cancellation;
   [Storage §6.4.1](STORAGE.md#641-document-version) specifies optional provenance
-  and omission rules. S-26/S-27 settle the input contract. Implementation and
-  workflow validation remain roadmap work; this closes the specification gap.
-- [x] **G13 — Specify board and project authoring.** [Authoring guide](AUTHORING.md)
+  and omission rules. S-26/S-27 settle the input contract. Local ingestion is implemented; this item closes the specification gap,
+  not end-to-end session validation.
+- [x] **G13 — Specify board and project authoring.** [Configuration guide](../README.md#configure-boards-and-projects)
   and S-28 define and implement TUI plus JSON drafts, shared validation, review,
   local registration, export, and deriving a new complete snapshot. S-29 adds
   board/project creation from the home screen and choosing existing configurations
@@ -81,9 +74,10 @@ Suggested starting order: **G01, G06, G13, G17, G23, G25**.
 - [ ] **G14 — Decide import paths from existing engineering sources.** Identify
   the first useful schematic export and requirements-baseline input, their
   ownership, and how imported data would be reviewed. Either scope an import path
-  or explicitly accept and measure manual duplication for the MVP. D-13 surveys
-  what industry board descriptions carry and what they omit, and drafts the board
-  schema changes that survey implies.
+  or explicitly accept and measure manual duplication for the MVP. D-13 surveyed
+  what industry board descriptions carry and what they omit; S-31 settled the
+  board schema changes that survey implied. What remains open here is the import
+  path itself, not the shape of the target.
 - [ ] **G15 — Specify document adoption and version cascades.** Define the
   behavior of the roadmap's adoption command, including affected board/project
   versions, review of the proposed changes, failure behavior, and preservation of
@@ -91,7 +85,9 @@ Suggested starting order: **G01, G06, G13, G17, G23, G25**.
 - [ ] **G16 — Specify agent-facing formats.** Provide schemas or stable examples
   for project.json, omission notices, and access logs. Document maps were removed
   by S-25; they no longer need a format. Include distinctions between absent,
-  restricted, and unavailable information.
+  restricted, and unavailable information. Define metadata visibility for resolved
+  JSON and omission notices, the document-path identity format, and startup
+  inventory/staleness inputs before implementing their producers.
 
 ## Security and isolation
 
@@ -102,7 +98,8 @@ Suggested starting order: **G01, G06, G13, G17, G23, G25**.
 - [ ] **G18 — Clarify session mode versus model authorization.** Document that
   sealed materialization does not verify the selected model's authorization.
   Describe the human responsibility, wrong-mode outcomes, and any explicitly
-  accepted limitation without implying model attestation.
+  accepted limitation without implying model attestation. Specify how a saved
+  selection distinguishes same-session resume from a new session or model change.
 - [ ] **G19 — Bound workspace isolation claims.** State what prevents, or does
   not prevent, an agent from reading the underlying store or another workspace.
   Scope tests and guarantees to the actual filesystem and process boundaries.
@@ -120,9 +117,10 @@ Suggested starting order: **G01, G06, G13, G17, G23, G25**.
 
 ## Documentation and delivery
 
-- [ ] **G23 — Reconcile repository isolation rules.** Resolve the conflict
-  between CLAUDE.md's per-compartment repository invariant and S-22's single
-  private repository design. Update all affected references consistently.
+- [x] **G23 — Reconcile repository isolation rules.** S-33 settles one private
+  repository per compartment and one compartment per private document, with no
+  separate domain abstraction. Updated the design references; Git transport
+  remains proposed. Resolved 2026-09-24 by user instruction.
 - [ ] **G24 — Remove stale agent-policy assumptions.** Review roadmap criteria,
   harness discussion, and other references to the retired agent map. Mark
   historical observations as historical and align current behavior with S-19.
@@ -137,7 +135,8 @@ Suggested starting order: **G01, G06, G13, G17, G23, G25**.
 
 ## Reference documents
 
-- [Vision and competitive landscape](VISION.md)
+- [Product rationale and scope](ARCHITECTURE.md#2-background-and-problem)
+- [Historical competitive landscape](ROADMAP.md#competitive-landscape-historical)
 - [Architecture, workflow gaps, and interfaces](ARCHITECTURE.md)
 - [Storage design](STORAGE.md)
 - [Security model](SECURITY-MODEL.md)

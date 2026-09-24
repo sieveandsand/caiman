@@ -6,9 +6,9 @@ from copy import deepcopy
 import pytest
 from textual.widgets import Button, Collapsible, Input, Select, Static
 
-from caiman.tui import IngestApp
-from caiman.config_store import ConfigurationService
-from caiman.store import Store
+from caiman.documents.tui import IngestApp
+from caiman.configurations.service import ConfigurationService
+from caiman.storage.store import Store
 
 
 async def advance(pilot):
@@ -120,7 +120,7 @@ async def test_optional_errors_can_be_corrected_after_going_back(tmp_path):
         await advance(pilot)
         assert app.step == 3
         assert app.prepared.manifest["converter"] == {"version": "1.2"}
-        assert "Compartments: synthetic-program" in app.review_text()
+        assert "Compartment: synthetic-program" in app.review_text()
         assert "Conversion location: Unknown" in app.review_text()
         assert not (tmp_path / "store").exists()
 
@@ -129,7 +129,7 @@ def registered_contexts(root):
     service = ConfigurationService(Store(root))
     board = service.prepare("board", {
         "board": "synthetic-board", "version": "A",
-        "parts": [{"role": "mcu", "part": "synthetic/chip", "silicon_revision": "mask-1", "documents": []}],
+        "parts": [{"role": "mcu", "vendor": "synthetic", "part": "chip", "silicon_revision": "mask-1", "documents": []}],
         "links": [],
     })
     service.register(board)
@@ -141,6 +141,45 @@ def registered_contexts(root):
         })
         service.register(project)
     return service, board
+
+
+@pytest.mark.asyncio
+async def test_document_form_rejects_multiple_compartments(tmp_path):
+    source = tmp_path / "manual.md"
+    source.write_text("# Synthetic manual\nBody.\n")
+    app = IngestApp(tmp_path / "store", source)
+    async with app.run_test(size=(100, 45)) as pilot:
+        await advance(pilot)
+        fill_document(app)
+        app.query_one("#visibility", Select).value = "compartments"
+        app.query_one("#compartments", Input).value = "alpha, falcon"
+        await advance(pilot)
+        assert app.step == 1
+        assert "exactly one compartment" in str(app.query_one("#status", Static).render())
+        assert not (tmp_path / "store").exists()
+
+
+@pytest.mark.asyncio
+async def test_multi_compartment_project_does_not_choose_document_compartment(tmp_path):
+    service, board = registered_contexts(tmp_path / "store")
+    project = service.prepare("project", {
+        "project": "combined", "version": "1", "customer": "Synthetic Customer",
+        "spec_set": "release-1",
+        "compartments": ["synthetic-alpha", "synthetic-beta"],
+        "board": {"name": "synthetic-board", "version": "A"},
+        "documents": [], "precedence": [], "features": [],
+    })
+    service.register(project)
+    source = tmp_path / "manual.md"
+    source.write_text("# Synthetic manual\nBody.\n")
+    app = IngestApp(service.store.root, source)
+    async with app.run_test(size=(100, 45)) as pilot:
+        await advance(pilot)
+        app.query_one("#compartments", Input).value = "stale"
+        await app.apply_project({"manifest": project.manifest, "digest": project.digest})
+        assert app.value("compartments") == ""
+        assert set(app.csv("project_scope")) == {"synthetic-alpha", "synthetic-beta"}
+        assert app.query_one("#visibility", Select).value == Select.NULL
 
 
 @pytest.mark.asyncio
@@ -240,7 +279,7 @@ async def test_project_selection_never_uses_repointed_board_ref_for_hardware(tmp
     root = tmp_path / "store"
     service, original = registered_contexts(root)
     replacement = deepcopy(original.manifest)
-    replacement["parts"][0]["part"] = "synthetic/replacement"
+    replacement["parts"][0]["part"] = "replacement"
     service.register(service.prepare("board", replacement))
     context = {"project": service.list_configs("project", compartments={"synthetic-alpha"})[0]}
     app = IngestApp(root, context=context)
@@ -248,6 +287,6 @@ async def test_project_selection_never_uses_repointed_board_ref_for_hardware(tmp
         await pilot.pause(0.15)
         assert app.context["project"]["manifest"]["board"]["digest"] == original.digest
         assert app.context["board"]["digest"] == original.digest
-        assert app.context["board"]["manifest"]["parts"][0]["part"] == "synthetic/chip"
+        assert app.context["board"]["manifest"]["parts"][0]["part"] == "chip"
         assert app.value("part") == ""
         assert app.value("program") == "synthetic-alpha-program"

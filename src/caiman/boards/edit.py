@@ -1,4 +1,4 @@
-"""Board gallery editing: Vim draft, explicit review, then local registration."""
+"""Board gallery editing: guided form, optional Vim, explicit review, then registration."""
 
 import asyncio
 from copy import deepcopy
@@ -9,10 +9,11 @@ from pathlib import Path
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Collapsible, Static, TextArea
 
-from .config_store import ConfigurationService
-from .navigation import NavigationApp
-from .store import Store
-from .theme import TERMINAL_CSS, apply_theme
+from caiman.configurations.service import ConfigurationService
+from caiman.configurations.models import part_aliases, part_identity
+from caiman.ui.navigation import NavigationApp
+from caiman.storage.store import Store
+from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
 class BoardEditReviewApp(NavigationApp):
@@ -34,7 +35,7 @@ class BoardEditReviewApp(NavigationApp):
             if self.prepared is None:
                 yield Static('The draft needs correction before it can be registered.', classes='hint')
                 yield Static(str(self.error), markup=False)
-                yield Static('Your edited file is retained while you return to Vim. Back discards this draft.', classes='hint')
+                yield Static('Your edited file is retained while you keep editing. Back discards this draft.', classes='hint')
             else:
                 manifest = self.prepared.manifest
                 yield Static(f"Board: {manifest['board']} @ {manifest['version']}\nAccess: Public", markup=False)
@@ -42,11 +43,10 @@ class BoardEditReviewApp(NavigationApp):
                 yield Static('Register updates this version label. Existing digest pins remain unchanged.' if same_label else
                              'Register saves the name/version below. If that label exists, it will point to this snapshot.', classes='hint')
                 for part in manifest['parts']:
-                    details = [f"{part['role']} · {part['part']}"]
+                    details = [f"{part['role']} · {part_identity(part)}"]
                     if part.get('silicon_revision'):
                         details.append('Silicon: ' + part['silicon_revision'])
-                    if part.get('refdes'):
-                        details.append('Schematic: ' + part['refdes'])
+                    details.extend(f'{key}: {value}' for key, value in sorted(part_aliases(part).items()))
                     details.append(f"{len(part['documents'])} document pins")
                     yield Static('  |  '.join(details), markup=False)
                 yield Static(f"Manifest: {self.prepared.digest}", markup=False)
@@ -59,7 +59,7 @@ class BoardEditReviewApp(NavigationApp):
         with Horizontal(id='navigation'):
             if self.prepared is not None:
                 yield Button('Register changes', id='register', variant='primary')
-            yield Button('Edit in Vim', id='edit')
+            yield Button('Continue editing', id='edit')
             yield Button('Back to boards', id='cancel')
         yield self.navigation_hint()
 
@@ -89,14 +89,67 @@ class BoardEditReviewApp(NavigationApp):
                     button.disabled = False
 
 
+def _vim_excursion(root, original, draft):
+    """Hand the whole draft to Vim; return what came back, or None if abandoned.
+
+    One file stays alive across retries, so a draft that fails to parse is not
+    lost between the error and the next edit.
+    """
+    from caiman.configurations.editor import VimDraft
+
+    with VimDraft(draft) as vim:
+        while vim.edit():
+            try:
+                return vim.read()
+            except (OSError, ValueError) as invalid:
+                if BoardEditReviewApp(root=root, original=original, error=str(invalid)).run() != 'edit':
+                    return None
+    return None
+
+
+def edit_board(root: Path, service: ConfigurationService, selection: dict) -> dict | None:
+    """Drive one board through the guided form, Vim, and review.
+
+    The guided form is the way in; Vim is the escape hatch at the bottom of it
+    and returns to the same form, so an edit made either way is reviewed the
+    same way. Returns the registered board, if one was registered.
+    """
+    from caiman.boards.form import BoardFormApp
+
+    original = selection['manifest']
+    draft, message = deepcopy(original), ''
+    while True:
+        outcome = BoardFormApp(original=original, draft=draft, message=message).run()
+        if outcome is None:
+            return None
+        action, draft = outcome
+        message = ''
+        if action == 'raw':
+            edited = _vim_excursion(root, original, draft)
+            if edited is not None:
+                draft = edited
+            continue
+        try:
+            prepared = service.prepare('board', draft)
+        except (OSError, ValueError) as invalid:
+            message = str(invalid)
+            continue
+        if prepared.digest == selection['digest']:
+            message = 'This draft matches the registered snapshot. There is nothing to register.'
+            continue
+        reviewed = BoardEditReviewApp(root=root, original=original, prepared=prepared).run()
+        if reviewed == 'edit':
+            continue
+        return reviewed if isinstance(reviewed, dict) else None
+
+
 def run_board_gallery(root: Path) -> dict | None:
-    """Vim runs only after the gallery releases the terminal; no nested TUIs.
+    """Vim runs only after every app releases the terminal; no nested TUIs.
 
     Returns the last board registered from the gallery, if any.
     """
-    from .board_gallery import BoardGalleryApp
-    from .dashboard_actions import ViewerApp
-    from .external_editor import VimDraft
+    from caiman.boards.gallery import BoardGalleryApp
+    from caiman.dashboard.actions import ViewerApp
 
     registered = None
     service = ConfigurationService(Store(root))
@@ -104,23 +157,7 @@ def run_board_gallery(root: Path) -> dict | None:
         selection = BoardGalleryApp(store_root=root).run()
         if selection is None:
             return registered
-        original = selection['manifest']
         try:
-            with VimDraft(original) as draft:
-                while draft.edit():
-                    try:
-                        prepared = service.prepare('board', draft.read())
-                        if prepared.digest == selection['digest']:
-                            break
-                        error = None
-                    except (OSError, ValueError) as invalid:
-                        prepared = None
-                        error = str(invalid)
-                    outcome = BoardEditReviewApp(root=root, original=original, prepared=prepared, error=error).run()
-                    if outcome == 'edit':
-                        continue
-                    if isinstance(outcome, dict):
-                        registered = outcome
-                    break
+            registered = edit_board(root, service, selection) or registered
         except (OSError, ValueError) as error:
-            ViewerApp(title='Vim editor needs attention', content=str(error)).run()
+            ViewerApp(title='Board editor needs attention', content=str(error)).run()

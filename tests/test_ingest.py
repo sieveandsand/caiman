@@ -3,9 +3,9 @@ from dataclasses import replace
 
 import pytest
 
-from caiman.ingest import ValidationError, prepare_document, verify_prepared
-from caiman.ingest import digest
-from caiman.models import canonical_json
+from caiman.documents.ingest import ValidationError, prepare_document, verify_prepared
+from caiman.documents.ingest import digest
+from caiman.documents.models import canonical_json, current_schema, is_schema
 
 
 @pytest.fixture
@@ -26,6 +26,13 @@ def document(tmp_path):
 def test_invalid_labels_never_admitted(document, metadata, labels):
     metadata['labels'] = labels
     with pytest.raises(ValidationError):
+        prepare_document(document, metadata)
+
+
+@pytest.mark.parametrize('compartments', [['alpha', 'falcon'], ['alpha', 'alpha']])
+def test_document_requires_one_compartment_without_silent_deduplication(document, metadata, compartments):
+    metadata['labels'] = {'public': False, 'compartments': compartments}
+    with pytest.raises(ValidationError, match='exactly one compartment'):
         prepare_document(document, metadata)
 
 
@@ -136,3 +143,16 @@ def test_forged_prepared_manifests_rejected(document, metadata, field, value):
     forged = replace(prepared, manifest=changed, manifest_digest=digest(canonical_json(changed)))
     with pytest.raises(ValidationError):
         verify_prepared(forged)
+
+
+def test_document_schema_literal_is_current_and_older_spellings_still_read(tmp_path):
+    """The literal is a table entry, not an f-string over kind and number (D-13)."""
+    path = tmp_path / 'manual.md'
+    path.write_text('# Manual\n\n## Registers\nSynthetic text\n')
+    prepared = prepare_document(path, {
+        'issuer': 'synthetic', 'part': 'chip', 'doc_type': 'manual', 'version': 'v1',
+        'structure': 'prose', 'labels': {'public': True, 'compartments': []}})
+    assert prepared.manifest['schema'] == current_schema('document') == 'caiman.document.v1'
+    assert is_schema('document', 'caiman.document/1')
+    assert not is_schema('document', 'caiman.document.v2')
+    assert not is_schema('document', current_schema('board'))
