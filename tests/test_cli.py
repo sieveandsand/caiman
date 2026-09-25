@@ -15,6 +15,14 @@ def test_noninteractive_ingestion_does_not_create_store(tmp_path, monkeypatch, c
     assert not root.exists()
 
 
+def test_little_caiman_requires_terminal_without_writes(tmp_path, monkeypatch, capsys):
+    root = tmp_path / 'absent-store'
+    monkeypatch.setattr(sys, 'stdin', io.StringIO())
+    assert main(['little', '--store', str(root)]) == 2
+    assert 'interactive terminal' in capsys.readouterr().err
+    assert not root.exists()
+
+
 def test_bare_launcher_requires_terminal_without_writes(tmp_path, monkeypatch, capsys):
     root = tmp_path / 'absent-store'
     monkeypatch.setattr(sys, 'stdin', io.StringIO())

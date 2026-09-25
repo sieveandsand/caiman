@@ -1071,6 +1071,8 @@ Storage-level tests are in `STORAGE.md` §11. The security negative tests are in
 | A-28 | Open a stored `caiman.board/1` board, or one with a `from`/`to` link, in the guided editor | Shown but not authored; only raw JSON is offered, so no endpoint is dropped and no stored version is migrated (S-31) |
 | A-29 | Edit a board with declared lineage in the guided form, which has no lineage field | `derives_from` and `relation` survive unchanged (S-32) |
 | A-30 | Type a vendor that is not in the common list, in any case | Accepted as declared; the list suggests a canonical spelling and constrains nothing (I-8, S-32) |
+| A-31 | Point little caiman at a transcript whose tool results and shell commands contain a restricted string | Counts and locators only; the string is not retained or shown, and nothing is written (R-14, I-10) |
+| A-32 | Show little caiman's usage view | The absence-of-record notice is visible; a materialized file whose bytes match no stored blob is flagged as modified (§6.10.4, R-6) |
 
 A-9 is the test that covers the highest-value normative behavior, and A-12 covers
 the reproducibility property the whole pinning model exists for.

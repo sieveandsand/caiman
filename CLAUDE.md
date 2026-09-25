@@ -254,6 +254,7 @@ src/caiman/
   dashboard/      # home screen, setup, workflow state, and dashboard actions
   repositories/   # Repo Manager service and TUI
   hooks/          # harness hook installation, callbacks, and TUI
+  little_caiman/  # read-only sidecar: a session's managed-document use, from its transcript
   storage/        # immutable blobs, manifests, refs, and resolution
   ui/             # shared navigation, theme, mascot, and pixel title
 ```

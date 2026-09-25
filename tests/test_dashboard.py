@@ -15,7 +15,7 @@ async def test_home_offers_only_create_and_view_per_kind():
     app = LauncherApp()
     async with app.run_test(size=(100, 45)) as pilot:
         await pilot.pause()
-        assert [tile.id for tile in app.query('.dashboard-tile')] == ACTIONS
+        assert [tile.id for tile in app.query('.dashboard-tile.card-face')] == ACTIONS
         for kind in ('board', 'project'):
             create = app.query_one(f'#create-{kind}', Button)
             show = app.query_one(f'#show-{kind}', Button)
@@ -151,6 +151,41 @@ def test_dashboard_card_fallback_keeps_exact_unicode_identity():
     tile.format_card(24)
     assert '板-α / Rev B' in tile.label.plain
     assert '3 Documents' in tile.label.plain
+
+
+@pytest.mark.asyncio
+async def test_clicking_the_mascot_opens_little_caiman():
+    app = LauncherApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click('#mascot')
+    assert app.return_value == 'little-caiman'
+
+
+@pytest.mark.asyncio
+async def test_little_caiman_key_works_when_the_mascot_steps_aside():
+    app = LauncherApp()
+    async with app.run_test(size=(40, 40)) as pilot:
+        await pilot.pause()
+        assert not app.query_one('#mascot').display
+        assert 'c little caiman' in str(app.query_one('.key-hint', Static).render())
+        await pilot.press('c')
+    assert app.return_value == 'little-caiman'
+
+
+@pytest.mark.asyncio
+async def test_mascot_is_a_keyboard_button_for_little_caiman():
+    app = LauncherApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        assert app.focused.id == 'ingest'
+        await pilot.press('k')
+        assert app.focused.id == 'mascot'
+        await pilot.press('j')
+        assert app.focused.id != 'mascot'
+        app.query_one('#mascot').focus()
+        await pilot.press('enter')
+    assert app.return_value == 'little-caiman'
 
 
 @pytest.mark.asyncio

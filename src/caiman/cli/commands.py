@@ -115,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
     ingest.add_argument("markdown", nargs="?", type=Path, help="Prepared Markdown file")
     ingest.add_argument("--store", type=Path, help="Local store path (overrides config.toml)")
     _config_commands(commands)
+    little = commands.add_parser("little", help="Little caiman: watch a session's managed-document use")
+    little.add_argument("--store", type=Path, help="Local store path (overrides config.toml)")
     documents = commands.add_parser("documents", help="List registered documents available for pinning")
     documents.add_argument("--store", type=Path)
     documents.add_argument("--compartment", action="append", default=[],
@@ -130,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             # Harness callbacks must never prevent a session from starting.
             return 0
 
-    interactive = args.command in (None, "ingest") or getattr(args, "action", None) in {"configure", "new-version"}
+    interactive = args.command in (None, "ingest", "little") or getattr(args, "action", None) in {"configure", "new-version"}
     if interactive and (not sys.stdin.isatty() or not sys.stdout.isatty()):
         print(
             f"caiman{(' ' + args.command) if args.command else ''} requires an interactive terminal. "
@@ -149,6 +151,10 @@ def main(argv: list[str] | None = None) -> int:
         root = store_path(getattr(args, 'store', None) or args.launcher_store)
         if args.command in {"board", "project"}:
             return _run_config(args, root)
+        if args.command == "little":
+            from caiman.little_caiman.tui import run_little_caiman
+
+            return run_little_caiman(root)
         if args.command == "documents":
             from caiman.configurations.service import ConfigurationService
             from caiman.storage.store import Store

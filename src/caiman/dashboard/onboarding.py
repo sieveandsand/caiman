@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from caiman.ui.navigation import NavigationApp
 from caiman.ui.cards import CARD_CSS, CardFrame, OverviewCard, card_label
 from textual.containers import Grid, Horizontal, VerticalScroll
@@ -221,8 +222,28 @@ class DashboardTile(OverviewCard):
         return height
 
 
+class Mascot(Static):
+    """The masthead caiman is a button: click, or focus it and press Enter, to open little caiman."""
+
+    can_focus = True
+    BINDINGS = [Binding('enter,space', 'press', 'Little caiman', show=False)]
+
+    def __init__(self, *args, **kwargs):
+        # dashboard-tile joins hjkl movement: k from the top tiles reaches the mascot.
+        super().__init__(*args, classes='dashboard-tile', **kwargs)
+        self.tooltip = 'Little caiman'
+
+    def action_press(self):
+        self.app.exit('little-caiman')
+
+    def on_click(self, event):
+        event.stop()
+        self.action_press()
+
+
 class LauncherApp(NavigationApp):
     TITLE = 'Caiman'
+    BINDINGS = [Binding('c', 'little_caiman', 'Little caiman', show=False)]
     CSS = TERMINAL_CSS + CARD_CSS + f'''
     .dashboard-heading {{ height: 1; margin: 1 0 0 0; color: #7fdc4f; text-style: bold; }}
     .dashboard-grid {{ grid-size: 2; grid-columns: 1fr; grid-gutter: 1 1; height: auto; }}
@@ -230,6 +251,8 @@ class LauncherApp(NavigationApp):
     #masthead {{ height: auto; }}
     #masthead #brand {{ width: 1fr; }}
     #mascot {{ width: auto; height: auto; padding: 0 2 0 0; }}
+    #mascot:hover {{ background: #0c140c; }}
+    #mascot:focus {{ background: #25331f; }}
     '''
 
     # Below these sizes the mascot would crowd the title or the tiles, so it steps aside.
@@ -241,7 +264,7 @@ class LauncherApp(NavigationApp):
         apply_theme(self)
 
     def navigation_help(self):
-        return 'h left · j down · k up · l right · Enter open · Tab next · q quit'
+        return 'h left · j down · k up · l right · Enter open · c little caiman · q quit'
 
     def tile(self, *args, **kwargs):
         return CardFrame(DashboardTile(*args, **kwargs))
@@ -255,7 +278,7 @@ class LauncherApp(NavigationApp):
     def compose(self):
         with Horizontal(id='masthead'):
             yield Static('caiman  /  home', id='brand')
-            yield Static(render_mascot(), id='mascot')
+            yield Mascot(render_mascot(), id='mascot')
         with VerticalScroll(id='body'):
             yield Static('Documents', classes='dashboard-heading')
             with Grid(id='documents-grid', classes='dashboard-grid'):
@@ -300,6 +323,9 @@ class LauncherApp(NavigationApp):
 
     def on_button_pressed(self, event):
         self.exit(event.button.id)
+
+    def action_little_caiman(self):
+        self.exit('little-caiman')
 
     def action_quit_launcher(self):
         self.exit('quit')

@@ -38,6 +38,14 @@ def digest(content: bytes) -> str:
 
 
 def validate_headings(text: str) -> tuple[Heading, ...]:
+    headings, errors = heading_outline(text)
+    if errors:
+        raise ValidationError({'headings': '; '.join(errors)})
+    return headings
+
+
+def heading_outline(text: str) -> tuple[tuple[Heading, ...], list[str]]:
+    """Heading paths and any reasons they would be rejected at ingest."""
     tokens = MarkdownIt('commonmark').parse(text)
     errors = []
     if not tokens or tokens[0].type != 'heading_open':
@@ -63,9 +71,7 @@ def validate_headings(text: str) -> tuple[Heading, ...]:
         seen[path] = line
         stack.append((level, title))
         headings.append(Heading(path, line))
-    if errors:
-        raise ValidationError({'headings': '; '.join(errors)})
-    return tuple(headings)
+    return tuple(headings), errors
 
 
 def _text(value):

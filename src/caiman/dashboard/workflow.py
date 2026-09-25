@@ -73,6 +73,12 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
             HooksApp(harness=action.removeprefix('hooks-'), store_root=root).run()
             action = None
             continue
+        if action == 'little-caiman':
+            from caiman.little_caiman.tui import run_little_caiman
+
+            run_little_caiman(root)
+            action = None
+            continue
         if action in {'repo-add', 'repo-remove', 'repo-initialize'}:
             from caiman.repositories.tui import RepoManagerApp
 
