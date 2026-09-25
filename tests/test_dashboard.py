@@ -151,3 +151,26 @@ def test_dashboard_card_fallback_keeps_exact_unicode_identity():
     tile.format_card(24)
     assert '板-α / Rev B' in tile.label.plain
     assert '3 Documents' in tile.label.plain
+
+
+@pytest.mark.asyncio
+async def test_focus_scrolls_minimally_instead_of_pinning_cards_to_the_top():
+    app = LauncherApp()
+    async with app.run_test(size=(60, 30)) as pilot:
+        await pilot.pause()
+        body = app.query_one('#body')
+        await pilot.press('j')
+        await pilot.pause()
+        # The next tile was already visible, so nothing moves.
+        assert body.scroll_y == 0
+        # Move down until the first press that has to scroll.
+        for _ in range(20):
+            await pilot.press('j')
+            await pilot.pause()
+            if body.scroll_y > 0:
+                break
+        frame, view = app.focused.parent.region, body.content_region
+        assert body.scroll_y > 0
+        # Textual centres an off-screen focus target; the whole frame, shadow row
+        # included, is visible and the card is not pinned to the top.
+        assert view.y < frame.y and frame.bottom <= view.bottom

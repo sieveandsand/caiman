@@ -1,0 +1,3 @@
+interface:
+  display_name: "Caiman Focus Scroll"
+  short_description: "Scroll focused cards into view minimally, never pinned to the top"

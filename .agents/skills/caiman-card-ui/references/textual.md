@@ -101,6 +101,10 @@ inside cards, compare the **outer card** rectangles so a summary and an add card
 are treated as belonging to the same row. Skip hidden/collapsed descendants.
 Allow keyboard navigation to leave a card grid for surrounding form controls.
 
+On focus, scroll the card's frame into view minimally, including its shadow row.
+Do not pin the focused card to the top of the viewport: every move then
+scrolls, which reads as a glitch.
+
 Keep the add card last after insertions. Collapse must not discard incomplete
 values or bypass validation. Invalid values remain editable and the ordinary
 review/save stage reports them. Do not equate the `Done` button with persistence.

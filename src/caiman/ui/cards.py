@@ -34,7 +34,8 @@ def card_label(title, summary, width):
 class OverviewCard(Button):
     def on_focus(self):
         self.parent.add_class('selected')
-        self.scroll_visible(animate=False, top=True)
+        # Scroll only as far as needed; the frame includes the shadow row.
+        self.parent.scroll_visible(animate=False)
 
     def on_blur(self):
         self.parent.remove_class('selected')
