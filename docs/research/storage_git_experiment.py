@@ -1,4 +1,4 @@
-"""Synthetic, local-only experiments for TEAM-STORAGE.md; not backend tests.
+"""Synthetic, local-only experiments for team storage (STORAGE.md §6.6); not backend tests.
 
 Run with: python3 docs/research/storage_git_experiment.py
 Creates temporary Git repositories, never contacts a network, and removes only

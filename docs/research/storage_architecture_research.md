@@ -1,8 +1,9 @@
 # Shared storage research
 
-Research date: 2026-09-24. This report supports the proposed
-[team storage design](../proposals/TEAM-STORAGE.md). It does not change the
-implemented storage format or settle earlier decisions by itself.
+Research date: 2026-09-24. This report supports the
+[team storage design](../STORAGE.md#66-team-storage-one-git-repository-per-compartment),
+adopted by S-35. It does not change the storage format or settle decisions by
+itself.
 
 ## Subsequent design decision
 
@@ -11,7 +12,7 @@ The initial research below evaluated multi-label documents and access domains.
 exactly one compartment; each compartment is its own private repository. There
 is no separate domain, intersection audience, or multi-repository document copy.
 The user first clarified OR access, then removed the multi-label case entirely.
-The current [team storage proposal](../proposals/TEAM-STORAGE.md) reflects that
+The adopted [team storage design](../STORAGE.md#66-team-storage-one-git-repository-per-compartment) reflects that
 simplification. The domain/intersection analysis below is retained as research
 history, not the recommended implementation. Ingestion, registration and reads
 now reject multi-compartment documents; source observations below describe the

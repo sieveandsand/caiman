@@ -35,8 +35,8 @@ comparison, governing-source evaluation, and remaining validation work.
 
 Before using real restricted material, establish which processing and storage
 arrangements each counterparty permits. S-33 resolves G23 with one private
-repository per compartment; implement and validate the proposed publication
-protocol before sharing real material.
+repository per compartment; implement and validate the adopted publication
+protocol (S-35, [Storage §14](STORAGE.md#14-implementation-sequence-and-migration)) before sharing real material.
 
 Product validation is also outstanding (G01–G07). G26 proposes moving an
 end-to-end baseline comparison earlier; its evaluation and continue/stop criteria
@@ -49,7 +49,7 @@ Local registration is implemented. Remaining work is store initialization,
 reviewed publication, pull/clone, and multi-machine validation.
 
 Contracts: [Architecture §6.4](ARCHITECTURE.md#64-ingest) for admission;
-[Storage §7](STORAGE.md#7-data-flows) for writes and proposed transport;
+[Storage §7](STORAGE.md#7-data-flows) for writes and transport;
 [Security §10](SECURITY-MODEL.md#10-test-fixtures-and-security-tests) for negative tests.
 
 Exit criteria:
