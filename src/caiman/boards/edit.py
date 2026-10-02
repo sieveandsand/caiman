@@ -41,7 +41,7 @@ class BoardEditReviewApp(NavigationApp):
                 yield Static(f"Board: {manifest['board']} @ {manifest['version']}\nAccess: Public", markup=False)
                 same_label = all(manifest[key] == self.original[key] for key in ('board', 'version'))
                 yield Static('Register updates this version label. Existing digest pins remain unchanged.' if same_label else
-                             'Register saves the name/version below. If that label exists, it will point to this snapshot.', classes='hint')
+                             'Register saves the name/version below. Choose another label if it already exists.', classes='hint')
                 for part in manifest['parts']:
                     details = [f"{part['role']} · {part_identity(part)}"]
                     if part.get('silicon_revision'):
@@ -79,7 +79,10 @@ class BoardEditReviewApp(NavigationApp):
             for button in self.query(Button):
                 button.disabled = True
             try:
-                registration = await asyncio.to_thread(ConfigurationService(Store(self.root)).register, self.prepared)
+                require_new_label = any(self.prepared.manifest[key] != self.original[key]
+                                        for key in ('board', 'version'))
+                registration = await asyncio.to_thread(ConfigurationService(Store(self.root)).register,
+                                                       self.prepared, require_new_label=require_new_label)
                 self.exit({'manifest': deepcopy(self.prepared.manifest), 'digest': registration.digest})
             except (OSError, ValueError) as error:
                 self.query_one('#status', Static).update(str(error))
@@ -90,21 +93,9 @@ class BoardEditReviewApp(NavigationApp):
 
 
 def _vim_excursion(root, original, draft):
-    """Hand the whole draft to Vim; return what came back, or None if abandoned.
+    from caiman.configurations.editor import vim_excursion
 
-    One file stays alive across retries, so a draft that fails to parse is not
-    lost between the error and the next edit.
-    """
-    from caiman.configurations.editor import VimDraft
-
-    with VimDraft(draft) as vim:
-        while vim.edit():
-            try:
-                return vim.read()
-            except (OSError, ValueError) as invalid:
-                if BoardEditReviewApp(root=root, original=original, error=str(invalid)).run() != 'edit':
-                    return None
-    return None
+    return vim_excursion(root, original, draft, review=BoardEditReviewApp)
 
 
 def edit_board(root: Path, service: ConfigurationService, selection: dict) -> dict | None:
@@ -146,7 +137,8 @@ def edit_board(root: Path, service: ConfigurationService, selection: dict) -> di
 def run_board_gallery(root: Path) -> dict | None:
     """Vim runs only after every app releases the terminal; no nested TUIs.
 
-    Returns the last board registered from the gallery, if any.
+    Returns the last board registered from the gallery, if any, or hands the
+    add card back to the workflow as ``{'action': 'create-board'}``.
     """
     from caiman.boards.gallery import BoardGalleryApp
     from caiman.dashboard.actions import ViewerApp
@@ -157,6 +149,8 @@ def run_board_gallery(root: Path) -> dict | None:
         selection = BoardGalleryApp(store_root=root).run()
         if selection is None:
             return registered
+        if selection == 'add':
+            return {'action': 'create-board', 'registered': registered}
         try:
             registered = edit_board(root, service, selection) or registered
         except (OSError, ValueError) as error:

@@ -160,7 +160,7 @@ def registered_contexts(root):
     for scope in ("synthetic-alpha", "synthetic-beta"):
         project = service.prepare("project", {
             "project": scope + "-program", "version": "1", "customer": "Synthetic Customer",
-            "compartments": [scope], "board": {"name": "synthetic-board", "version": "A"},
+            "compartments": [scope], "boards": [{"name": "synthetic-board", "version": "A"}],
             "spec_set": "release-1", "documents": [], "features": [],
         })
         service.register(project)
@@ -190,7 +190,7 @@ async def test_multi_compartment_project_does_not_choose_document_compartment(tm
         "project": "combined", "version": "1", "customer": "Synthetic Customer",
         "spec_set": "release-1",
         "compartments": ["synthetic-alpha", "synthetic-beta"],
-        "board": {"name": "synthetic-board", "version": "A"},
+        "boards": [{"name": "synthetic-board", "version": "A"}],
         "documents": [], "features": [],
     })
     service.register(project)
@@ -309,7 +309,7 @@ async def test_project_selection_never_uses_repointed_board_ref_for_hardware(tmp
     app = IngestApp(root, context=context)
     async with app.run_test(size=(100, 45)) as pilot:
         await pilot.pause(0.15)
-        assert app.context["project"]["manifest"]["board"]["digest"] == original.digest
+        assert app.context["project"]["manifest"]["boards"][0]["digest"] == original.digest
         assert app.context["board"]["digest"] == original.digest
         assert app.context["board"]["manifest"]["parts"][0]["part"] == "chip"
         assert app.value("part") == ""

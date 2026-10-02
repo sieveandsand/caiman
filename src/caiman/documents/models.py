@@ -25,7 +25,7 @@ SCHEMA_LITERALS = {
     'board': ('caiman.board.v2', 'caiman.board/1'),
     'document': ('caiman.document.v2', 'caiman.document.v1', 'caiman.document/1'),
     'collection': ('caiman.collection.v1',),
-    'project': ('caiman.project.v1', 'caiman.project/1'),
+    'project': ('caiman.project.v2', 'caiman.project.v1', 'caiman.project/1'),
 }
 
 

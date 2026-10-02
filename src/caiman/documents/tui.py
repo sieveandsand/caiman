@@ -13,7 +13,7 @@ from textual.widgets import Button, Collapsible, Input, Label, Select, Static
 
 from caiman.documents.ingest import PreparedDocument, ValidationError, prepare_document, validate_headings
 from caiman.configurations.service import ConfigurationService
-from caiman.configurations.models import part_identity, part_vendor_and_part
+from caiman.configurations.models import part_identity, part_vendor_and_part, project_boards
 from caiman.storage.store import Store
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
@@ -222,9 +222,11 @@ class IngestApp(NavigationApp):
 
     async def apply_project(self, record: dict, *, update_board: bool = True) -> None:
         manifest = record["manifest"]
-        board_digest = manifest["board"]["digest"]
-        board = await asyncio.to_thread(self.service.load_digest, "board", board_digest)
-        if update_board:
+        pinned = project_boards(manifest)
+        # With several pinned boards the part's board stays an explicit choice.
+        if update_board and len(pinned) == 1:
+            board_digest = pinned[0]["digest"]
+            board = await asyncio.to_thread(self.service.load_digest, "board", board_digest)
             self.context["board"] = {"manifest": board, "digest": board_digest, "name": board["board"], "version": board["version"], "compartment": "public"}
         self.context["project"] = record
         self.query_one("#program", Input).value = manifest["project"]

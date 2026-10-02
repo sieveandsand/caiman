@@ -6,20 +6,17 @@ from textual.widgets import Button, Static
 from caiman.dashboard.onboarding import LauncherApp
 
 
-ACTIONS = ['ingest', 'documents', 'create-board', 'show-board', 'create-project', 'show-project', 'hooks-claude', 'hooks-codex',
-           'repo-add', 'repo-remove', 'repo-initialize']
+ACTIONS = ['documents', 'show-board', 'show-project', 'hooks', 'repos']
 
 
 @pytest.mark.asyncio
-async def test_home_offers_only_create_and_view_per_kind():
+async def test_home_offers_one_card_per_category():
     app = LauncherApp()
     async with app.run_test(size=(100, 45)) as pilot:
         await pilot.pause()
         assert [tile.id for tile in app.query('.dashboard-tile.card-face')] == ACTIONS
-        for kind in ('board', 'project'):
-            create = app.query_one(f'#create-{kind}', Button)
-            show = app.query_one(f'#show-{kind}', Button)
-            assert create.region.y == show.region.y and create.region.x < show.region.x
+        # Adding and viewing live inside each category, not on the home screen.
+        assert not app.query('#ingest') and not app.query('#create-board') and not app.query('#repo-add')
 
 
 @pytest.mark.asyncio
@@ -27,13 +24,15 @@ async def test_dashboard_spatial_navigation():
     app = LauncherApp()
     async with app.run_test(size=(100, 45)) as pilot:
         await pilot.pause()
-        assert app.focused.id == 'ingest'
+        assert app.focused.id == 'documents'
+        await pilot.press('l')
+        assert app.focused.id == 'show-board'
         await pilot.press('j')
-        assert app.focused.id == 'create-board'
-        await pilot.press('l', 'j')
-        assert app.focused.id == 'show-project'
-        await pilot.press('h', 'k', 'k')
-        assert app.focused.id == 'ingest'
+        assert app.focused.id == 'hooks'
+        await pilot.press('h', 'j')
+        assert app.focused.id == 'repos'
+        await pilot.press('k', 'k')
+        assert app.focused.id == 'documents'
         assert 'h left' in str(app.query_one('.key-hint', Static).render())
 
 
@@ -48,6 +47,32 @@ async def test_dashboard_actions_are_reachable_by_keyboard(action):
         assert button.visible and not button.disabled
         await pilot.press('enter')
     assert app.return_value == action
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('category, actions', [
+    ('hooks', ['hooks-claude', 'hooks-codex']),
+    ('repos', ['repo-remove', 'repo-initialize', 'repo-add'])])
+async def test_category_pages_offer_their_actions_as_cards(category, actions):
+    from caiman.dashboard.onboarding import CategoryApp
+    from caiman.ui.cards import AddTile
+
+    for action in actions:
+        app = CategoryApp(category)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            assert [card.id for card in app.query('.card-face')] == actions
+            assert app.focused.id == actions[0]
+            app.query_one('#' + action, Button).focus()
+            await pilot.press('enter')
+        assert app.return_value == action
+    app = CategoryApp(category)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        # The repo manager's add action is the trailing add card.
+        assert [card.id for card in app.query(AddTile)] == (['repo-add'] if category == 'repos' else [])
+        await pilot.press('q')
+    assert app.return_value is None
 
 
 @pytest.mark.asyncio
@@ -121,16 +146,16 @@ def test_mascot_half_blocks_map_two_square_pixels_per_cell():
 @pytest.mark.asyncio
 async def test_dashboard_cards_resize_and_move_shadow_without_layout_changes():
     from caiman.dashboard.onboarding import DashboardTile
-    from caiman.ui.pixel_title import pixel_title
 
     app = LauncherApp()
     async with app.run_test(size=(140, 50)) as pilot:
         await pilot.pause()
-        first = app.query_one('#ingest', DashboardTile)
-        second = app.query_one('#documents', DashboardTile)
-        assert '\n'.join(pixel_title('Ingest document', 100)) in first.label.plain
-        assert 'Ingest document' not in first.label.plain
-        assert 'Register Markdown' in app.export_screenshot().replace('&#160;', ' ')
+        first = app.query_one('#documents', DashboardTile)
+        second = app.query_one('#show-board', DashboardTile)
+        from caiman.ui.heading import fullwidth_title
+        assert fullwidth_title('Documents', 100)[0] in first.label.plain
+        assert 'Documents' not in first.label.plain
+        assert 'Ingest · browse registered' in app.export_screenshot().replace('&#160;', ' ')
         before = [card.region for card in (first, second)]
         assert first.parent.query_one('.card-shadow').visible
         await pilot.press('l')
@@ -151,6 +176,40 @@ def test_dashboard_card_fallback_keeps_exact_unicode_identity():
     tile.format_card(24)
     assert '板-α / Rev B' in tile.label.plain
     assert '3 Documents' in tile.label.plain
+
+
+@pytest.mark.asyncio
+async def test_menu_uses_permanent_uppercase_fullwidth_headings():
+    from caiman.dashboard.onboarding import DashboardTile
+
+    app = LauncherApp()
+    async with app.run_test(size=(110, 40)) as pilot:
+        first = app.query_one('#documents', DashboardTile)
+        await pilot.pause()
+        assert first.label.plain.startswith('ＤＯＣＵＭＥＮＴＳ\n')
+        # There is no font switcher: t and T leave the screen as it was.
+        await pilot.press('t', 'T')
+        assert app.focused is first
+        assert first.label.plain.startswith('ＤＯＣＵＭＥＮＴＳ\n')
+        assert 'font' not in str(app.query_one('.key-hint', Static).render())
+        await pilot.press('enter')
+    assert app.return_value == 'documents'
+
+
+def test_fullwidth_titles_are_uppercase_single_row_with_exact_fallback():
+    from caiman.ui.heading import fullwidth_title
+
+    assert fullwidth_title('Create board', 40) == ['ＣＲＥＡＴＥ\u3000ＢＯＡＲＤ']
+    assert fullwidth_title('Board', 40) == fullwidth_title('BOARD', 40)
+    # H, M, and N are ordinary letterforms, so they cannot be confused.
+    assert fullwidth_title('hmn', 6) == ['ＨＭＮ'] and fullwidth_title('hmn', 5) == []
+    assert fullwidth_title('Rev (B)-2.1/x_y+z', 40) == ['ＲＥＶ\u3000（Ｂ）－２．１／Ｘ＿Ｙ＋Ｚ']
+    assert fullwidth_title('Board', 9) == []
+    assert fullwidth_title('', 40) == []
+    # No transliteration or partial rendering: the caller shows the exact value.
+    assert fullwidth_title('板-α', 40) == []
+    assert fullwidth_title('Straße', 40) == []
+    assert fullwidth_title('tab\there', 40) == []
 
 
 @pytest.mark.asyncio
@@ -178,7 +237,7 @@ async def test_mascot_is_a_keyboard_button_for_little_caiman():
     app = LauncherApp()
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause()
-        assert app.focused.id == 'ingest'
+        assert app.focused.id == 'documents'
         await pilot.press('k')
         assert app.focused.id == 'mascot'
         await pilot.press('j')

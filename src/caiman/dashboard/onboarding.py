@@ -6,13 +6,14 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.binding import Binding
 from caiman.ui.navigation import NavigationApp
-from caiman.ui.cards import CARD_CSS, CardFrame, OverviewCard, card_label
+from caiman.ui.cards import CARD_CSS, AddTile, CardFrame, OverviewCard, card_label, resize_card_grid
 from textual.containers import Grid, Horizontal, VerticalScroll
-from textual.widgets import Button, Input, Label, Select, Static
+from textual.widgets import Button, Input, Label, SelectionList, Static
+from textual.widgets.selection_list import Selection
 
 from caiman.boards.form import vendor_suggester
 from caiman.configurations.service import ConfigurationService
-from caiman.configurations.models import part_aliases, part_identity
+from caiman.configurations.models import part_aliases, part_identity, project_boards
 from caiman.ui.mascot import HEIGHT as MASCOT_HEIGHT, WIDTH as MASCOT_WIDTH, render_mascot
 from caiman.documents.models import ValidationError
 from caiman.storage.store import Store
@@ -20,10 +21,10 @@ from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
 class SetupApp(NavigationApp):
-    """Create one board or project. A project names its board explicitly, every time."""
+    """Create one board or project. A project names its boards explicitly, every time."""
 
     TITLE = 'Caiman · Create configuration'
-    CSS = TERMINAL_CSS + '\n#review { height: auto; }\nButton { width: auto; }\n'
+    CSS = TERMINAL_CSS + '\n#review { height: auto; }\nButton { width: auto; }\n#board-choice { height: auto; max-height: 12; }\n'
 
     def __init__(self, *, kind: str, store_root: Path, board=None):
         super().__init__()
@@ -58,8 +59,10 @@ class SetupApp(NavigationApp):
                     yield from self.field('silicon_revision', 'Silicon revision (optional)')
                     yield from self.field('refdes', 'Schematic reference (optional; stored as aliases.refdes)')
                 else:
-                    yield Label('Board version')
-                    yield Select([], prompt='Choose a registered board', id='board-choice')
+                    yield Label('Boards')
+                    yield Static('Mark every board version this program runs on with Space. '
+                                 'A board may be chosen at more than one version.', classes='hint')
+                    yield SelectionList(id='board-choice')
                     yield from self.field('customer', 'Customer identity')
                     yield from self.field('compartments', 'Project compartments (comma separated; required)')
                     yield Static('Usually one per customer, such as oem-alpha. A project must include every compartment required by a document to use it.', classes='hint')
@@ -91,11 +94,12 @@ class SetupApp(NavigationApp):
                 manifest = initial['manifest']
                 self.boards.append({'manifest': manifest, 'digest': initial['digest'], 'name': manifest['board'],
                                     'version': manifest['version'], 'compartment': 'public'})
-            selector = self.query_one('#board-choice', Select)
-            selector.set_options([(f"{record['name']} @ {record['version']} [{record['digest'][7:19]}]", str(index))
+            selector = self.query_one('#board-choice', SelectionList)
+            selector.clear_options()
+            # Only a board handed over from ingestion starts marked; nothing else is preselected.
+            selector.add_options([Selection(f"{record['name']} @ {record['version']} [{record['digest'][7:19]}]", index,
+                                            bool(initial) and record['digest'] == initial['digest'])
                                   for index, record in enumerate(self.boards)])
-            if initial:
-                selector.value = next(str(index) for index, record in enumerate(self.boards) if record['digest'] == initial['digest'])
             self.query_one('#status', Static).update(
                 f'{len(self.boards)} registered boards.' if self.boards else 'No boards registered. Create a board first.')
         except (OSError, ValueError) as error:
@@ -107,7 +111,7 @@ class SetupApp(NavigationApp):
     def show_view(self):
         self.query_one('#edit').display = not self.reviewing
         self.query_one('#review').display = self.reviewing
-        for widget in self.query('Input, Select, Button'):
+        for widget in self.query('Input, SelectionList, Button'):
             widget.disabled = self.busy
         self.query_one('#back', Button).disabled = not self.reviewing or self.busy
         self.query_one('#cancel', Button).disabled = self.saving
@@ -127,15 +131,15 @@ class SetupApp(NavigationApp):
                 data['notes'] = self.text('notes')
             data.update(parts=[part], links=[])
         else:
-            choice = self.query_one('#board-choice', Select).value
-            if not isinstance(choice, str):
-                raise ValueError('Choose the board version this project uses')
-            record = self.boards[int(choice)]
-            board = record['manifest']
+            chosen = sorted(self.query_one('#board-choice', SelectionList).selected)
+            if not chosen:
+                raise ValueError('Choose the board versions this project uses')
+            boards = [{'name': self.boards[index]['manifest']['board'], 'version': self.boards[index]['manifest']['version'],
+                       'digest': self.boards[index]['digest']} for index in chosen]
             data.update(customer=self.text('customer'),
                         compartments=[s.strip() for s in self.text('compartments').split(',') if s.strip()],
-                        board={'name': board['board'], 'version': board['version'], 'digest': record['digest']},
-                        spec_set=self.text('spec_set'), documents=[], precedence=[], features=[])
+                        boards=boards,
+                        spec_set=self.text('spec_set'), documents=[], features=[])
         return data
 
     def action_cancel(self):
@@ -159,12 +163,11 @@ class SetupApp(NavigationApp):
                 lines.append(f"    Pinned documents: {len(part['documents'])}")
             lines.append(f"Hardware links: {len(manifest.get('links', []))}")
         else:
-            board = manifest['board']
             lines.extend([f"Customer: {manifest['customer']}",
-                          'Compartments: ' + ', '.join(manifest['compartments']),
-                          f"Board: {board['name']} @ {board['version']}",
-                          f"Board digest: {board['digest']}",
-                          f"Specification set: {manifest['spec_set']}",
+                          'Compartments: ' + ', '.join(manifest['compartments'])])
+            for board in project_boards(manifest):
+                lines.extend([f"Board: {board['name']} @ {board['version']}", f"  Board digest: {board['digest']}"])
+            lines.extend([f"Specification set: {manifest['spec_set']}",
                           f"Pinned project documents: {len(manifest['documents'])}",
                           f"Features: {len(manifest['features'])}"])
         lines.extend(['', f'Store: {self.store_root}', 'Manifest: ' + self.selection['digest']])
@@ -208,7 +211,7 @@ class SetupApp(NavigationApp):
 
 
 class DashboardTile(OverviewCard):
-    """A keyboard-focusable action with a dot heading."""
+    """A keyboard-focusable action with a fullwidth heading."""
 
     def __init__(self, title, description, *, action, disabled=False):
         super().__init__('', id=action, classes='dashboard-tile card-face', disabled=disabled)
@@ -241,12 +244,27 @@ class Mascot(Static):
         self.action_press()
 
 
+# Home shows one card per category. Documents, boards, and projects open their
+# gallery, which ends in an add card; these two open a page of their actions.
+CATEGORY_MENUS = {
+    'hooks': ('Hooks', [('Claude Code', 'Add Caiman hook', 'hooks-claude'),
+                        ('Codex', 'Add Caiman hook', 'hooks-codex')]),
+    'repos': ('Repo Manager', [('Remove repo', 'Remove registration', 'repo-remove'),
+                               ('Initialize repo', 'Create; optional push', 'repo-initialize'),
+                               ('Add repo', None, 'repo-add')]),
+}
+
+
+def resize_tile_grid(grid, width):
+    columns = 2 if width >= 100 else 1
+    resize_card_grid(grid, max(8, (width - 6 - (columns - 1)) // columns), columns)
+
+
 class LauncherApp(NavigationApp):
     TITLE = 'Caiman'
     BINDINGS = [Binding('c', 'little_caiman', 'Little caiman', show=False)]
     CSS = TERMINAL_CSS + CARD_CSS + f'''
-    .dashboard-heading {{ height: 1; margin: 1 0 0 0; color: #7fdc4f; text-style: bold; }}
-    .dashboard-grid {{ grid-size: 2; grid-columns: 1fr; grid-gutter: 1 1; height: auto; }}
+    .dashboard-grid {{ grid-size: 2; grid-columns: 1fr; grid-gutter: 1 1; height: auto; margin-top: 1; }}
     #quit {{ width: auto; }}
     #masthead {{ height: auto; }}
     #masthead #brand {{ width: 1fr; }}
@@ -269,57 +287,31 @@ class LauncherApp(NavigationApp):
     def tile(self, *args, **kwargs):
         return CardFrame(DashboardTile(*args, **kwargs))
 
-    def tiles(self, kind):
-        # Only create and view live here; editing starts from what is being viewed.
-        yield self.tile(f'Create {kind}', 'New configuration', action=f'create-{kind}')
-        yield self.tile(f'View {kind}s', 'Browse · e to edit' if kind == 'board' else 'Pick one · e to edit',
-                            action=f'show-{kind}')
-
     def compose(self):
         with Horizontal(id='masthead'):
             yield Static('caiman  /  home', id='brand')
             yield Mascot(render_mascot(), id='mascot')
         with VerticalScroll(id='body'):
-            yield Static('Documents', classes='dashboard-heading')
-            with Grid(id='documents-grid', classes='dashboard-grid'):
-                yield self.tile('Ingest document', 'Register Markdown', action='ingest')
-                yield self.tile('Browse documents', 'Find document pins', action='documents')
-            yield Static('Boards', classes='dashboard-heading')
-            with Grid(id='board-grid', classes='dashboard-grid'):
-                yield from self.tiles('board')
-            yield Static('Projects', classes='dashboard-heading')
-            with Grid(id='project-grid', classes='dashboard-grid'):
-                yield from self.tiles('project')
-            yield Static('Hooks', classes='dashboard-heading')
-            with Grid(id='hooks-grid', classes='dashboard-grid'):
-                yield self.tile('Claude Code', 'Add Caiman hook', action='hooks-claude')
-                yield self.tile('Codex', 'Add Caiman hook', action='hooks-codex')
-            yield Static('Repo Manager', classes='dashboard-heading')
-            with Grid(id='repos-grid', classes='dashboard-grid'):
-                yield self.tile('Add repo', 'Verify and register', action='repo-add')
-                yield self.tile('Remove repo', 'Remove registration', action='repo-remove')
-                yield self.tile('Initialize repo', 'Create; optional push', action='repo-initialize')
+            with Grid(id='category-grid', classes='dashboard-grid'):
+                yield self.tile('Documents', 'Ingest · browse registered', action='documents')
+                yield self.tile('Boards', 'Add · view · edit', action='show-board')
+                yield self.tile('Projects', 'Add · view · edit', action='show-project')
+                yield self.tile('Hooks', 'Claude Code · Codex', action='hooks')
+                yield self.tile('Repo Manager', 'Add · remove · initialize', action='repos')
         with Horizontal(id='navigation'):
             yield Button('Quit', id='quit')
         yield self.navigation_hint()
 
     def on_mount(self):
         self.resize_grid(self.size.width, self.size.height)
-        self.query_one('#ingest', Button).focus()
+        self.query_one('#documents', Button).focus()
 
     def on_resize(self, event):
         self.resize_grid(event.size.width, event.size.height)
 
     def resize_grid(self, width, height=MASCOT_HEIGHT + 20):
         self.query_one('#mascot').display = width >= self.MASCOT_MIN_WIDTH and height >= self.MASCOT_MIN_HEIGHT
-        columns = 2 if width >= 100 else 1
-        for grid in self.query('.dashboard-grid'):
-            grid.styles.grid_size_columns = columns
-            card_width = max(8, (width - 6 - (columns - 1)) // columns)
-            heights = [frame.resize_card(card_width) for frame in grid.children]
-            rows = [max(heights[i:i + columns]) for i in range(0, len(heights), columns)]
-            grid.styles.grid_rows = rows
-            grid.styles.height = sum(rows) + max(0, len(rows) - 1)
+        resize_tile_grid(self.query_one('#category-grid', Grid), width)
 
     def on_button_pressed(self, event):
         self.exit(event.button.id)
@@ -332,3 +324,40 @@ class LauncherApp(NavigationApp):
 
     def action_cancel(self):
         self.action_quit_launcher()
+
+
+class CategoryApp(NavigationApp):
+    """One home category's actions as cards; returns the chosen action."""
+
+    CSS = LauncherApp.CSS
+
+    def __init__(self, category):
+        super().__init__()
+        apply_theme(self)
+        self.heading, self.actions = CATEGORY_MENUS[category]
+        self.title = 'Caiman · ' + self.heading
+
+    def navigation_help(self):
+        return 'hjkl move · Enter open · q back'
+
+    def compose(self):
+        yield Static('caiman  /  ' + self.heading.lower(), id='brand')
+        with VerticalScroll(id='body'):
+            with Grid(id='category-grid', classes='dashboard-grid'):
+                for title, description, action in self.actions:
+                    card = (AddTile(title, id=action) if description is None else
+                            DashboardTile(title, description, action=action))
+                    yield CardFrame(card)
+        with Horizontal(id='navigation'):
+            yield Button('Back', id='quit')
+        yield self.navigation_hint()
+
+    def on_mount(self):
+        resize_tile_grid(self.query_one('#category-grid', Grid), self.size.width)
+        self.query('.card-face').first().focus()
+
+    def on_resize(self, event):
+        resize_tile_grid(self.query_one('#category-grid', Grid), event.size.width)
+
+    def on_button_pressed(self, event):
+        self.exit(None if event.button.id == 'quit' else event.button.id)

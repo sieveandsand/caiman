@@ -53,7 +53,7 @@ def test_legacy_saved_selection_is_dropped(tmp_path):
     root = tmp_path / 'store'
     root.mkdir()
     (root / '.authoring-state.json').write_text(json.dumps(
-        {'authorized_compartments': ['alpha'], 'context': {'board': {'name': 'demo'}}}))
+        {'authorized_compartments': ['alpha'], 'context': {'boards': [{'name': 'demo'}]}}))
     assert load_state(root) == {'authorized_compartments': ['alpha']}
 
 
@@ -129,7 +129,7 @@ def configurations(root):
         'parts': [{'role': 'main', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}], 'links': []})
     service.register(board)
     project = service.prepare('project', {'project': 'program', 'version': 'A', 'customer': 'Synthetic',
-        'compartments': ['alpha'], 'board': {'name': 'demo', 'version': 'v1'},
+        'compartments': ['alpha'], 'boards': [{'name': 'demo', 'version': 'v1'}],
         'spec_set': 'release A', 'documents': [], 'features': []})
     service.register(project)
     return {'board': {'manifest': board.manifest, 'digest': board.digest},
@@ -230,3 +230,67 @@ def test_home_routes_hooks_and_returns_to_home(tmp_path, monkeypatch, harness):
     monkeypatch.setattr(hooks_tui, 'HooksApp', Hooks)
     assert run_workflow(tmp_path) == 0
     assert calls == [{'harness': harness, 'store_root': tmp_path}]
+
+
+@pytest.mark.parametrize('category, chosen', [('hooks', 'hooks-codex'), ('repos', 'repo-add')])
+def test_category_page_runs_its_action_then_returns_to_the_category(tmp_path, monkeypatch, category, chosen):
+    import caiman.dashboard.onboarding as onboarding
+    import caiman.hooks.tui as hooks_tui
+    import caiman.repositories.tui as repo_tui
+    homes = [category, 'quit']
+    menus = [chosen, None]
+    ran = []
+
+    class Home:
+        def run(self):
+            return homes.pop(0)
+
+    class Category:
+        def __init__(self, name):
+            assert name == category
+        def run(self):
+            return menus.pop(0)
+
+    class Tool:
+        def __init__(self, **kwargs):
+            ran.append(kwargs)
+        def run(self):
+            return None
+
+    monkeypatch.setattr(onboarding, 'LauncherApp', Home)
+    monkeypatch.setattr(onboarding, 'CategoryApp', Category)
+    monkeypatch.setattr(hooks_tui, 'HooksApp', Tool)
+    monkeypatch.setattr(repo_tui, 'RepoManagerApp', Tool)
+    assert run_workflow(tmp_path) == 0
+    assert len(ran) == 1 and menus == [] and homes == []
+
+
+def test_gallery_add_card_creates_then_returns_to_the_gallery(tmp_path, monkeypatch):
+    import caiman.dashboard.actions as actions
+    import caiman.dashboard.onboarding as onboarding
+    project = {'manifest': {'project': 'demo', 'version': 'v1', 'compartments': ['alpha']},
+               'digest': 'sha256:' + 'a' * 64}
+    homes = ['show-project', 'quit']
+    galleries = [{'action': 'create-project', 'registered': None}, None]
+    created = []
+
+    class Home:
+        def run(self):
+            return homes.pop(0)
+
+    class Setup:
+        def __init__(self, **kwargs):
+            created.append(kwargs['kind'])
+        def run(self):
+            return project
+
+    def gallery(action, root, compartments):
+        assert action == 'show-project'
+        return galleries.pop(0)
+
+    monkeypatch.setattr(onboarding, 'LauncherApp', Home)
+    monkeypatch.setattr(onboarding, 'SetupApp', Setup)
+    monkeypatch.setattr(actions, 'run_dashboard_action', gallery)
+    assert run_workflow(tmp_path) == 0
+    assert created == ['project'] and galleries == [] and homes == []
+    assert load_state(tmp_path)['authorized_compartments'] == ['alpha']

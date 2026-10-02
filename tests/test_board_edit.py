@@ -1,5 +1,6 @@
 from copy import deepcopy
 import pytest
+from textual.widgets import Static
 
 from caiman.boards.edit import BoardEditReviewApp, run_board_gallery
 from caiman.configurations.service import ConfigurationService
@@ -59,6 +60,32 @@ async def test_register_requires_explicit_button_and_preserves_old_digest(board_
     assert app.return_value == {'manifest': prepared.manifest, 'digest': prepared.digest}
     assert service.load('board', 'demo', 'v1') == prepared.manifest
     assert service.load_digest('board', original.digest) == original.manifest
+
+
+@pytest.mark.asyncio
+async def test_renaming_board_to_an_existing_version_is_blocked(board_setup):
+    root, service, original, _ = board_setup
+    existing = deepcopy(original.manifest)
+    existing.update(version='v2', notes='Existing v2')
+    existing = service.prepare('board', existing)
+    service.register(existing)
+    edited = deepcopy(original.manifest)
+    edited.update(version='v2', notes='Edited from v1')
+    prepared = service.prepare('board', edited)
+    before = snapshot(root)
+
+    app = BoardEditReviewApp(root=root, original=original.manifest, prepared=prepared)
+    async with app.run_test(size=(110, 45)) as pilot:
+        await pilot.click('#register')
+        status = app.query_one('#status', Static)
+        await wait_for(pilot, lambda: 'already uses this name and version' in str(status.content))
+        assert app.is_running
+        await pilot.click('#cancel')
+
+    assert app.return_value is None
+    assert snapshot(root) == before
+    assert service.load('board', 'demo', 'v1') == original.manifest
+    assert service.load('board', 'demo', 'v2') == existing.manifest
 
 
 @pytest.mark.asyncio

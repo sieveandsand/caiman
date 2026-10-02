@@ -1,7 +1,7 @@
 """Exercise real key dispatch, including dropdowns and ordinary text editing."""
 
 import pytest
-from textual.widgets import Input, Select, TextArea
+from textual.widgets import Input, Select, SelectionList, TextArea
 
 from caiman.configurations.tui import ConfigApp
 from caiman.dashboard.onboarding import LauncherApp, SetupApp
@@ -85,9 +85,9 @@ async def test_json_editor_enter_edit_escape_and_tab(tmp_path):
 async def test_home_hjkl_and_enter_activate_button():
     app = LauncherApp()
     async with app.run_test(size=(100, 30)) as pilot:
-        app.query_one('#ingest').focus()
+        app.query_one('#documents').focus()
         await pilot.press('l', 'h', 'j', 'enter')
-    assert app.return_value == 'create-board'
+    assert app.return_value == 'show-project'
 
 
 @pytest.mark.asyncio
@@ -131,17 +131,11 @@ async def test_q_types_while_editing_and_returns_from_form_when_navigating(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_q_closes_dropdown_before_leaving_setup(tmp_path):
+async def test_q_leaves_setup_from_the_board_list(tmp_path):
     app = SetupApp(kind='project', store_root=tmp_path / 'store')
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.pause()
-        select = app.query_one('#board-choice', Select)
-        select.focus()
-        await pilot.press('enter')
-        assert select.expanded
-        await pilot.press('q')
-        assert not select.expanded
-        assert app.is_running
+        app.query_one('#board-choice', SelectionList).focus()
         await pilot.press('q')
         assert not app.is_running
     assert not (tmp_path / 'store').exists()

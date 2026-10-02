@@ -10,10 +10,10 @@ from rich.console import Console
 from rich.text import Text
 from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
-from caiman.ui.cards import CARD_CSS, CardFrame, OverviewCard
+from caiman.ui.cards import CARD_CSS, AddTile, CardFrame, OverviewCard, resize_card_grid
 
 from caiman.configurations.service import ConfigurationService
-from caiman.ui.pixel_title import pixel_title
+from caiman.ui.heading import fullwidth_title
 from caiman.ui.navigation import NavigationApp
 from caiman.storage.store import Store
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
@@ -38,10 +38,10 @@ class BoardCard(OverviewCard):
                 label.append(wrapped.plain + '\n', style=style)
 
         def heading(value, caption, color):
-            pixels = pixel_title(value, available)
-            if pixels:
-                for row in pixels:
-                    label.append(row + '\n', style=color)
+            rows = fullwidth_title(value, available)
+            if rows:
+                for row in rows:
+                    label.append(row + '\n', style=f'bold {color}')
             else:
                 line(caption, f'bold {color}')
 
@@ -101,18 +101,18 @@ class BoardGalleryApp(NavigationApp):
         yield self.navigation_hint()
 
     async def on_mount(self):
+        grid = self.query_one('#gallery', Grid)
+        add = AddTile('Add board', id='add-board')
         try:
             self.records = await asyncio.to_thread(self.service.list_configs, 'board')
             # Group names for browsing; opaque version labels have no ordering semantics.
             self.records.sort(key=lambda record: (record['manifest']['board'], record['digest']))
-            if not self.records:
-                self.query_one('#gallery-status', Static).update('No boards registered. Create a board from the dashboard.')
-                return
             cards = [BoardCard(record, index=index) for index, record in enumerate(self.records)]
-            await self.query_one('#gallery', Grid).mount(*(BoardCardFrame(card) for card in cards))
+            await grid.mount(*(BoardCardFrame(card) for card in cards), CardFrame(add))
             self.resize_cards(self.size.width)
-            self.query_one('#gallery-status', Static).update(f'{len(cards)} Boards · Enter to Edit')
-            self.call_after_refresh(cards[0].focus)
+            self.query_one('#gallery-status', Static).update(
+                f'{len(cards)} Boards · Enter to Edit' if cards else 'No boards registered yet.')
+            self.call_after_refresh((cards[0] if cards else add).focus)
         except (OSError, ValueError) as error:
             self.query_one('#gallery-status', Static).update(f'Cannot load boards: {error}')
 
@@ -120,22 +120,19 @@ class BoardGalleryApp(NavigationApp):
         self.resize_cards(event.size.width)
 
     def resize_cards(self, terminal_width):
-        cards = list(self.query(BoardCard))
-        if not cards:
+        grid = self.query_one('#gallery', Grid)
+        if not grid.children:
             return
         columns = 2 if terminal_width >= 100 else 1
         # Reserve body padding and the two-cell scrollbar, plus column gutters.
         width = max(16, (terminal_width - 6 - (columns - 1) - 2) // columns)
-        heights = [card.parent.resize_card(width) for card in cards]
-        rows = [max(heights[index:index + columns]) for index in range(0, len(cards), columns)]
-        grid = self.query_one('#gallery', Grid)
-        grid.styles.grid_size_columns = columns
-        grid.styles.grid_rows = rows
-        grid.styles.height = sum(rows) + len(rows) - 1
+        resize_card_grid(grid, width, columns)
 
     def on_button_pressed(self, event):
         if isinstance(event.button, BoardCard):
             self.exit(deepcopy(event.button.record))
+        elif event.button.id == 'add-board':
+            self.exit('add')
         elif event.button.id == 'back':
             self.action_cancel()
 

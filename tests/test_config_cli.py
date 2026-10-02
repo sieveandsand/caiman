@@ -31,8 +31,8 @@ def configured(tmp_path):
     service.register(board)
     project = service.prepare("project", {
         "project": "example-program", "version": "Prototype", "customer": "Synthetic customer",
-        "compartments": ["alpha"], "board": {"name": "example-board", "version": "Rev A"},
-        "spec_set": "Synthetic release 1", "documents": [], "precedence": [], "features": [],
+        "compartments": ["alpha"], "boards": [{"name": "example-board", "version": "Rev A"}],
+        "spec_set": "Synthetic release 1", "documents": [], "features": [],
     })
     service.register(project)
     return root, board, project

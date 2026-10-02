@@ -27,9 +27,9 @@ def board(selector):
 
 def project(selector, *, compartments=("alpha",)):
     return {"project": "flight", "version": "sample/A", "customer": "Synthetic customer",
-            "compartments": list(compartments), "board": {"name": "demo", "version": "v/one"},
-            "spec_set": "release A", "documents": [selector], "precedence": [selector],
-            "features": [{"name": "flash", "scope": "required", "governed_by": [selector], "realized_on": ["main"]}]}
+            "compartments": list(compartments), "boards": [{"name": "demo", "version": "v/one"}],
+            "spec_set": "release A", "documents": [selector],
+            "features": [{"name": "flash", "scope": "required", "governed_by": [selector], "realized_on": [{"board": "demo", "version": "v/one", "role": "main"}]}]}
 
 
 @pytest.fixture
@@ -62,10 +62,11 @@ def test_project_whole_snapshot_and_pins(tmp_path, setup):
     assert service.load("project", "flight", "sample/A", compartments={"alpha"}) == snapshot
     assert service.list_versions("project", "flight", compartments={"alpha"}) == ["sample/A"]
     assert service.list_versions("project", "flight") == []
-    for location in (snapshot["documents"][0], snapshot["precedence"][0], snapshot["features"][0]["governed_by"][0]):
+    assert "precedence" not in snapshot
+    for location in (snapshot["documents"][0], snapshot["features"][0]["governed_by"][0]):
         assert location["digest"].startswith("sha256:")
         assert location["compartment"] == "alpha"
-    assert snapshot["board"]["digest"].startswith("sha256:")
+    assert snapshot["boards"][0]["digest"].startswith("sha256:")
     with pytest.raises(StoreError):
         service.load("project", "flight", "sample/A")
 
@@ -74,13 +75,46 @@ def test_project_board_ref_repoint_does_not_change_prepared_pin(tmp_path, setup)
     store, service, ref = setup
     selector = document(tmp_path, store, compartments=("alpha",), part="spec")
     prepared = service.prepare("project", project(selector))
-    original = prepared.manifest["board"]["digest"]
+    original = prepared.manifest["boards"][0]["digest"]
     data = board(ref)
     data["parts"][0]["aliases"] = {"refdes": "U99"}
     newer = service.register(service.prepare("board", data))
     assert newer.digest != original
     service.register(prepared)
-    assert service.load("project", "flight", "sample/A", compartments={"alpha"})["board"]["digest"] == original
+    assert service.load("project", "flight", "sample/A", compartments={"alpha"})["boards"][0]["digest"] == original
+
+
+def test_project_pins_two_versions_of_one_board_each_by_its_own_digest(tmp_path, setup):
+    store, service, ref = setup
+    second = board(ref)
+    second["version"] = "v/two"
+    second["parts"].append({"role": "radio", "vendor": "synthetic", "part": "chip", "documents": []})
+    two = service.register(service.prepare("board", second)).digest
+    one = service.load_digest("board", service._read_ref(service._config_path("board", "demo", "v/one", "public")))
+    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
+    data = project(selector)
+    data["boards"].append({"name": "demo", "version": "v/two"})
+    # Both boards declare `main`; each entry names which one it means.
+    data["features"][0]["realized_on"] += [{"board": "demo", "version": "v/two", "role": "main"},
+                                           {"board": "demo", "version": "v/two", "role": "radio"}]
+    prepared = service.prepare("project", data)
+    pinned = {board["version"]: board["digest"] for board in prepared.manifest["boards"]}
+    assert pinned["v/two"] == two
+    assert pinned["v/one"] != two and one["version"] == "v/one"
+    service.register(prepared)
+    assert service.load("project", "flight", "sample/A", compartments={"alpha"}) == prepared.manifest
+    data["features"][0]["realized_on"] = [{"board": "demo", "version": "v/one", "role": "radio"}]
+    with pytest.raises(ValueError, match="realized_on"):
+        service.prepare("project", data)
+
+
+def test_every_pinned_board_must_exist(tmp_path, setup):
+    store, service, _ = setup
+    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
+    data = project(selector)
+    data["boards"].append({"name": "demo", "version": "missing"})
+    with pytest.raises(StoreError):
+        service.prepare("project", data)
 
 
 def test_feature_ref_uses_project_pin_even_after_ref_repoint(tmp_path, setup):
@@ -90,7 +124,6 @@ def test_feature_ref_uses_project_pin_even_after_ref_repoint(tmp_path, setup):
     document(tmp_path, store, compartments=("alpha",), part="spec", text="# Replacement\nDifferent\n")
     data = project(selector)
     data["documents"] = [earlier]
-    data["precedence"] = [earlier]
     prepared = service.prepare("project", data)
     assert prepared.manifest["features"][0]["governed_by"][0]["digest"] == earlier["digest"]
     document(tmp_path, store, compartments=("alpha",), part="spec", text="# Again\nDifferent again\n")

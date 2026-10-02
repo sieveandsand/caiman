@@ -86,10 +86,9 @@ async def test_project_catalog_scope_review_and_real_registration(tmp_path):
     pin = service.list_documents(compartments={"synthetic-alpha"})[0]
     draft = {
         "project": "synthetic-project", "version": "1", "customer": "Synthetic Alpha",
-        "compartments": ["synthetic-alpha"], "board": {"name": "synthetic-board", "version": "A"},
+        "compartments": ["synthetic-alpha"], "boards": [{"name": "synthetic-board", "version": "A"}],
         "spec_set": "Synthetic release", "documents": [{"digest": pin["digest"]}],
-        "precedence": [{"ref": pin["ref"], "note": "Synthetic declared override"}],
-        "features": [{"name": "timing", "scope": "required", "realized_on": ["mcu"]}],
+        "features": [{"name": "timing", "scope": "required", "realized_on": [{"board": "synthetic-board", "version": "A", "role": "mcu"}]}],
     }
     app = ConfigApp("project", root, draft)
     async with app.run_test(size=(90, 35)) as pilot:
@@ -101,16 +100,16 @@ async def test_project_catalog_scope_review_and_real_registration(tmp_path):
         assert pin["digest"] in catalog
         await next_step(pilot)
         assert app.reviewing, str(app.query_one("#status", Static).render())
-        assert app.prepared.manifest["board"]["digest"] == board.digest
+        assert app.prepared.manifest["boards"][0]["digest"] == board.digest
         assert app.prepared.manifest["documents"][0]["digest"] == pin["digest"]
         assert "Compartments: synthetic-alpha" in app.review_text()
         assert "Selected by digest" in app.review_text()
         assert "timing: required" in app.review_text()
-        assert "Synthetic declared override" in app.review_text()
+        assert "precedence" not in app.review_text().lower()
         await next_step(pilot)
         assert app.registration is not None
     saved = service.load("project", "synthetic-project", "1", compartments={"synthetic-alpha"})
-    assert saved["board"]["digest"] == board.digest
+    assert saved["boards"][0]["digest"] == board.digest
     assert not (root / "public" / "refs" / "projects").exists()
 
 
@@ -138,11 +137,27 @@ async def test_duplicate_json_key_is_an_inline_error(tmp_path):
         assert not (tmp_path / "store").exists()
 
 
-@pytest.mark.parametrize("field,value", [("board", None), ("board", []), ("compartments", "alpha"), ("compartments", [123])])
+@pytest.mark.parametrize("field,value", [("boards", None), ("boards", {}), ("compartments", "alpha"), ("compartments", [123])])
 def test_malformed_import_shapes_report_field(tmp_path, field, value):
     with pytest.raises(ValidationError) as caught:
         ConfigApp("project", tmp_path / "store", {field: value})
     assert field in caught.value.errors
+
+
+@pytest.mark.parametrize("value", [None, []])
+def test_malformed_v1_board_reports_field(tmp_path, value):
+    with pytest.raises(ValidationError) as caught:
+        ConfigApp("project", tmp_path / "store", {"schema": "caiman.project/1", "board": value})
+    assert "board" in caught.value.errors
+
+
+def test_v1_import_is_restated_with_its_one_board(tmp_path):
+    app = ConfigApp("project", tmp_path / "store", {
+        "schema": "caiman.project/1", "board": {"name": "demo", "version": "A"},
+        "features": [{"name": "boot", "scope": "required", "realized_on": ["mcu"]}]})
+    assert app.draft["schema"] == "caiman.project.v2"
+    assert app.draft["boards"] == [{"name": "demo", "version": "A"}]
+    assert app.draft["features"][0]["realized_on"] == [{"board": "demo", "version": "A", "role": "mcu"}]
 
 
 @pytest.mark.asyncio

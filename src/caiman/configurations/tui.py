@@ -14,7 +14,8 @@ from textual.widgets import Button, Collapsible, Input, Label, Static, TextArea
 
 from caiman.configurations.files import template, unique_keys
 from caiman.configurations.service import ConfigurationService
-from caiman.configurations.models import part_aliases, part_identity
+from caiman.configurations.models import (restate_project_draft, part_aliases, part_identity, project_boards,
+                                          project_is_legacy, realized_parts)
 from caiman.documents.models import ValidationError
 from caiman.storage.store import Store
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
@@ -41,8 +42,13 @@ class ConfigApp(NavigationApp):
         if not isinstance(self.draft, dict):
             raise ValidationError({"draft": "Configuration must be a JSON object."})
         if kind == "project":
-            if not isinstance(self.draft.get("board", {}), dict):
+            if project_is_legacy(self.draft) and not isinstance(self.draft.get("board", {}), dict):
                 raise ValidationError({"board": "Expected an object with name and version. Correct the imported configuration file."})
+            # A v1 draft (one board) is restated with its board spelled out;
+            # the review shows the rewrite before anything is registered.
+            self.draft = restate_project_draft(self.draft)
+            if not isinstance(self.draft.get("boards", []), list):
+                raise ValidationError({"boards": "Expected an array of board pins. Correct the imported configuration file."})
             compartments = self.draft.get("compartments", [])
             if not isinstance(compartments, list) or not all(isinstance(name, str) for name in compartments):
                 raise ValidationError({"compartments": "Expected an array of names. Correct the imported configuration file."})
@@ -56,7 +62,7 @@ class ConfigApp(NavigationApp):
 
     @property
     def collections(self) -> tuple[str, ...]:
-        return ("documents", "parts", "links") if self.kind == "board" else ("documents", "precedence", "features")
+        return ("documents", "parts", "links") if self.kind == "board" else ("boards", "documents", "features")
 
     def field(self, key: str, label: str, value=None) -> ComposeResult:
         yield Label(label)
@@ -80,10 +86,6 @@ class ConfigApp(NavigationApp):
                     compartment_text = ", ".join(compartments)
                     yield from self.field("compartments", "Compartments (comma separated; required)", compartment_text)
                     yield Static("Usually one per customer, such as oem-alpha. A project must include every compartment required by a document to use it.", classes="hint")
-                    board = self.draft.get("board", {})
-                    yield from self.field("board_name", "Board name", board.get("name", ""))
-                    yield from self.field("board_version", "Board version", board.get("version", ""))
-                    yield from self.field("board_digest", "Board manifest digest (optional; blank pins the exact version during review)", board.get("digest", ""))
                     yield from self.field("spec_set", "Specification set")
                 else:
                     yield from self.field("vendor", "Board vendor (required only for board-level documents)")
@@ -117,8 +119,8 @@ class ConfigApp(NavigationApp):
             "parts": 'Each part has role, vendor, part, and documents. A document pin uses {"ref": "…", "digest": "sha256:…"}. Optional: silicon_revision, aliases, notes.',
             "links": 'Declare links between part roles: {"name": "bus", "between": ["mcu.SPI1", "sensor.SPI"], "notes": "why it exists"}.',
             "documents": 'Reuse catalog pins: {"ref": "…", "digest": "sha256:…"}. Exact references are pinned during review.',
-            "precedence": 'Declare governing order with a note: {"ref": "…", "digest": "sha256:…", "note": "program deviation"}.',
-            "features": 'Declare scope as required or not-used. Include governed_by, realized_on, and related relationships where applicable.',
+            "boards": 'Pin each board version the program uses: {"name": "falcon-main", "version": "B"}. A board may appear at several versions. A blank digest pins the exact version during review.',
+            "features": 'Declare scope as required or not-used. Include governed_by, related, and realized_on parts as {"board": "…", "version": "…", "role": "…"}.',
         }[key]
 
     def on_mount(self) -> None:
@@ -154,9 +156,6 @@ class ConfigApp(NavigationApp):
                 data.pop(key, None)
         if self.kind == "project":
             data.update(customer=self.value("customer"), compartments=self.compartments(), spec_set=self.value("spec_set"))
-            data["board"] = {"name": self.value("board_name"), "version": self.value("board_version")}
-            if self.value("board_digest"):
-                data["board"]["digest"] = self.value("board_digest")
         errors = {}
         for key in self.collections:
             try:
@@ -180,10 +179,7 @@ class ConfigApp(NavigationApp):
         first = None
         fields = {widget.id.removeprefix("error-"): widget for widget in self.query(".error")}
         for field, message in errors.items():
-            if field.startswith("board."):
-                target = field.replace(".", "_", 1)
-            else:
-                target = field.split(".", 1)[0].split("[", 1)[0]
+            target = field.split(".", 1)[0].split("[", 1)[0]
             if target in fields:
                 widget = fields[target]
                 previous = str(widget.content) if widget.content else ""
@@ -209,20 +205,18 @@ class ConfigApp(NavigationApp):
                 endpoints = " ↔ ".join(link["between"]) if "between" in link else f"{link['from']} → {link['to']}"
                 lines.append(f"  Link {link['name']}: {endpoints}")
         else:
-            board = manifest["board"]
+            lines.extend([f"Customer: {manifest['customer']}", "Compartments: " + ", ".join(manifest["compartments"])])
+            for board in project_boards(manifest):
+                lines.extend([f"Board: {board['name']} @ {board['version']}", f"  Board digest: {board['digest']}"])
             lines.extend([
-                f"Customer: {manifest['customer']}",
-                "Compartments: " + ", ".join(manifest["compartments"]),
-                f"Board: {board['name']} @ {board['version']}",
-                f"Board digest: {board['digest']}",
                 f"Specification set: {manifest.get('spec_set', '')}",
                 f"Documents: {len(manifest.get('documents', []))}",
                 f"Features: {len(manifest.get('features', []))}",
             ])
             for feature in manifest.get("features", []):
                 lines.append(f"  {feature['name']}: {feature['scope']}")
-                if feature.get("realized_on"):
-                    lines.append("    Part roles: " + ", ".join(feature["realized_on"]))
+                for board, version, role in realized_parts(manifest, feature):
+                    lines.append(f"    Realized on: {role} · {board} @ {version}")
                 for selector in feature.get("governed_by", []):
                     lines.append(f"    Governed by: {selector.get('ref', selector['digest'])}")
                     if selector.get("requirements"):
@@ -238,12 +232,6 @@ class ConfigApp(NavigationApp):
         lines.extend(f"{pin.get('ref', 'Selected by digest')} [{pin['compartment']}]\n  {pin['digest']}" for pin in pins)
         if not pins:
             lines.append("None")
-        if self.kind == "project":
-            lines.extend(["", "Declared precedence (in entered order)"])
-            for index, pin in enumerate(manifest.get("precedence", []), 1):
-                lines.append(f"{index}. {pin.get('ref', 'Selected by digest')} [{pin['compartment']}]\n   {pin['digest']}\n   {pin.get('note', 'No note supplied')}")
-            if not manifest.get("precedence"):
-                lines.append("None declared")
         lines.extend(["", f"Store: {self.store_root.expanduser().absolute()}", f"Manifest digest: {self.prepared.digest}", "", "Register saves this reviewed version locally."])
         return "\n".join(lines)
 

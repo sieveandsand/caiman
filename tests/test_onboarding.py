@@ -1,5 +1,5 @@
 import pytest
-from textual.widgets import Input, Select
+from textual.widgets import Input, SelectionList
 
 from caiman.configurations.service import ConfigurationService
 from caiman.dashboard.onboarding import SetupApp
@@ -46,7 +46,7 @@ async def test_guided_board_then_project_without_documents(tmp_path):
         await pilot.click('#next')
         await wait_for(pilot, lambda: project_app.return_value is not None)
     result = project_app.return_value
-    assert result['manifest']['board']['digest'] == board['digest']
+    assert result['manifest']['boards'][0]['digest'] == board['digest']
     assert result['manifest']['documents'] == []
 
 
@@ -69,10 +69,40 @@ async def test_project_requires_an_explicitly_chosen_board(tmp_path):
     app = SetupApp(kind='project', store_root=root)
     async with app.run_test(size=(110, 45)) as pilot:
         await wait_for(pilot, lambda: app.boards and not app.busy)
-        assert app.query_one('#board-choice', Select).value == Select.NULL
+        assert app.query_one('#board-choice', SelectionList).selected == []
         await fill(app, {'name': 'program', 'version': 'A', 'customer': 'Synthetic Customer',
                          'compartments': 'alpha', 'spec_set': 'release A'})
         await pilot.click('#next')
         await wait_for(pilot, lambda: not app.busy)
         assert not app.reviewing
         assert 'Choose the board' in str(app.query_one('#status').render())
+
+
+@pytest.mark.asyncio
+async def test_project_pins_every_chosen_board_including_two_versions_of_one(tmp_path):
+    root = tmp_path / 'store'
+    service = ConfigurationService(Store(root))
+    digests = {}
+    for name, version in (('demo', 'A'), ('demo', 'B'), ('io', 'A')):
+        prepared = service.prepare('board', {'board': name, 'version': version,
+            'parts': [{'role': 'main', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}], 'links': []})
+        service.register(prepared)
+        digests[(name, version)] = prepared.digest
+    app = SetupApp(kind='project', store_root=root)
+    async with app.run_test(size=(110, 45)) as pilot:
+        await wait_for(pilot, lambda: len(app.boards) == 3 and not app.busy)
+        choice = app.query_one('#board-choice', SelectionList)
+        for index, record in enumerate(app.boards):
+            if record['name'] == 'demo':
+                choice.select(index)
+        await fill(app, {'name': 'program', 'version': 'A', 'customer': 'Synthetic Customer',
+                         'compartments': 'alpha', 'spec_set': 'release A'})
+        await pilot.click('#next')
+        await wait_for(pilot, lambda: app.reviewing and not app.busy)
+        review = str(app.query_one('#review').render())
+        assert 'Board: demo @ A' in review and 'Board: demo @ B' in review and 'io @' not in review
+        app.query_one('#next').press()
+        await wait_for(pilot, lambda: app.return_value is not None)
+    boards = app.return_value['manifest']['boards']
+    assert sorted((board['name'], board['version'], board['digest']) for board in boards) == [
+        ('demo', 'A', digests[('demo', 'A')]), ('demo', 'B', digests[('demo', 'B')])]

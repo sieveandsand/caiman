@@ -52,8 +52,8 @@ def template(kind: str) -> dict:
     if kind == "project":
         return {
             "project": "", "version": "", "customer": "", "compartments": [],
-            "board": {"name": "", "version": ""}, "spec_set": "",
-            "documents": [], "precedence": [], "features": [],
+            "boards": [{"name": "", "version": ""}], "spec_set": "",
+            "documents": [], "features": [],
         }
     raise ValueError("Choose board or project")
 

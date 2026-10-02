@@ -2,8 +2,9 @@ from copy import deepcopy
 
 import pytest
 
-from caiman.configurations.models import (part_aliases, part_identity, part_vendor_and_part,
-                                  validate_board, validate_project, validate_project_links)
+from caiman.configurations.models import (restate_project_draft, part_aliases, part_identity, part_vendor_and_part,
+                                  project_boards, realized_parts, validate_board, validate_project,
+                                  validate_project_links)
 from caiman.documents.models import ValidationError, accepted_schemas, current_schema
 
 
@@ -18,9 +19,9 @@ def board():
 @pytest.fixture
 def project():
     return {'project': 'demo', 'version': '.', 'customer': 'Synthetic Customer',
-            'compartments': ['synthetic-alpha'], 'board': {'name': 'synthetic', 'version': '../opaque'},
+            'compartments': ['synthetic-alpha'], 'boards': [{'name': 'synthetic', 'version': '../opaque'}],
             'spec_set': 'release / A', 'documents': [{'ref': 'synthetic/spec/v1'}],
-            'features': [{'name': 'boot', 'scope': 'required', 'realized_on': ['mcu'],
+            'features': [{'name': 'boot', 'scope': 'required', 'realized_on': [{'board': 'synthetic', 'version': '../opaque', 'role': 'mcu'}],
                           'governed_by': [{'ref': 'synthetic/spec/v1', 'requirements': ['REQ-001..005']}]},
                          {'name': 'ota', 'scope': 'not-used',
                           'related': [{'feature': 'boot', 'relation': 'Shares startup'}]}]}
@@ -34,7 +35,7 @@ def test_valid_drafts_are_copies_with_schema_and_public_board(board, project):
     assert result['version'] == '../opaque'
     assert result['parts'][0]['documents'][0]['compartment'] == 'public'
     assert validate_project(project)['version'] == '.'
-    validate_project_links(project, board)
+    validate_project_links(project, [board])
 
 
 @pytest.mark.parametrize('mutation', [
@@ -70,17 +71,96 @@ def test_project_rejections(project, mutation):
 
 
 def test_project_board_roles_checked(project, board):
-    project['features'][0]['realized_on'] = ['missing']
+    project['features'][0]['realized_on'][0]['role'] = 'missing'
     with pytest.raises(ValidationError):
-        validate_project_links(project, board)
+        validate_project_links(project, [board])
+
+
+def second_version(board):
+    other = deepcopy(board)
+    other['version'] = 'B'
+    other['parts'].append({'role': 'radio', 'vendor': 'synthetic', 'part': 'radio', 'documents': []})
+    return other
+
+
+def test_project_pins_several_boards_including_one_board_at_two_versions(project, board):
+    project['boards'].append({'name': 'synthetic', 'version': 'B'})
+    project['features'][0]['realized_on'].append({'board': 'synthetic', 'version': 'B', 'role': 'radio'})
+    # The same role name on two boards is fine; the entry says which board.
+    project['features'][0]['realized_on'].append({'board': 'synthetic', 'version': 'B', 'role': 'flash'})
+    project['features'][0]['realized_on'].append({'board': 'synthetic', 'version': '../opaque', 'role': 'flash'})
+    assert validate_project(project)['schema'] == 'caiman.project.v2'
+    validate_project_links(project, [board, second_version(board)])
+
+
+def test_realized_part_is_checked_on_its_own_board_only(project, board):
+    project['boards'].append({'name': 'synthetic', 'version': 'B'})
+    # `radio` exists only at version B; declaring it on the other version is an error.
+    project['features'][0]['realized_on'] = [{'board': 'synthetic', 'version': '../opaque', 'role': 'radio'}]
+    with pytest.raises(ValidationError, match='realized_on.0'):
+        validate_project_links(project, [board, second_version(board)])
+
+
+def test_board_manifests_must_match_each_selector(project, board):
+    project['boards'].append({'name': 'synthetic', 'version': 'B'})
+    with pytest.raises(ValidationError, match='boards'):
+        validate_project_links(project, [board])
+    with pytest.raises(ValidationError, match='boards.1'):
+        validate_project_links(project, [board, board])
+
+
+@pytest.mark.parametrize('mutation', [
+    lambda x: x.update(boards=[]),
+    lambda x: x['boards'].append(dict(x['boards'][0])),
+    lambda x: x['boards'].append({'name': 'synthetic', 'version': '../opaque', 'digest': 'sha256:' + 'a' * 64}),
+    lambda x: x.update(board=x['boards'][0]),
+    lambda x: x.update(precedence=[]),
+    lambda x: x.update(precedence=[{'ref': 'synthetic/spec/v1', 'note': 'Declared authority'}]),
+    lambda x: x['features'][0].update(realized_on=['mcu']),
+    lambda x: x['features'][0]['realized_on'][0].pop('version'),
+    lambda x: x['features'][0]['realized_on'][0].update(version='B'),
+    lambda x: x['features'][0]['realized_on'][0].update(board='other'),
+    lambda x: x['features'][0]['realized_on'].append(dict(x['features'][0]['realized_on'][0])),
+])
+def test_multi_board_rejections(project, mutation):
+    mutation(project)
+    with pytest.raises(ValidationError):
+        validate_project(project)
+
+
+def test_version_labels_match_exactly_never_loosely(project):
+    # Versions are opaque (I-7): no trimming, case folding, or prefix match.
+    for version in ('../OPAQUE', '../opaque ', '../opa'):
+        changed = deepcopy(project)
+        changed['features'][0]['realized_on'][0]['version'] = version
+        with pytest.raises(ValidationError):
+            validate_project(changed)
+
+
+def test_v1_project_stays_valid_and_restates_without_guessing(project, board):
+    legacy = deepcopy(project)
+    legacy['schema'] = 'caiman.project/1'
+    legacy['board'] = legacy.pop('boards')[0]
+    legacy['features'][0]['realized_on'] = ['mcu']
+    assert validate_project(legacy) == legacy
+    validate_project_links(legacy, [board])
+    assert project_boards(legacy) == [legacy['board']]
+    assert realized_parts(legacy, legacy['features'][0]) == [('synthetic', '../opaque', 'mcu')]
+    restated = restate_project_draft(legacy)
+    assert restated['schema'] == 'caiman.project.v2'
+    assert 'board' not in restated
+    assert restated['boards'] == [legacy['board']]
+    assert restated['features'][0]['realized_on'] == project['features'][0]['realized_on']
+    assert legacy['board'] == {'name': 'synthetic', 'version': '../opaque'}
+    validate_project_links(restated, [board])
 
 
 def test_digest_only_and_lineage(board, project):
     board['parts'][0]['documents'] = [{'digest': 'sha256:' + 'a' * 64}]
     board.update(derives_from='release / zero', relation='Human supplied change')
     assert validate_board(board)['derives_from'] == 'release / zero'
-    project['precedence'] = [{'digest': 'sha256:' + 'b' * 64, 'note': 'Explicit authority'}]
-    assert validate_project(project)['precedence'][0]['note'] == 'Explicit authority'
+    project['documents'] = [{'digest': 'sha256:' + 'b' * 64}]
+    assert validate_project(project)['documents'][0]['digest'] == 'sha256:' + 'b' * 64
 
 
 @pytest.mark.parametrize('value', [None, [], 'wrong', 1])
@@ -98,8 +178,8 @@ def test_malformed_board_nested_fields(board, field, value):
         validate_board(board)
 
 
-@pytest.mark.parametrize('field,value', [('board', []), ('compartments', [None]),
-    ('features', [None]), ('documents', [None]), ('precedence', [{'requirements': ['REQ-1']}])])
+@pytest.mark.parametrize('field,value', [('boards', {}), ('boards', [None]), ('compartments', [None]),
+    ('features', [None]), ('documents', [None]), ('documents', [{'requirements': ['REQ-1']}])])
 def test_malformed_project_nested_fields(project, field, value):
     project[field] = value
     with pytest.raises(ValidationError):
@@ -198,10 +278,18 @@ def test_part_helpers_read_both_schemas(board):
 def test_declared_schema_literal_is_never_rewritten(project, kind, validate):
     """Rewriting a stored literal would change the canonical bytes of a snapshot
     that is supposed to be immutable, so validation defaults but never replaces."""
-    current, older = accepted_schemas(kind)
+    current, *older = accepted_schemas(kind)
     assert current == current_schema(kind)
-    data = deepcopy(LEGACY_BOARD) if kind == 'board' else dict(project, schema=older)
-    assert validate(data)['schema'] == older
+    if kind == 'board':
+        assert validate(deepcopy(LEGACY_BOARD))['schema'] == older[0]
+        return
+    # Every older project literal is the single-board shape.
+    legacy = {key: value for key, value in project.items() if key != 'boards'}
+    legacy['board'] = project['boards'][0]
+    legacy['features'] = [dict(feature, realized_on=['mcu']) if 'realized_on' in feature else feature
+                          for feature in project['features']]
+    for literal in older:
+        assert validate(dict(legacy, schema=literal))['schema'] == literal
 
 
 def test_omitting_the_schema_authors_the_current_version(board, project):
@@ -212,3 +300,20 @@ def test_omitting_the_schema_authors_the_current_version(board, project):
     legacy = {key: value for key, value in LEGACY_BOARD.items() if key != 'schema'}
     with pytest.raises(ValidationError):
         validate_board(legacy)
+
+
+def test_v1_precedence_stays_valid_and_restates_into_documents(project):
+    legacy = deepcopy(project)
+    legacy['schema'] = 'caiman.project.v1'
+    legacy['board'] = legacy.pop('boards')[0]
+    legacy['features'][0]['realized_on'] = ['mcu']
+    deviation = {'ref': 'synthetic/deviation/v1', 'compartment': 'synthetic-alpha', 'note': 'Amends REQ-003'}
+    # Already in documents by ref: listed once. Only in precedence: kept as a document pin.
+    legacy['precedence'] = [deviation, {'ref': 'synthetic/spec/v1'}]
+    assert validate_project(legacy)['precedence'] == legacy['precedence']
+    restated = restate_project_draft(legacy)
+    assert 'precedence' not in restated
+    assert restated['documents'] == [{'ref': 'synthetic/spec/v1'},
+                                     {'ref': 'synthetic/deviation/v1', 'compartment': 'synthetic-alpha'}]
+    assert legacy['precedence'][0]['note'] == 'Amends REQ-003'
+    validate_project(restated)

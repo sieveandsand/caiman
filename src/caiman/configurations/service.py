@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 from urllib.parse import unquote
 
-from caiman.configurations.models import board_is_legacy, validate_board, validate_project, validate_project_links
+from caiman.configurations.models import (board_is_legacy, project_boards, validate_board, validate_project,
+                                          validate_project_links)
 from caiman.documents.models import AccessLabel, canonical_json, is_schema, valid_identifier
 from caiman.storage.store import AccessDenied, Store, StoreError, _component, _hex
 
@@ -170,16 +171,22 @@ class ConfigurationService:
                 part["documents"] = documents
             return result
         allowed = set(result["compartments"])
-        board_selector = result["board"]
-        if "digest" not in board_selector:
-            if pinned:
-                raise StoreError("Stored board selector must contain immutable digest")
-            board_selector["digest"] = self._read_ref(self._config_path("board", board_selector["name"], board_selector["version"], "public"))
-        board = self._read_config("board", "public", board_selector["digest"], set())
-        if board["board"] != board_selector["name"] or board["version"] != board_selector["version"]:
-            raise StoreError("Pinned board identity does not match project declaration")
+        boards = []
+        # Each selector is resolved to its own digest once, here; a later
+        # repoint of the version ref never reaches a registered project (I-4).
+        for board_selector in project_boards(result):
+            if "digest" not in board_selector:
+                if pinned:
+                    raise StoreError("Stored board selector must contain immutable digest")
+                board_selector["digest"] = self._read_ref(self._config_path("board", board_selector["name"], board_selector["version"], "public"))
+            board = self._read_config("board", "public", board_selector["digest"], set())
+            if board["board"] != board_selector["name"] or board["version"] != board_selector["version"]:
+                raise StoreError("Pinned board identity does not match project declaration")
+            boards.append(board)
         governing = []
         for field in ("documents", "precedence"):
+            if field not in result:
+                continue
             documents = []
             for selector in result.get(field, []):
                 selected, _ = self._document(selector, allowed, pinned=pinned)
@@ -196,7 +203,7 @@ class ConfigurationService:
                                or ("digest" not in selector and entry.get("ref") == selector.get("ref")))
                            and ("compartment" not in selector or entry["compartment"] == selector["compartment"])]
                 if not matches:
-                    raise StoreError("Feature governing document must belong to project documents or precedence")
+                    raise StoreError("Feature governing document must belong to the project's documents")
                 if len({entry["digest"] for entry in matches}) != 1:
                     raise StoreError("Ambiguous feature governing ref within pinned project documents")
                 selected = deepcopy(selector)
@@ -206,7 +213,7 @@ class ConfigurationService:
                 documents.append(selected)
             if "governed_by" in feature:
                 feature["governed_by"] = documents
-        validate_project_links(result, board)
+        validate_project_links(result, boards)
         return result
 
     def prepare(self, kind: str, data: dict) -> PreparedConfig:
@@ -216,7 +223,16 @@ class ConfigurationService:
         compartments = ("public",) if kind == "board" else tuple(sorted(manifest["compartments"]))
         return PreparedConfig(kind, manifest, _digest(manifest), compartments)
 
-    def register(self, prepared: PreparedConfig) -> ConfigRegistration:
+    def register(self, prepared: PreparedConfig, *, replaces: dict | None = None,
+                 require_new_label: bool = False) -> ConfigRegistration:
+        """Write a reviewed snapshot and point its name/version refs at it.
+
+        ``replaces`` is the edited selection (``manifest`` and ``digest``). Its
+        refs move to the new snapshot instead of staying behind as a second
+        entry; the old manifest object is kept, so digest pins survive (I-4).
+        ``require_new_label`` preserves the source ref while refusing to repoint
+        an existing target label, as when a board edit declares a new version.
+        """
         _kind(prepared.kind)
         manifest = validate_board(prepared.manifest) if prepared.kind == "board" else validate_project(prepared.manifest)
         if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, pinned=True):
@@ -226,11 +242,56 @@ class ConfigurationService:
             raise StoreError("Configuration compartment labels changed after review")
         refs = tuple(self._config_path(prepared.kind, manifest[prepared.kind], manifest["version"], compartment)
                      for compartment in compartments)
+        if require_new_label and any(ref.exists() or ref.is_symlink() for ref in refs):
+            raise StoreError("Another configuration already uses this name and version")
+        stale = ()
+        if replaces is not None:
+            previous = replaces["manifest"]
+            if previous[prepared.kind] != manifest[prepared.kind] or previous["version"] != manifest["version"]:
+                if any(ref.exists() or ref.is_symlink() for ref in refs):
+                    raise StoreError("Another configuration already uses this name and version")
+            old = (("public",) if prepared.kind == "board" else tuple(sorted(previous["compartments"])))
+            stale = tuple(path for compartment in old
+                          if (path := self._config_path(prepared.kind, previous[prepared.kind], previous["version"],
+                                                        compartment)) not in refs)
         for compartment in compartments:
             self.store._write_object(compartment, "manifests", prepared.digest, canonical_json(manifest))
         for ref in refs:
             self.store._atomic_write(ref, (prepared.digest + "\n").encode(), immutable=False)
+        for path in stale:
+            # Only the ref being edited moves; one repointed elsewhere meanwhile stays.
+            if (path.exists() or path.is_symlink()) and self._read_ref(path) == replaces["digest"]:
+                self._remove_ref(path)
         return ConfigRegistration(prepared.digest, refs)
+
+    def _remove_ref(self, path: Path) -> None:
+        path.unlink()
+        self.store._fsync_directory(path.parent)
+        try:
+            path.parent.rmdir()
+        except OSError:
+            pass
+
+    def unregister(self, kind: str, manifest: dict, digest: str) -> tuple[Path, ...]:
+        """Remove a configuration's name/version refs; its manifest object stays.
+
+        Objects are never deleted (STORAGE.md §8.5), so anything pinned to the
+        digest still resolves (I-4). Refuses if any ref no longer names
+        ``digest``: the configuration changed after it was shown.
+        """
+        _kind(kind)
+        _hex(digest)
+        compartments = ("public",) if kind == "board" else tuple(sorted(manifest["compartments"]))
+        refs = tuple(path for compartment in compartments
+                     if (path := self._config_path(kind, manifest[kind], manifest["version"], compartment)).exists()
+                     or path.is_symlink())
+        if not refs:
+            raise StoreError("Configuration version not found in declared compartments")
+        if any(self._read_ref(path) != digest for path in refs):
+            raise StoreError("Configuration changed since it was opened; reopen it before deleting")
+        for path in refs:
+            self._remove_ref(path)
+        return refs
 
     def load(self, kind: str, name: str, version: str, *, compartments: set[str] | None = None) -> dict:
         _kind(kind)

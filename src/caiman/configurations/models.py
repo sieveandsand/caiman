@@ -275,23 +275,122 @@ def validate_board(data: dict) -> dict:
     return validator.finish(data)
 
 
+LEGACY_PROJECT_SCHEMAS = ('caiman.project.v1', 'caiman.project/1')
+
+
+def project_is_legacy(data) -> bool:
+    """True for a v1 project snapshot: one `board` and bare `realized_on` roles."""
+    return declared_schema(data, 'project') in LEGACY_PROJECT_SCHEMAS
+
+
+def project_boards(project: dict) -> list[dict]:
+    """Every pinned board selector, in declared order; a v1 project pins exactly one."""
+    if not isinstance(project, dict):
+        return []
+    if project_is_legacy(project):
+        board = project.get('board')
+        return [board] if isinstance(board, dict) else []
+    boards = project.get('boards')
+    return [board for board in boards if isinstance(board, dict)] if isinstance(boards, list) else []
+
+
+def realized_parts(project: dict, feature: dict) -> list[tuple[str, str, str]]:
+    """`(board, version, role)` for each part a feature is realized on.
+
+    A v1 role can only name a part on the project's one pinned board; v2 entries
+    say which board version they mean, because roles repeat across boards.
+    """
+    entries = feature.get('realized_on', []) if isinstance(feature, dict) else []
+    if project_is_legacy(project):
+        board = project.get('board') or {}
+        return [(board.get('name'), board.get('version'), role) for role in entries]
+    return [(entry.get('board'), entry.get('version'), entry.get('role')) for entry in entries if isinstance(entry, dict)]
+
+
+def restate_project_draft(data: dict) -> dict:
+    """Restate a v1 project draft in the current schema.
+
+    Nothing is guessed: every v1 role already names a part on the one pinned
+    board, so the rewrite only spells that board out. v2 has no precedence; a
+    document pinned only there moves to `documents` so the pin set loses nothing,
+    and its order and note are dropped. The stored v1 snapshot is untouched;
+    registering the result creates a new snapshot, and review shows the rewrite.
+    """
+    result = deepcopy(data)
+    if not project_is_legacy(result):
+        return result
+    result['schema'] = current_schema('project')
+    board = result.pop('board', {})
+    result['boards'] = [board]
+    precedence = result.pop('precedence', [])
+    if isinstance(precedence, list) and isinstance(result.get('documents'), list):
+        for selector in precedence:
+            pin = {key: value for key, value in selector.items() if key != 'note'} if isinstance(selector, dict) else selector
+            if pin not in result['documents'] and not _same_pin(pin, result['documents']):
+                result['documents'].append(pin)
+    name, version = (board.get('name', ''), board.get('version', '')) if isinstance(board, dict) else ('', '')
+    for feature in result.get('features', []):
+        if isinstance(feature, dict) and isinstance(feature.get('realized_on'), list):
+            feature['realized_on'] = [{'board': name, 'version': version, 'role': role}
+                                      for role in feature['realized_on']]
+    return result
+
+
+def _same_pin(selector, documents) -> bool:
+    """A selector naming, by digest or by ref, a document already in the list."""
+    if not isinstance(selector, dict):
+        return False
+    for document in documents:
+        if not isinstance(document, dict) or document.get('compartment') != selector.get('compartment'):
+            continue
+        if 'digest' in selector and document.get('digest') == selector['digest']:
+            return True
+        if 'digest' not in selector and 'ref' in selector and document.get('ref') == selector['ref']:
+            return True
+    return False
+
+
+def _board_selector(board, validator, path) -> bool:
+    if not validator.object(board, path, {'name', 'version', 'digest'}, {'name', 'version'}):
+        return False
+    named = validator.string(board.get('name'), path + '.name', True)
+    versioned = validator.string(board.get('version'), path + '.version')
+    if 'digest' in board:
+        validator.digest(board['digest'], path + '.digest')
+    return named and versioned
+
+
 def validate_project(data: dict) -> dict:
-    fields = {'project', 'version', 'customer', 'compartments', 'board', 'spec_set', 'documents', 'precedence', 'features'}
+    legacy = project_is_legacy(data)
+    fields = {'project', 'version', 'customer', 'compartments', 'spec_set', 'documents', 'features'}
+    # v1 snapshots may still carry a declared precedence; v2 has none.
+    fields |= {'board', 'precedence'} if legacy else {'boards'}
     validator, data = _base(data, 'project', fields, fields - {'precedence'})
     validator.string(data.get('customer'), 'customer')
     validator.string(data.get('spec_set'), 'spec_set')
     compartments = validator.strings(data.get('compartments'), 'compartments', True, True)
     if 'public' in compartments:
         validator.error('compartments', 'Projects must carry named compartments, never public')
-    board = data.get('board')
-    if validator.object(board, 'board', {'name', 'version', 'digest'}, {'name', 'version'}):
-        validator.string(board.get('name'), 'board.name', True)
-        validator.string(board.get('version'), 'board.version')
-        if 'digest' in board:
-            validator.digest(board['digest'], 'board.digest')
+    pinned = set()
+    if legacy:
+        if _board_selector(data.get('board'), validator, 'board'):
+            pinned.add((data['board']['name'], data['board']['version']))
+    else:
+        if 'board' in data:
+            validator.error('board', 'One board object is the caiman.project.v1 shape; list pinned boards under boards')
+        for index, board in enumerate(validator.sequence(data.get('boards'), 'boards', True)):
+            path = f'boards.{index}'
+            if _board_selector(board, validator, path):
+                # The same board may be pinned at several versions; the same
+                # version twice would make realized_on entries ambiguous.
+                identity = (board['name'], board['version'])
+                if identity in pinned:
+                    validator.error(path, 'Duplicate board version; pin each board version once')
+                pinned.add(identity)
     allowed = compartments | {'public'}
     validator.selectors(data.get('documents'), 'documents', allowed)
-    validator.selectors(data.get('precedence', []), 'precedence', allowed, ('note',))
+    if legacy:
+        validator.selectors(data.get('precedence', []), 'precedence', allowed, ('note',))
     names = set()
     features = validator.sequence(data.get('features'), 'features')
     for index, feature in enumerate(features):
@@ -306,7 +405,10 @@ def validate_project(data: dict) -> dict:
         if feature.get('scope') not in ('required', 'not-used'):
             validator.error(path + '.scope', 'Choose required or not-used; implementation status is not supported')
         validator.selectors(feature.get('governed_by', []), path + '.governed_by', allowed, ('requirements',))
-        validator.strings(feature.get('realized_on', []), path + '.realized_on', True)
+        if legacy:
+            validator.strings(feature.get('realized_on', []), path + '.realized_on', True)
+        else:
+            _realized_on(feature.get('realized_on', []), pinned, validator, path + '.realized_on')
         seen_related = set()
         for number, related in enumerate(validator.sequence(feature.get('related', []), path + '.related')):
             location = f'{path}.related.{number}'
@@ -327,15 +429,47 @@ def validate_project(data: dict) -> dict:
     return validator.finish(data)
 
 
-def validate_project_links(project: dict, board: dict) -> None:
+def _realized_on(value, pinned, validator, path):
+    seen = set()
+    for number, entry in enumerate(validator.sequence(value, path)):
+        location = f'{path}.{number}'
+        if not validator.object(entry, location, {'board', 'version', 'role'}, {'board', 'version', 'role'}):
+            continue
+        valid = all([validator.string(entry.get('board'), location + '.board', True),
+                     validator.string(entry.get('version'), location + '.version'),
+                     validator.string(entry.get('role'), location + '.role', True)])
+        if not valid:
+            continue
+        identity = (entry['board'], entry['version'], entry['role'])
+        if identity in seen:
+            validator.error(location, 'Duplicate part')
+        seen.add(identity)
+        # Exact label match against this project's own pins; versions are
+        # never compared, ordered, or matched loosely (I-7).
+        if identity[:2] not in pinned:
+            validator.error(location, 'Board version is not pinned by this project')
+
+
+def validate_project_links(project: dict, boards: list[dict]) -> None:
+    """Check each pinned board manifest against its selector, and every realized part.
+
+    `boards` holds one board manifest per pinned selector, in declared order.
+    """
     project = validate_project(project)
-    board = validate_board(board)
+    boards = [validate_board(board) for board in boards]
+    legacy = project_is_legacy(project)
+    selectors = project_boards(project)
     validator = _Validator()
-    roles = {part['role'] for part in board['parts']}
-    if project['board']['name'] != board['board'] or project['board']['version'] != board['version']:
-        validator.error('board', 'Board identity and version do not match the project declaration')
+    if len(boards) != len(selectors):
+        validator.error('board' if legacy else 'boards', 'Expected one board manifest per pinned board')
+    roles = {}
+    for index, (selector, board) in enumerate(zip(selectors, boards)):
+        if (selector['name'], selector['version']) != (board['board'], board['version']):
+            validator.error('board' if legacy else f'boards.{index}',
+                            'Board identity and version do not match the project declaration')
+        roles[(board['board'], board['version'])] = {part['role'] for part in board['parts']}
     for index, feature in enumerate(project['features']):
-        for number, role in enumerate(feature.get('realized_on', [])):
-            if role not in roles:
-                validator.error(f'features.{index}.realized_on.{number}', 'Part role is not declared on the pinned board')
+        for number, (name, version, role) in enumerate(realized_parts(project, feature)):
+            if role not in roles.get((name, version), set()):
+                validator.error(f'features.{index}.realized_on.{number}', 'Part role is not declared on that pinned board')
     validator.finish(project)

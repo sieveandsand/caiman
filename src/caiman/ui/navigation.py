@@ -134,22 +134,31 @@ class NavigationApp(App, inherit_bindings=False):
 
     def _move_tile(self, focused, direction):
         """Follow rendered tile positions, including responsive grid layouts."""
-        x, y = focused.region.center
-        top = focused.region.y
+        def region(tile):
+            # A collection's narrower face reserves room for its back cards.
+            # Navigate by the full grid footprint, not that decorative inset.
+            return next((node.region for node in tile.ancestors if node.has_class('card-frame')), tile.region)
+
+        origin = region(focused)
+        x, y = origin.center
+        top = origin.y
         candidates = []
         for tile in self.query('.dashboard-tile'):
             if tile is focused or tile.disabled or not tile.visible or not tile.display:
                 continue
-            tx, ty = tile.region.center
+            target = region(tile)
+            tx, ty = target.center
             dx, dy = tx - x, ty - y
             if direction in {'h', 'l'}:
-                if tile.region.y != top or (dx <= 0 if direction == 'l' else dx >= 0):
+                if target.y != top or (dx <= 0 if direction == 'l' else dx >= 0):
                     continue
                 score = (abs(dy), abs(dx))
             else:
-                if (tile.region.y <= top if direction == 'j' else tile.region.y >= top):
+                if (target.y <= top if direction == 'j' else target.y >= top):
                     continue
-                score = (abs(dx), abs(tile.region.y - top))
+                # Visit the next row before choosing its closest column.
+                # Tiny width differences must never cause a row to be skipped.
+                score = (abs(target.y - top), abs(dx))
             candidates.append((score, tile))
         if candidates:
             min(candidates, key=lambda item: item[0])[1].focus()

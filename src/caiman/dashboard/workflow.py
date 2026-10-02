@@ -45,13 +45,17 @@ def remember_compartments(root: Path, state: dict, selections) -> None:
 
 
 def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -> int:
-    """Home screen loop. Every action names its board or project; none is remembered."""
+    """Home screen loop. Every action names its board or project; none is remembered.
+
+    An action started from a category page or gallery returns there afterwards.
+    """
     from caiman.dashboard.actions import run_dashboard_action
-    from caiman.dashboard.onboarding import LauncherApp, SetupApp
+    from caiman.dashboard.onboarding import CATEGORY_MENUS, CategoryApp, LauncherApp, SetupApp
     from caiman.documents.tui import IngestApp
 
     state = load_state(root)
     action = 'ingest' if ingest else None
+    resume = None
     ingest_state = None
     ingest_context = {}
     while True:
@@ -59,19 +63,26 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
             action = LauncherApp().run()
         if action is None or action == 'quit':
             return 0
+        if action in CATEGORY_MENUS:
+            chosen = CategoryApp(action).run()
+            action, resume = (chosen, action) if chosen else (None, None)
+            continue
         if action in {'create-board', 'create-project'}:
             kind = action.split('-')[1]
             selection = SetupApp(kind=kind, store_root=root, board=ingest_context.get('board')).run()
             if selection is not None:
                 ingest_context[kind] = selection
                 remember_compartments(root, state, [selection])
-            action = 'ingest' if ingest_state is not None else None
+            if ingest_state is not None:
+                action = 'ingest'
+            else:
+                action, resume = resume, None
             continue
         if action in {'hooks-claude', 'hooks-codex'}:
             from caiman.hooks.tui import HooksApp
 
             HooksApp(harness=action.removeprefix('hooks-'), store_root=root).run()
-            action = None
+            action, resume = resume, None
             continue
         if action == 'little-caiman':
             from caiman.little_caiman.tui import run_little_caiman
@@ -83,11 +94,17 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
             from caiman.repositories.tui import RepoManagerApp
 
             RepoManagerApp(store_root=root, action=action.removeprefix('repo-')).run()
-            action = None
+            action, resume = resume, None
             continue
         if action != 'ingest':
-            remember_compartments(root, state, [run_dashboard_action(action, root, state['authorized_compartments'])])
-            action = None
+            result = run_dashboard_action(action, root, state['authorized_compartments'])
+            if isinstance(result, dict) and 'action' in result:
+                # A gallery's add card: run it, then come back to that gallery.
+                remember_compartments(root, state, [result.get('registered')])
+                action, resume = result['action'], action
+            else:
+                remember_compartments(root, state, [result])
+                action = None
             continue
         result = IngestApp(store_root=root, source_path=source_path,
                            state=ingest_state, context=ingest_context,
@@ -103,4 +120,4 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
                 continue
         if ingest:
             return 0
-        action = None
+        action, resume = resume, None

@@ -53,8 +53,8 @@ async def test_gallery_two_columns_complete_parts_and_keyboard_edit(tmp_path):
                 assert f'refdes U{index + 1}' not in text
             assert 'Silicon mask-A' not in text
             assert f'{count} Parts · 0 Links · 0 Docs' in text
-            from caiman.ui.pixel_title import pixel_title
-            assert '\n'.join(pixel_title('A', 48)) in text
+            from caiman.ui.heading import fullwidth_title
+            assert '\n'.join(fullwidth_title('A', 48)) in text
             assert 'Version A' not in text
         await pilot.press('l', 'e')
     assert app.return_value['digest'] == beta['digest']
@@ -104,10 +104,32 @@ async def test_empty_gallery_has_actionable_message(tmp_path):
     app = BoardGalleryApp(root)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        assert 'Create a board' in str(app.query_one('#gallery-status', Static).render())
+        assert 'No boards' in str(app.query_one('#gallery-status', Static).render())
         assert not list(app.query(BoardCard))
+        assert app.focused.id == 'add-board'
         await pilot.press('q')
     assert not root.exists()
+
+
+@pytest.mark.asyncio
+async def test_add_card_follows_every_board_and_requests_creation(tmp_path):
+    root = tmp_path / 'store'
+    register_board(root, 'alpha', parts=3)
+    register_board(root, 'beta', parts=1)
+    app = BoardGalleryApp(root)
+    async with app.run_test(size=(110, 30)) as pilot:
+        await ready(pilot, app)
+        faces = list(app.query('#gallery .card-face'))
+        assert [face.id for face in faces][-1] == 'add-board' and len(faces) == 3
+        add = faces[-1]
+        # Third card wraps to the second row, sized to its own content.
+        assert add.region.y > faces[0].region.y and add.region.x == faces[0].region.x
+        assert 'Add board' in add.label.plain and '╋' in add.label.plain
+        await pilot.press('j')
+        assert app.focused is add
+        assert add.parent.has_class('selected')
+        await pilot.press('enter')
+    assert app.return_value == 'add'
 
 
 @pytest.mark.asyncio
@@ -154,25 +176,25 @@ def test_card_counts_board_and_part_docs_and_omits_details():
     card = BoardCard(record, index=0)
     height = card.format_card(48)
     text = card.label.plain
-    from caiman.ui.pixel_title import pixel_title
-    assert '\n'.join(pixel_title('falcon', 44)) in text
-    assert '\n'.join(pixel_title('Rev B', 44)) in text
+    from caiman.ui.heading import fullwidth_title
+    assert '\n'.join(fullwidth_title('falcon', 44)) in text
+    assert '\n'.join(fullwidth_title('Rev B', 44)) in text
     assert 'falcon' not in text and 'Version Rev B' not in text
     assert '1 Parts · 1 Links · 3 Docs' in text
     assert 'mcu-1' in text
     assert 'hidden' not in text.lower() and 'sha256' not in text and 'Public' not in text
-    assert any('\u2801' <= char <= '\u28ff' for char in text)
-    assert not any('\u2580' <= char <= '\u259f' for char in text)
+    assert 'ＦＡＬＣＯＮ' in text and 'ＲＥＶ　Ｂ' in text
+    assert not any('\u2801' <= char <= '\u28ff' or '\u2580' <= char <= '\u259f' for char in text)
     assert height == len(text.splitlines()) + 2
     assert max(map(len, text.splitlines())) <= 44
 
 
-def test_pixel_titles_fall_back_for_long_or_unicode_identifiers():
-    from caiman.ui.pixel_title import pixel_title
+def test_fullwidth_titles_fall_back_for_long_or_unicode_identifiers():
+    from caiman.ui.heading import fullwidth_title
 
-    assert len(pixel_title('Falcon-2', 32)) == 2
-    assert pixel_title('long-board-name', 12) == []
-    assert pixel_title('板-α', 40) == []
+    assert len(fullwidth_title('Falcon-2', 32)) == 1
+    assert fullwidth_title('long-board-name', 12) == []
+    assert fullwidth_title('板-α', 40) == []
     record = {'manifest': {'board': '板-α', 'version': 'Revision B / prototype build', 'parts': [], 'links': []}}
     card = BoardCard(record, index=0)
     card.format_card(20)
