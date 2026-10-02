@@ -26,12 +26,13 @@ class SetupApp(NavigationApp):
     TITLE = 'Caiman · Create configuration'
     CSS = TERMINAL_CSS + '\n#review { height: auto; }\nButton { width: auto; }\n#board-choice { height: auto; max-height: 12; }\n'
 
-    def __init__(self, *, kind: str, store_root: Path, board=None):
+    def __init__(self, *, kind: str, store_root: Path, board=None, pod=None):
         super().__init__()
         apply_theme(self)
         self.kind = kind
         self.store_root = store_root
         self.initial_board = board
+        self.initial_pod = pod
         self.service = ConfigurationService(Store(store_root))
         self.boards = []
         self.prepared = None
@@ -50,6 +51,7 @@ class SetupApp(NavigationApp):
             with VerticalScroll(id='edit', classes='step'):
                 yield from self.field('name', 'Board name' if self.kind == 'board' else 'Program codename')
                 yield from self.field('version', 'Version (exact label)')
+                yield from self.field('pod', 'Pod', self.initial_pod or self.service.store.pods.default)
                 if self.kind == 'board':
                     yield from self.field('notes', 'Notes (optional, unstructured)')
                     yield Static('Add the first hardware part. More parts, links, and board documents can be added in board configuration.', classes='hint')
@@ -64,8 +66,6 @@ class SetupApp(NavigationApp):
                                  'A board may be chosen at more than one version.', classes='hint')
                     yield SelectionList(id='board-choice')
                     yield from self.field('customer', 'Customer identity')
-                    yield from self.field('compartments', 'Project compartments (comma separated; required)')
-                    yield Static('Usually one per customer, such as oem-alpha. A project must include every compartment required by a document to use it.', classes='hint')
                     yield from self.field('spec_set', 'Specification set (exact release label)')
             yield Static('', id='review', markup=False)
         yield Static('', id='status', markup=False)
@@ -93,7 +93,7 @@ class SetupApp(NavigationApp):
             if initial and not any(record['digest'] == initial['digest'] for record in self.boards):
                 manifest = initial['manifest']
                 self.boards.append({'manifest': manifest, 'digest': initial['digest'], 'name': manifest['board'],
-                                    'version': manifest['version'], 'compartment': 'public'})
+                                    'version': manifest['version'], 'pod': 'public'})
             selector = self.query_one('#board-choice', SelectionList)
             selector.clear_options()
             # Only a board handed over from ingestion starts marked; nothing else is preselected.
@@ -118,7 +118,7 @@ class SetupApp(NavigationApp):
         self.query_one('#next', Button).label = 'Register' if self.reviewing else 'Review'
 
     def draft(self):
-        data = {self.kind: self.text('name'), 'version': self.text('version')}
+        data = {self.kind: self.text('name'), 'version': self.text('version'), 'pod': self.text('pod')}
         if self.kind == 'board':
             part = {'part': self.text('part'), 'role': self.text('role'), 'vendor': self.text('vendor'), 'documents': []}
             if self.text('silicon_revision'):
@@ -135,9 +135,8 @@ class SetupApp(NavigationApp):
             if not chosen:
                 raise ValueError('Choose the board versions this project uses')
             boards = [{'name': self.boards[index]['manifest']['board'], 'version': self.boards[index]['manifest']['version'],
-                       'digest': self.boards[index]['digest']} for index in chosen]
+                       'digest': self.boards[index]['digest'], 'pod': self.boards[index].get('pod', 'public')} for index in chosen]
             data.update(customer=self.text('customer'),
-                        compartments=[s.strip() for s in self.text('compartments').split(',') if s.strip()],
                         boards=boards,
                         spec_set=self.text('spec_set'), documents=[], features=[])
         return data
@@ -150,7 +149,7 @@ class SetupApp(NavigationApp):
         manifest = self.selection['manifest']
         lines = [f"{self.kind.capitalize()}: {manifest[self.kind]}", f"Version: {manifest['version']}"]
         if self.kind == 'board':
-            lines.append('Access: Public')
+            lines.append('Pod: ' + self.selection['pod'])
             if manifest.get('notes'):
                 lines.append('Notes: ' + manifest['notes'])
             lines.append('Parts:')
@@ -164,7 +163,7 @@ class SetupApp(NavigationApp):
             lines.append(f"Hardware links: {len(manifest.get('links', []))}")
         else:
             lines.extend([f"Customer: {manifest['customer']}",
-                          'Compartments: ' + ', '.join(manifest['compartments'])])
+                          'Pod: ' + self.selection['pod']])
             for board in project_boards(manifest):
                 lines.extend([f"Board: {board['name']} @ {board['version']}", f"  Board digest: {board['digest']}"])
             lines.extend([f"Specification set: {manifest['spec_set']}",
@@ -196,7 +195,7 @@ class SetupApp(NavigationApp):
                 self.exit(self.selection)
                 return
             self.prepared = await asyncio.to_thread(self.service.prepare, self.kind, self.draft())
-            self.selection = {'manifest': self.prepared.manifest, 'digest': self.prepared.digest}
+            self.selection = {'manifest': self.prepared.manifest, 'digest': self.prepared.digest, 'pod': self.prepared.pod}
             self.query_one('#review', Static).update('Review this configuration before registering.\n\n' + self.review_text())
             self.query_one('#status', Static).update('Use Back to edit or Cancel to leave without registering this configuration.')
             self.reviewing = True
@@ -249,7 +248,9 @@ class Mascot(Static):
 CATEGORY_MENUS = {
     'hooks': ('Hooks', [('Claude Code', 'Add Caiman hook', 'hooks-claude'),
                         ('Codex', 'Add Caiman hook', 'hooks-codex')]),
-    'repos': ('Repo Manager', [('Remove repo', 'Remove registration', 'repo-remove'),
+    'repos': ('Pods', [('New pod', 'Create a local folder', 'repo-create'),
+                               ('Sync pod', 'Fetch and publish changes', 'repo-sync'),
+                               ('Default pod', 'Choose where new items go', 'repo-default'),('Remove repo', 'Remove registration', 'repo-remove'),
                                ('Initialize repo', 'Create; optional push', 'repo-initialize'),
                                ('Add repo', None, 'repo-add')]),
 }
@@ -297,7 +298,7 @@ class LauncherApp(NavigationApp):
                 yield self.tile('Boards', 'Add · view · edit', action='show-board')
                 yield self.tile('Projects', 'Add · view · edit', action='show-project')
                 yield self.tile('Hooks', 'Claude Code · Codex', action='hooks')
-                yield self.tile('Repo Manager', 'Add · remove · initialize', action='repos')
+                yield self.tile('Pods', 'Create · connect Git · sync', action='repos')
         with Horizontal(id='navigation'):
             yield Button('Quit', id='quit')
         yield self.navigation_hint()

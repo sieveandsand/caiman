@@ -49,10 +49,9 @@ class ConfigApp(NavigationApp):
             self.draft = restate_project_draft(self.draft)
             if not isinstance(self.draft.get("boards", []), list):
                 raise ValidationError({"boards": "Expected an array of board pins. Correct the imported configuration file."})
-            compartments = self.draft.get("compartments", [])
-            if not isinstance(compartments, list) or not all(isinstance(name, str) for name in compartments):
-                raise ValidationError({"compartments": "Expected an array of names. Correct the imported configuration file."})
         self.service = ConfigurationService(Store(store_root))
+        if 'pod' in self.draft and not isinstance(self.draft['pod'], str):
+            raise ValidationError({'pod': 'Choose one pod name'})
         self.prepared = None
         self.registration = None
         self.reviewing = False
@@ -80,19 +79,15 @@ class ConfigApp(NavigationApp):
                 yield from self.field("version", "Version (an exact label)")
                 yield from self.field("derives_from", "Derived from version (optional)")
                 yield from self.field("relation", "Reason for this relationship (required when deriving)")
+                yield from self.field("pod", "Pod", self.draft.get("pod", self.service.store.pods.default))
                 if self.kind == "project":
                     yield from self.field("customer", "Customer identity (private project information)")
-                    compartments = self.draft.get("compartments", [])
-                    compartment_text = ", ".join(compartments)
-                    yield from self.field("compartments", "Compartments (comma separated; required)", compartment_text)
-                    yield Static("Usually one per customer, such as oem-alpha. A project must include every compartment required by a document to use it.", classes="hint")
                     yield from self.field("spec_set", "Specification set")
                 else:
                     yield from self.field("vendor", "Board vendor (required only for board-level documents)")
                     yield from self.field("notes", "Notes (optional, unstructured; nothing parses them)")
-                    yield Static("Board manifests are public. Keep customer information in projects.", classes="hint")
                 with Collapsible(title="Registered document catalog · copy exact pins", collapsed=True):
-                    yield Static("Refresh to list public documents" + (" and documents in the compartments entered above." if self.kind == "project" else "."), classes="hint")
+                    yield Static("Documents from available pods", classes="hint")
                     yield Button("Refresh catalog", id="refresh-catalog")
                     yield Static("", id="catalog-status", markup=False)
                     yield TextArea("", read_only=True, id="catalog", soft_wrap=True)
@@ -147,6 +142,7 @@ class ConfigApp(NavigationApp):
 
     def collect_draft(self) -> dict:
         data = deepcopy(self.draft)
+        data["pod"] = self.value("pod")
         optional = ("vendor", "notes") if self.kind == "board" else ()
         for key in (self.kind, "version", "derives_from", "relation", *optional):
             value = self.value(key)
@@ -155,7 +151,7 @@ class ConfigApp(NavigationApp):
             else:
                 data.pop(key, None)
         if self.kind == "project":
-            data.update(customer=self.value("customer"), compartments=self.compartments(), spec_set=self.value("spec_set"))
+            data.update(customer=self.value("customer"), spec_set=self.value("spec_set"))
         errors = {}
         for key in self.collections:
             try:
@@ -170,10 +166,8 @@ class ConfigApp(NavigationApp):
             raise ValidationError(errors)
         return data
 
-    def compartments(self) -> list[str]:
-        if self.kind == "board":
-            return []
-        return [name.strip() for name in self.value("compartments").split(",") if name.strip()]
+    def pods(self):
+        return None
 
     def show_errors(self, errors: dict[str, str]) -> None:
         first = None
@@ -194,7 +188,7 @@ class ConfigApp(NavigationApp):
         manifest = self.prepared.manifest
         lines = [f"{self.kind.capitalize()}: {manifest[self.kind]}", f"Version: {manifest['version']}"]
         if self.kind == "board":
-            lines.extend(["Access: public", f"Vendor: {manifest.get('vendor', 'not declared')}",
+            lines.extend([f"Pod: {self.prepared.pod}", f"Vendor: {manifest.get('vendor', 'not declared')}",
                           f"Notes: {manifest.get('notes', 'none')}",
                           f"Board documents: {len(manifest.get('documents', []))}",
                           f"Parts: {len(manifest.get('parts', []))}", f"Links: {len(manifest.get('links', []))}"])
@@ -205,7 +199,7 @@ class ConfigApp(NavigationApp):
                 endpoints = " ↔ ".join(link["between"]) if "between" in link else f"{link['from']} → {link['to']}"
                 lines.append(f"  Link {link['name']}: {endpoints}")
         else:
-            lines.extend([f"Customer: {manifest['customer']}", "Compartments: " + ", ".join(manifest["compartments"])])
+            lines.extend([f"Customer: {manifest['customer']}", "Pod: " + self.prepared.pod])
             for board in project_boards(manifest):
                 lines.extend([f"Board: {board['name']} @ {board['version']}", f"  Board digest: {board['digest']}"])
             lines.extend([
@@ -229,7 +223,7 @@ class ConfigApp(NavigationApp):
         if self.kind == "board":
             pins += [pin for part in manifest.get("parts", []) for pin in part.get("documents", [])]
         lines.extend(["", "Pinned documents"])
-        lines.extend(f"{pin.get('ref', 'Selected by digest')} [{pin['compartment']}]\n  {pin['digest']}" for pin in pins)
+        lines.extend(f"{pin.get('ref', 'Selected by digest')} [{pin['pod']}]\n  {pin['digest']}" for pin in pins)
         if not pins:
             lines.append("None")
         lines.extend(["", f"Store: {self.store_root.expanduser().absolute()}", f"Manifest digest: {self.prepared.digest}", "", "Register saves this reviewed version locally."])
@@ -261,8 +255,8 @@ class ConfigApp(NavigationApp):
         self.busy = True
         self.show_view()
         try:
-            entries = await asyncio.to_thread(self.service.list_documents, compartments=self.compartments())
-            pins = [{key: entry[key] for key in ("ref", "digest", "compartment")} for entry in entries]
+            entries = await asyncio.to_thread(self.service.list_documents, pods=self.pods())
+            pins = [{key: entry[key] for key in ("ref", "digest", "pod")} for entry in entries]
             self.query_one("#catalog", TextArea).load_text(json.dumps(pins, indent=2, ensure_ascii=False))
             self.query_one("#catalog-status", Static).update(f"{len(entries)} registered documents. Copy ref and digest into a document pin.")
         except (OSError, ValueError) as error:

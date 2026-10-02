@@ -128,7 +128,7 @@ async def test_add_card_follows_every_board_and_requests_creation(tmp_path):
         assert app.focused is add
         assert add.parent.has_class('selected')
         await pilot.press('enter')
-    assert app.return_value == 'add'
+    assert app.return_value == {'action': 'add', 'pod': 'public'}
 
 
 @pytest.mark.asyncio

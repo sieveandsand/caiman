@@ -25,15 +25,15 @@ def manifest():
     return {
         'schema': 'caiman.project.v2', 'project': 'falcon', 'version': 'B-sample',
         'derives_from': 'A-sample', 'relation': 'Adds the deviation list.',
-        'customer': 'Synthetic OEM', 'compartments': ['oem-alpha'],
+        'customer': 'Synthetic OEM', 'pod': 'oem-alpha',
         'boards': [{'name': 'falcon-mainboard', 'version': '2.1', 'digest': C},
                    {'name': 'falcon-io', 'version': 'A'}],
         'spec_set': 'Synthetic release 3',
-        'documents': [{'ref': 'oem/falcon/spec/3', 'digest': A, 'compartment': 'oem-alpha'},
-                      {'ref': 'oem/falcon/deviations/1', 'digest': B, 'compartment': 'oem-alpha'}],
+        'documents': [{'ref': 'oem/falcon/spec/3', 'digest': A, 'pod': 'oem-alpha'},
+                      {'ref': 'oem/falcon/deviations/1', 'digest': B, 'pod': 'oem-alpha'}],
         'features': [
             {'name': 'secure-boot', 'scope': 'required', 'realized_on': [{'board': 'falcon-mainboard', 'version': '2.1', 'role': 'application-mcu'}],
-             'governed_by': [{'ref': 'oem/falcon/spec/3', 'digest': A, 'compartment': 'oem-alpha',
+             'governed_by': [{'ref': 'oem/falcon/spec/3', 'digest': A, 'pod': 'oem-alpha',
                               'requirements': ['REQ-7', 'REQ-8']}],
              'related': [{'feature': 'ota-update', 'relation': 'Verifies each update image.'}]},
             {'name': 'ota-update', 'scope': 'not-used'},
@@ -66,7 +66,7 @@ async def test_fields_edit_and_optional_values_clear(manifest):
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.pause()
         app.query_one('#project-version', Input).value = 'C-sample'
-        app.query_one('#project-compartments', Input).value = 'oem-alpha, oem-beta'
+        app.query_one('#project-pod', Input).value = 'oem-beta'
         board = app.query_one(PinnedBoardCard)
         board.query_one('.field-digest', Input).value = ''
         board.query_one('.field-version', Input).value = '2.2'
@@ -76,10 +76,10 @@ async def test_fields_edit_and_optional_values_clear(manifest):
         part.query_one('.field-role', Input).value = 'modem'
         draft = app.collect()
     assert draft['version'] == 'C-sample'
-    assert draft['compartments'] == ['oem-alpha', 'oem-beta']
+    assert draft['pod'] == 'oem-beta'
     assert draft['boards'] == [{'name': 'falcon-mainboard', 'version': '2.2'}, {'name': 'falcon-io', 'version': 'A'}]
     assert draft['features'][0]['governed_by'][0] == {'ref': 'oem/falcon/spec/3', 'digest': A,
-                                                      'compartment': 'oem-alpha'}
+                                                      'pod': 'oem-alpha'}
     assert draft['features'][0]['realized_on'] == [{'board': 'falcon-mainboard', 'version': '2.1', 'role': 'modem'}]
     # Lineage is not a field and rides through.
     assert draft['derives_from'] == 'A-sample'
@@ -184,7 +184,7 @@ async def test_review_raw_and_back_exit_as_the_board_form_does(manifest):
     lambda m: m['features'][0].update(realized_on='application-mcu'),
     lambda m: m['features'][0].update(realized_on=['application-mcu']),
     lambda m: m['features'][0]['realized_on'][0].update(version=2),
-    lambda m: m['documents'][0].update(compartment=['oem-alpha']),
+    lambda m: m['documents'][0].update(pod=['oem-alpha']),
     lambda m: m['features'][0]['governed_by'][0].update(requirements='REQ-7'),
 ])
 def test_unrepresentable_shapes_are_reported(manifest, change):
@@ -256,7 +256,7 @@ async def test_v1_project_opens_restated_with_its_one_board(manifest):
     legacy['board'] = legacy.pop('boards')[0]
     legacy['features'][0]['realized_on'] = ['application-mcu']
     legacy['precedence'] = [{'ref': 'oem/falcon/deviations/2', 'digest': 'sha256:' + 'd' * 64,
-                             'compartment': 'oem-alpha', 'note': 'Amends REQ-7.'},
+                             'pod': 'oem-alpha', 'note': 'Amends REQ-7.'},
                             dict(legacy['documents'][0], note='Base specification.')]
     stored = deepcopy(legacy)
     app = ProjectFormApp(original=legacy)
@@ -264,13 +264,13 @@ async def test_v1_project_opens_restated_with_its_one_board(manifest):
         await pilot.pause()
         assert 'caiman.project.v1' in ' '.join(str(hint.render()) for hint in app.query('.hint'))
         draft = app.collect()
-    assert draft['schema'] == 'caiman.project.v2'
+    assert draft['schema'] == 'caiman.project.v3'
     assert 'board' not in draft
     assert draft['boards'] == [stored['board']]
     # Precedence is gone from v2; its pins stay as documents, without order or notes.
     assert 'precedence' not in draft
     assert draft['documents'] == stored['documents'] + [
-        {'ref': 'oem/falcon/deviations/2', 'digest': 'sha256:' + 'd' * 64, 'compartment': 'oem-alpha'}]
+        {'ref': 'oem/falcon/deviations/2', 'digest': 'sha256:' + 'd' * 64, 'pod': 'oem-alpha'}]
     assert draft['features'][0]['realized_on'] == [
         {'board': 'falcon-mainboard', 'version': '2.1', 'role': 'application-mcu'}]
     # The stored snapshot the review diffs against is untouched.

@@ -26,56 +26,18 @@ def test_home_routes_repo_manager(tmp_path, monkeypatch, action):
     assert run_workflow(tmp_path) == 0
     assert calls == [{'store_root': tmp_path, 'action': action}]
 
-from caiman.dashboard.workflow import load_state, remember_compartments, run_workflow, save_state
+from caiman.dashboard.workflow import load_state, run_workflow
 
 
 def test_state_missing_does_not_write(tmp_path):
     root = tmp_path / 'store'
-    assert load_state(root) == {'authorized_compartments': []}
+    assert load_state(root) == {'pods': []}
     assert not root.exists()
 
 
-def test_state_remembers_explicit_project_scopes_privately(tmp_path):
-    root = tmp_path / 'store'
-    state = load_state(root)
-    project = {'manifest': {'project': 'demo', 'version': 'v1', 'customer': 'Private synthetic customer',
-                            'compartments': ['synthetic-alpha']}, 'digest': 'sha256:' + 'a' * 64}
-    remember_compartments(root, state, [project])
-    assert load_state(root) == {'authorized_compartments': ['synthetic-alpha']}
-    path = root / '.authoring-state.json'
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    # Only compartments persist: no customer, and no remembered project.
-    text = path.read_text()
-    assert 'customer' not in text and 'demo' not in text and 'sha256' not in text
-
-
-def test_legacy_saved_selection_is_dropped(tmp_path):
-    root = tmp_path / 'store'
-    root.mkdir()
-    (root / '.authoring-state.json').write_text(json.dumps(
-        {'authorized_compartments': ['alpha'], 'context': {'boards': [{'name': 'demo'}]}}))
-    assert load_state(root) == {'authorized_compartments': ['alpha']}
-
-
-def test_state_does_not_discover_private_directories(tmp_path):
-    (tmp_path / 'secret-customer').mkdir()
-    assert load_state(tmp_path)['authorized_compartments'] == []
-
-
-def test_invalid_or_symlinked_state_rejected(tmp_path):
-    path = tmp_path / '.authoring-state.json'
-    path.write_text(json.dumps({'authorized_compartments': ['public']}))
-    with pytest.raises(ValueError):
-        load_state(tmp_path)
-    path.write_text(json.dumps({'context': {}}))
-    with pytest.raises(ValueError):
-        load_state(tmp_path)
-    path.unlink()
-    target = tmp_path / 'elsewhere'
-    target.write_text('{}')
-    path.symlink_to(target)
-    with pytest.raises(ValueError):
-        load_state(tmp_path)
+def test_legacy_authorization_state_is_ignored(tmp_path):
+    (tmp_path / '.authoring-state.json').write_text('{"authorized_compartments": ["alpha"]}')
+    assert load_state(tmp_path) == {'pods': []}
 
 
 def test_launch_opens_home_without_setup_or_writes(tmp_path, monkeypatch):
@@ -129,7 +91,7 @@ def configurations(root):
         'parts': [{'role': 'main', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}], 'links': []})
     service.register(board)
     project = service.prepare('project', {'project': 'program', 'version': 'A', 'customer': 'Synthetic',
-        'compartments': ['alpha'], 'boards': [{'name': 'demo', 'version': 'v1'}],
+        'pod': 'alpha', 'boards': [{'name': 'demo', 'version': 'v1'}],
         'spec_set': 'release A', 'documents': [], 'features': []})
     service.register(project)
     return {'board': {'manifest': board.manifest, 'digest': board.digest},
@@ -158,7 +120,7 @@ def test_selections_do_not_carry_into_the_next_ingest(tmp_path, monkeypatch):
     monkeypatch.setattr(tui, 'IngestApp', Ingest)
     assert run_workflow(root) == 0
     assert calls[1]['context'] == {}
-    assert calls[1]['authorized_compartments'] == ['alpha']
+    assert calls[1]['pods'] == []
 
 
 def test_inline_create_cancel_restores_ingest_values(tmp_path, monkeypatch):
@@ -268,7 +230,7 @@ def test_category_page_runs_its_action_then_returns_to_the_category(tmp_path, mo
 def test_gallery_add_card_creates_then_returns_to_the_gallery(tmp_path, monkeypatch):
     import caiman.dashboard.actions as actions
     import caiman.dashboard.onboarding as onboarding
-    project = {'manifest': {'project': 'demo', 'version': 'v1', 'compartments': ['alpha']},
+    project = {'manifest': {'project': 'demo', 'version': 'v1', 'pod': 'alpha'},
                'digest': 'sha256:' + 'a' * 64}
     homes = ['show-project', 'quit']
     galleries = [{'action': 'create-project', 'registered': None}, None]
@@ -284,7 +246,7 @@ def test_gallery_add_card_creates_then_returns_to_the_gallery(tmp_path, monkeypa
         def run(self):
             return project
 
-    def gallery(action, root, compartments):
+    def gallery(action, root, pods):
         assert action == 'show-project'
         return galleries.pop(0)
 
@@ -293,4 +255,4 @@ def test_gallery_add_card_creates_then_returns_to_the_gallery(tmp_path, monkeypa
     monkeypatch.setattr(actions, 'run_dashboard_action', gallery)
     assert run_workflow(tmp_path) == 0
     assert created == ['project'] and galleries == [] and homes == []
-    assert load_state(tmp_path)['authorized_compartments'] == ['alpha']
+    assert load_state(tmp_path)['pods'] == []

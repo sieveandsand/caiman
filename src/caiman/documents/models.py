@@ -1,6 +1,5 @@
-"""Shared deterministic serialization and fail-closed document labels."""
+"""Shared deterministic serialization and document schema identities."""
 
-from dataclasses import dataclass
 import json
 import re
 
@@ -22,10 +21,10 @@ def canonical_json(value: dict) -> bytes:
 # first literal of each kind is what authoring emits; the rest stay readable so
 # snapshots registered under an older spelling are never rewritten (S-11).
 SCHEMA_LITERALS = {
-    'board': ('caiman.board.v2', 'caiman.board/1'),
-    'document': ('caiman.document.v2', 'caiman.document.v1', 'caiman.document/1'),
-    'collection': ('caiman.collection.v1',),
-    'project': ('caiman.project.v2', 'caiman.project.v1', 'caiman.project/1'),
+    'board': ('caiman.board.v3', 'caiman.board.v2', 'caiman.board/1'),
+    'document': ('caiman.document.v3', 'caiman.document.v2', 'caiman.document.v1', 'caiman.document/1'),
+    'collection': ('caiman.collection.v2', 'caiman.collection.v1',),
+    'project': ('caiman.project.v3', 'caiman.project.v2', 'caiman.project.v1', 'caiman.project/1'),
 }
 
 
@@ -44,32 +43,3 @@ def is_schema(kind: str, value: object) -> bool:
 
 def valid_identifier(value: object) -> bool:
     return isinstance(value, str) and bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', value))
-
-
-@dataclass(frozen=True)
-class AccessLabel:
-    is_public: bool = False
-    compartments: frozenset[str] = frozenset()
-
-    def __post_init__(self):
-        if type(self.is_public) is not bool or not isinstance(self.compartments, frozenset):
-            raise ValueError('Labels require a boolean public flag and frozen compartment set')
-        if any(not valid_identifier(item) or item == 'public' for item in self.compartments):
-            raise ValueError('Compartments must be safe identifiers other than public')
-        if self.is_public and self.compartments:
-            raise ValueError('Choose public access or compartments, not both')
-
-    def prefixed_labels(self) -> frozenset[str]:
-        if self.is_public:
-            return frozenset({'public'})
-        return frozenset(f'compartment:{item}' for item in self.compartments)
-
-    def permits(self, session_compartments) -> bool:
-        required = self.prefixed_labels()
-        if not required or isinstance(session_compartments, (str, bytes)):
-            return False
-        try:
-            available = AccessLabel(False, frozenset(session_compartments)).prefixed_labels()
-        except (ValueError, TypeError):
-            return False
-        return required <= (available | AccessLabel(True).prefixed_labels())

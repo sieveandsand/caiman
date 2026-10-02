@@ -37,11 +37,12 @@ class CollectionApp(NavigationApp):
     Button { width: auto; }
     '''
 
-    def __init__(self, *, root, compartments, record=None):
+    def __init__(self, *, root, pods=(), record=None, pod=None):
         super().__init__()
         apply_theme(self)
         self.service = CollectionService(Store(root))
-        self.compartments = set(compartments)
+        self.pods = set(pods)
+        self.pod = pod or self.service.store.pods.default
         self.original = deepcopy(record)
         self.draft = deepcopy(record['manifest']) if record else {}
         self.records = []
@@ -57,11 +58,11 @@ class CollectionApp(NavigationApp):
                 yield Input(self.draft.get('name', ''), id='name')
                 yield Label('Description')
                 yield Input(self.draft.get('description', ''), id='description')
-                yield Label('Access')
-                yield Select([('Public', 'public')] + [(name, name) for name in sorted(self.compartments)],
-                             value=self.original['compartment'] if self.original else Select.NULL,
-                             prompt='Choose access', id='access', disabled=bool(self.original))
-                yield Static('Select public documents or documents in the chosen compartment.', classes='hint')
+                yield Label('Pod')
+                yield Select([(r['name'], r['id']) for r in self.service.store.pods.list()],
+                             value=self.original['pod'] if self.original else self.pod,
+                             prompt='Choose pod', id='pod', disabled=bool(self.original))
+                yield Static('Select documents from any available pod.', classes='hint')
                 yield Static('Choose from existing documents', id='selection-count')
                 yield Grid(classes='document-grid', id='documents')
             yield Static('', id='review', markup=False)
@@ -76,13 +77,13 @@ class CollectionApp(NavigationApp):
         self.query_one('#review').display = False
         self.query_one('#edit-selection').display = False
         try:
-            records = await asyncio.to_thread(self.service.documents.list_documents, compartments=self.compartments)
+            records = await asyncio.to_thread(self.service.documents.list_documents, pods=self.pods)
             # Old pinned revisions must remain selectable even when refs move.
-            members = await asyncio.to_thread(self.service.members, self.original, compartments=self.compartments) if self.original else []
-            merged = {(r['compartment'], r['digest']): r for r in records + members}
-            self.records = sorted(merged.values(), key=lambda r: (document_name(r['manifest']), r['compartment'], r['digest']))
-            selected = {(r['compartment'], r['digest']) for r in members}
-            cards = [MemberCard(r, index=i, chosen=(r['compartment'], r['digest']) in selected)
+            members = await asyncio.to_thread(self.service.members, self.original, pods=self.pods) if self.original else []
+            merged = {(r['pod'], r['digest']): r for r in records + members}
+            self.records = sorted(merged.values(), key=lambda r: (document_name(r['manifest']), r['pod'], r['digest']))
+            selected = {(r['pod'], r['digest']) for r in members}
+            cards = [MemberCard(r, index=i, chosen=(r['pod'], r['digest']) in selected)
                      for i, r in enumerate(self.records)]
             await self.query_one('#documents', Grid).mount(*(CardFrame(card) for card in cards))
             self.loaded = True
@@ -108,14 +109,14 @@ class CollectionApp(NavigationApp):
         self.query_one('#selection-count', Static).update(f'{count} selected · {len(self.records)} existing documents')
 
     def collect(self):
-        access = self.query_one('#access', Select).value
-        if access == Select.NULL:
-            raise ValueError('Choose collection access')
+        pod = self.query_one('#pod', Select).value
+        if pod == Select.NULL:
+            raise ValueError('Choose a pod')
         data = deepcopy(self.draft)
         data.update(name=self.query_one('#name', Input).value.strip(),
                     description=self.query_one('#description', Input).value.strip(),
-                    labels={'public': access == 'public', 'compartments': [] if access == 'public' else [access]},
-                    documents=[{'digest': c.record['digest'], 'compartment': c.record['compartment']}
+                    pod=pod,
+                    documents=[{'digest': c.record['digest'], 'pod': c.record['pod']}
                                for c in self.query(MemberCard) if c.chosen])
         return data
 
@@ -158,19 +159,19 @@ class CollectionApp(NavigationApp):
             self.query_one('#review-save', Button).disabled = True
             try:
                 if self.prepared is None:
-                    self.prepared = await asyncio.to_thread(self.service.prepare, self.collect(), compartments=self.compartments)
+                    self.prepared = await asyncio.to_thread(self.service.prepare, self.collect(), pods=self.pods)
                     m = self.prepared['manifest']
-                    names = [f"  {document_name(c.record['manifest'])} · {c.record['manifest']['version']} · {c.record['compartment']}"
+                    names = [f"  {document_name(c.record['manifest'])} · {c.record['manifest']['version']} · {c.record['pod']}"
                              for c in self.query(MemberCard) if c.chosen]
                     self.query_one('#review', Static).update('\n'.join([
-                        m['name'], m['description'], '', f"Access: {self.prepared['compartment']}",
+                        m['name'], m['description'], '', f"Pod: {self.prepared['pod']}",
                         f"{len(names)} documents", *names]))
                     self.query_one('#status', Static).update('')
                     self.show_review(True)
                     self.query_one('#review-save').focus()
                 else:
                     result = await asyncio.to_thread(self.service.register, self.prepared,
-                        compartments=self.compartments, expected_digest=self.original['digest'] if self.original else None)
+                        pods=self.pods, expected_digest=self.original['digest'] if self.original else None)
                     self.exit(result)
             except (OSError, ValueError) as error:
                 self.query_one('#status', Static).update(str(error))

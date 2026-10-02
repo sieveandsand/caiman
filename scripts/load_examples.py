@@ -2,7 +2,7 @@
 """Validate or add the checked-in examples, offline, through Caiman's services.
 
 Default: validate in a temporary store and check the destination for conflicts.
---install: add missing entries and remember the example project compartments.
+--install: add missing entries and make example pods available.
 Run with the checkout's Python environment. Close other store writers first.
 """
 
@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / 'src'))
 from caiman.cli.commands import store_path
 from caiman.configurations.service import ConfigurationService
 from caiman.dashboard.workflow import STATE_FILE, load_state
+from caiman.storage.legacy import manifest_view
 from caiman.documents.collections import CollectionService
 from caiman.documents.ingest import prepare_document
 from caiman.documents.models import canonical_json
@@ -78,9 +79,9 @@ def prepare_plan(root, fixtures=ROOT / 'fixtures'):
         configs = ConfigurationService(staging)
         collection_members = {'microbit': [], 'macropad': []}
         for entry in dataset['documents']:
-            prepared = prepare_document(fixtures / entry['path'], entry['metadata'])
-            if prepared.manifest['labels'] != {'public': True, 'compartments': []}:
+            if entry['metadata'].get('labels') != {'public': True, 'compartments': []}:
                 raise StoreError('This example dataset only imports explicitly public documents')
+            prepared = prepare_document(fixtures / entry['path'], manifest_view(entry['metadata']))
             ref = document_ref(target, prepared.manifest)
             if exists(ref):
                 value = target_configs._read_ref(ref)
@@ -94,29 +95,26 @@ def prepare_plan(root, fixtures=ROOT / 'fixtures'):
                 plan.documents.append(prepared)
             staging.register(prepared)
             family = 'macropad' if 'macropad' in entry['path'] else 'microbit'
-            collection_members[family].append({'compartment': 'public', 'digest': prepared.manifest_digest})
+            collection_members[family].append({'pod': 'public', 'digest': prepared.manifest_digest})
             plan.counts['documents'] += 1
         for kind, paths in [('board', dataset['boards']), ('project', dataset['projects'])]:
             for path in paths:
                 draft = json.loads((fixtures / path).read_text())
                 prepared = configs.prepare(kind, draft)
                 refs = [target_configs._config_path(kind, draft[kind], draft['version'], compartment)
-                        for compartment in prepared.compartments]
+                        for compartment in (prepared.pod,)]
                 present = [exists(ref) for ref in refs]
                 for ref, found in zip(refs, present):
                     if found and target_configs._read_ref(ref) != prepared.digest:
                         raise StoreError(f'Existing configuration differs; refusing to repoint {ref}')
                 if any(present):
                     # Verify existing objects and pinned documents, not just ref text.
-                    compartment = prepared.compartments[present.index(True)]
+                    compartment = prepared.pod
                     target_configs._read_config(kind, compartment, prepared.digest,
                                                 set(draft.get('compartments', [])))
                 if not all(present):
                     plan.configurations.append(prepared)
                 configs.register(prepared)
-                if kind == 'project':
-                    plan.state['authorized_compartments'] = sorted(
-                        set(plan.state['authorized_compartments']) | set(draft['compartments']))
                 plan.counts[kind + 's'] += 1
         collections = CollectionService(staging)
         for family, members in collection_members.items():
@@ -124,7 +122,7 @@ def prepare_plan(root, fixtures=ROOT / 'fixtures'):
                 'id': f'caiman-examples-{family}',
                 'name': 'micro:bit sound' if family == 'microbit' else 'MacroPad applications',
                 'description': 'Pinned upstream source references and clearly identified Caiman acceptance examples.',
-                'labels': {'public': True, 'compartments': []}, 'documents': members,
+                'documents': members,
             })
             ref = target_collections._ref('public', prepared['manifest']['id'])
             if exists(ref):
@@ -168,7 +166,7 @@ def main():
     parser.add_argument('--store', type=Path, help='Destination; defaults to the normal Caiman config/XDG resolution')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--check', action='store_true', help='Validate and report only (default)')
-    modes.add_argument('--install', action='store_true', help='Add examples and remember their project compartments')
+    modes.add_argument('--install', action='store_true', help='Add examples to local pods')
     args = parser.parse_args()
     try:
         root = store_path(args.store)
@@ -179,7 +177,7 @@ def main():
     print(', '.join(f'{count} {kind}' for kind, count in plan.counts.items()))
     print(f'{len(plan.documents)} new documents, {len(plan.configurations)} new configurations, '
           f'{len(plan.collections)} new collections' + (' added.' if args.install else ' would be added.'))
-    print('Project compartments: demo-microbit, demo-macropad. All example documents are public.')
+    print('Project pods: demo-microbit, demo-macropad. All example documents are public.')
 
 
 if __name__ == '__main__':

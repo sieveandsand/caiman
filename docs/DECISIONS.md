@@ -1,5 +1,16 @@
 # Decisions
 
+## Pods replace access labels and compartments (2026-10-01)
+
+User-approved: one local folder per pod, optionally one Git repository per pod.
+`public` is an ordinary default pod. Caiman removes its separate authorization
+layer, discovers local pods, and pins cross-pod dependencies without copying
+them. Each configuration has one owning pod. This supersedes the access and
+compartment portions of S-16, S-22, S-29, S-33, and S-35. Existing immutable
+snapshots remain readable without rewriting their bytes. [PODS.md](PODS.md)
+owns the implemented format, UI, Git workflow, and migration limits.
+
+
 **Purpose:** The record of what was decided, when, and why.
 **Owns:** Decision history and the trade-off analysis for decisions still open.
 Settled entries state the decision and its rationale and point at the design

@@ -19,16 +19,16 @@ def project_setup(tmp_path):
     source.write_text('# Specification\n\n## Boot\nREQ-1 Synthetic.\n')
     registered = store.register(prepare_document(source, {
         'issuer': 'synthetic-oem', 'program': 'flight', 'doc_type': 'spec', 'version': '1',
-        'structure': 'prose', 'labels': {'public': False, 'compartments': ['alpha']}}))
+        'structure': 'prose', 'pod': ('alpha')}))
     ref = registered.ref_path.relative_to(root / 'alpha' / 'refs' / 'documents').as_posix()
     service.register(service.prepare('board', {'board': 'demo', 'version': 'v1', 'parts': [
         {'role': 'mcu', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}], 'links': []}))
     original = service.prepare('project', {
-        'project': 'flight', 'version': 'A', 'customer': 'Synthetic customer', 'compartments': ['alpha'],
+        'project': 'flight', 'version': 'A', 'customer': 'Synthetic customer', 'pod': 'alpha',
         'boards': [{'name': 'demo', 'version': 'v1'}], 'spec_set': 'release A',
         'documents': [{'ref': ref}], 'features': [{'name': 'boot', 'scope': 'required'}]})
     service.register(original)
-    return root, service, {'manifest': original.manifest, 'digest': original.digest}, ref
+    return root, service, {'manifest': original.manifest, 'digest': original.digest, 'pod': original.pod}, ref
 
 
 def snapshot(root):
@@ -80,7 +80,7 @@ async def test_review_registers_only_on_the_explicit_button(project_setup):
     root, service, selection, _ = project_setup
     edited = deepcopy(selection['manifest'])
     edited['spec_set'] = 'release A, deviation 1'
-    prepared = service.prepare('project', edited)
+    prepared = service.prepare('project', edited, pod=selection['pod'])
     before = snapshot(root)
     app = ProjectEditReviewApp(root=root, original=selection['manifest'], prepared=prepared)
     async with app.run_test(size=(110, 40)) as pilot:
@@ -91,11 +91,11 @@ async def test_review_registers_only_on_the_explicit_button(project_setup):
             if not app.is_running:
                 break
             await pilot.pause(0.025)
-    assert app.return_value == {'manifest': prepared.manifest, 'digest': prepared.digest}
-    assert service.load('project', 'flight', 'A', compartments={'alpha'}) == prepared.manifest
+    assert app.return_value == {'manifest': prepared.manifest, 'digest': prepared.digest, 'pod': prepared.pod}
+    assert service.load('project', 'flight', 'A', pods={'alpha'}) == prepared.manifest
     # The label moved; the snapshot it used to name is still there by digest.
-    assert service.load_digest('project', selection['digest'], compartment='alpha',
-                               compartments={'alpha'}) == selection['manifest']
+    assert service.load_digest('project', selection['digest'], pod='alpha',
+                               pods={'alpha'}) == selection['manifest']
 
 
 @pytest.mark.asyncio
@@ -114,26 +114,26 @@ def test_renaming_a_project_updates_it_in_place(project_setup):
     root, service, selection, _ = project_setup
     edited = deepcopy(selection['manifest'])
     edited['version'] = 'B'
-    prepared = service.prepare('project', edited)
+    prepared = service.prepare('project', edited, pod=selection['pod'])
     service.register(prepared, replaces=selection)
-    records = service.list_configs('project', compartments={'alpha'})
+    records = service.list_configs('project', pods={'alpha'})
     assert [(record['name'], record['version'], record['digest']) for record in records] == [
         ('flight', 'B', prepared.digest)]
     # The old snapshot survives by digest for anything that pinned it (I-4).
-    assert service.load_digest('project', selection['digest'], compartment='alpha',
-                               compartments={'alpha'}) == selection['manifest']
+    assert service.load_digest('project', selection['digest'], pod='alpha',
+                               pods={'alpha'}) == selection['manifest']
 
 
 def test_renaming_onto_another_project_is_refused(project_setup):
     root, service, selection, _ = project_setup
     other = deepcopy(selection['manifest'])
     other['version'] = 'B'
-    service.register(service.prepare('project', other))
+    service.register(service.prepare('project', other, pod=selection['pod']))
     before = snapshot(root)
     edited = deepcopy(selection['manifest'])
     edited.update(version='B', spec_set='release B')
     with pytest.raises(ValueError, match='already uses this name and version'):
-        service.register(service.prepare('project', edited), replaces=selection)
+        service.register(service.prepare('project', edited, pod=selection['pod']), replaces=selection)
     assert snapshot(root) == before
 
 
@@ -141,29 +141,29 @@ def test_edit_leaves_a_label_repointed_elsewhere_alone(project_setup):
     root, service, selection, _ = project_setup
     moved = deepcopy(selection['manifest'])
     moved['spec_set'] = 'release A, deviation 1'
-    service.register(service.prepare('project', moved))
+    service.register(service.prepare('project', moved, pod=selection['pod']))
     edited = deepcopy(selection['manifest'])
     edited['version'] = 'B'
-    service.register(service.prepare('project', edited), replaces=selection)
-    assert {record['version'] for record in service.list_configs('project', compartments={'alpha'})} == {'A', 'B'}
+    service.register(service.prepare('project', edited, pod=selection['pod']), replaces=selection)
+    assert {record['version'] for record in service.list_configs('project', pods={'alpha'})} == {'A', 'B'}
 
 
 def test_delete_removes_the_project_but_keeps_its_snapshot(project_setup):
     root, service, selection, _ = project_setup
-    service.unregister('project', selection['manifest'], selection['digest'])
-    assert service.list_configs('project', compartments={'alpha'}) == []
-    assert service.load_digest('project', selection['digest'], compartment='alpha',
-                               compartments={'alpha'}) == selection['manifest']
+    service.unregister('project', selection['manifest'], selection['digest'], pod=selection['pod'])
+    assert service.list_configs('project', pods={'alpha'}) == []
+    assert service.load_digest('project', selection['digest'], pod='alpha',
+                               pods={'alpha'}) == selection['manifest']
 
 
 def test_delete_refuses_a_project_changed_since_it_was_opened(project_setup):
     root, service, selection, _ = project_setup
     moved = deepcopy(selection['manifest'])
     moved['spec_set'] = 'release A, deviation 1'
-    service.register(service.prepare('project', moved))
+    service.register(service.prepare('project', moved, pod=selection['pod']))
     before = snapshot(root)
     with pytest.raises(ValueError, match='changed since it was opened'):
-        service.unregister('project', selection['manifest'], selection['digest'])
+        service.unregister('project', selection['manifest'], selection['digest'], pod=selection['pod'])
     assert snapshot(root) == before
 
 
@@ -180,13 +180,13 @@ def test_delete_from_the_form_asks_first(project_setup, monkeypatch, confirmed):
             asked.append(kwargs)
         def run(self):
             if confirmed:
-                ConfigurationService(Store(root)).unregister('project', selection['manifest'], selection['digest'])
+                ConfigurationService(Store(root)).unregister('project', selection['manifest'], selection['digest'], pod=selection['pod'])
             return confirmed
     monkeypatch.setattr(editing, 'ProjectDeleteApp', Confirm)
     assert edit_project(root, service, selection, deepcopy(selection['manifest'])) is None
     assert asked == [{'root': root, 'selection': selection}]
     if confirmed:
-        assert service.list_configs('project', compartments={'alpha'}) == []
+        assert service.list_configs('project', pods={'alpha'}) == []
     else:
         assert snapshot(root) == before
 
@@ -205,4 +205,4 @@ async def test_delete_screen_deletes_only_on_the_explicit_button(project_setup):
                 break
             await pilot.pause(0.025)
     assert app.return_value is True
-    assert service.list_configs('project', compartments={'alpha'}) == []
+    assert service.list_configs('project', pods={'alpha'}) == []

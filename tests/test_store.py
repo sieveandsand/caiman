@@ -8,16 +8,16 @@ import pytest
 
 from caiman.documents.ingest import prepare_document
 from caiman.documents.models import canonical_json
-from caiman.storage.store import AccessDenied, Store, StoreError
+from caiman.storage.store import Store, StoreError
 
 
-def prepared(tmp_path, *, public=True, compartments=(), version="rev/one"):
+def prepared(tmp_path, *, public=True, pods=(), version="rev/one"):
     source = tmp_path / "manual.md"
     source.write_bytes(b"# Synthetic manual\r\n\r\n## Registers\r\n| Name | Value |\r\n| --- | --- |\r\n| CTRL | 0 |\r\n")
     return prepare_document(source, {
         "issuer": "synthetic", "part": "chip", "doc_type": "manual",
         "version": version, "structure": "prose",
-        "labels": {"public": public, "compartments": list(compartments)},
+        'pod': ('public' if public else (list(pods))[0]),
     })
 
 
@@ -37,7 +37,7 @@ def test_unchanged_bytes_and_immutable_objects(tmp_path):
             assert path.stat().st_mode & 0o777 == 0o444
 
 
-@pytest.mark.parametrize("labels", [{}, {"public": False}, {"public": False, "compartments": []}, {"public": True, "compartments": ["alpha"]}])
+@pytest.mark.parametrize("labels", [{}, {"public": False}, {"public": False, "pods": []}, {"public": True, "pods": ["alpha"]}])
 def test_invalid_or_dropped_labels_write_nothing(tmp_path, labels):
     document = prepared(tmp_path)
     manifest = copy.deepcopy(document.manifest)
@@ -57,11 +57,11 @@ def test_source_changed_after_review_writes_nothing(tmp_path):
     assert not store.root.exists()
 
 
-@pytest.mark.parametrize("compartments", [["alpha", "falcon"], ["alpha", "alpha"]])
-def test_multiple_document_compartments_rejected_on_registration_and_read(tmp_path, compartments):
-    document = prepared(tmp_path, public=False, compartments=("alpha",))
+@pytest.mark.parametrize("pods", [["alpha", "falcon"], ["alpha", "alpha"]])
+def test_multiple_document_pods_rejected_on_registration_and_read(tmp_path, pods):
+    document = prepared(tmp_path, public=False, pods=("alpha",))
     manifest = copy.deepcopy(document.manifest)
-    manifest["labels"]["compartments"] = compartments
+    manifest["labels"] = {"public": False, "compartments": pods}
     content = canonical_json(manifest)
     digest = "sha256:" + hashlib.sha256(content).hexdigest()
     store = Store(tmp_path / "store")
@@ -70,25 +70,21 @@ def test_multiple_document_compartments_rejected_on_registration_and_read(tmp_pa
     assert not store.root.exists()
     # Even a correctly hashed legacy/externally supplied object is invalid.
     store._write_object("alpha", "manifests", digest, content)
-    with pytest.raises(ValueError, match="exactly one compartment"):
-        store.read_manifest("alpha", digest, allowed_compartments={"alpha", "falcon"})
+    with pytest.raises(ValueError, match="legacy document labels"):
+        store.read_manifest("alpha", digest)
     assert not list(store.root.glob("*/refs/**/*"))
 
 
 def test_labels_change_identity_and_separate_storage(tmp_path):
-    public = prepared(tmp_path)
-    private = prepared(tmp_path, public=False, compartments=("alpha",))
-    store = Store(tmp_path / "store")
-    a, b = store.register(public), store.register(private)
-    assert a.blob_digest == b.blob_digest
-    assert a.manifest_digest != b.manifest_digest
-    assert b.compartments == ("alpha",)
-    with pytest.raises(AccessDenied, match="authorized"):
-        store.read_manifest("alpha", b.manifest_digest, allowed_compartments={"program"})
-    assert store.read_manifest("alpha", b.manifest_digest, allowed_compartments={"alpha", "program"})["labels"]["compartments"] == ["alpha"]
-    blobs = list(store.root.glob("*/blobs/sha256/*/*"))
+    document = prepared(tmp_path)
+    store = Store(tmp_path / 'store')
+    a = store.register(document)
+    b = store.register(replace(document, pod='alpha'))
+    assert a.blob_digest == b.blob_digest and a.manifest_digest == b.manifest_digest
+    assert b.pod == 'alpha'
+    assert store.read_manifest('alpha', b.manifest_digest) == document.manifest
+    blobs = list(store.root.glob('*/blobs/sha256/*/*'))
     assert len({p.stat().st_ino for p in blobs}) == 2
-    assert not (store.root / "program").exists()
 
 
 def test_corruption_blocks_read_and_registration(tmp_path):
@@ -111,7 +107,7 @@ def test_symlink_directory_rejected(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     (store.root / "public").symlink_to(outside, target_is_directory=True)
-    with pytest.raises(StoreError, match="directory"):
+    with pytest.raises(ValueError, match="symlink"):
         store.register(document)
     assert list(outside.iterdir()) == []
 
@@ -120,10 +116,10 @@ def test_failed_manifest_publish_leaves_no_ref(tmp_path, monkeypatch):
     document = prepared(tmp_path)
     store = Store(tmp_path / "store")
     original = store._write_object
-    def fail_manifest(compartment, kind, digest, content):
+    def fail_manifest(pod, kind, digest, content):
         if kind == "manifests":
             raise OSError("simulated disk failure")
-        return original(compartment, kind, digest, content)
+        return original(pod, kind, digest, content)
     monkeypatch.setattr(store, "_write_object", fail_manifest)
     with pytest.raises(OSError, match="simulated"):
         store.register(document)
@@ -140,27 +136,26 @@ def test_existing_writable_object_rejected(tmp_path):
         store.register(document)
 
 
-def test_read_rejects_manifest_with_dropped_compartment(tmp_path):
-    document = prepared(tmp_path, public=False, compartments=("alpha",))
+def test_read_rejects_manifest_with_dropped_pod(tmp_path):
+    document = prepared(tmp_path, public=False, pods=("alpha",))
     store = Store(tmp_path / "store")
     store.register(document)
     manifest = copy.deepcopy(document.manifest)
-    manifest["labels"]["compartments"] = []
+    manifest["labels"] = {"public": False, "compartments": []}
     content = canonical_json(manifest)
     digest = "sha256:" + hashlib.sha256(content).hexdigest()
     store._write_object("alpha", "manifests", digest, content)
     with pytest.raises(ValueError):
-        store.read_manifest("alpha", digest, allowed_compartments={"alpha"})
+        store.read_manifest("alpha", digest)
 
 
-def test_wrong_containing_compartment_is_corruption_not_access_denial(tmp_path):
-    document = prepared(tmp_path, public=False, compartments=("alpha",))
-    store = Store(tmp_path / "store")
-    result = store.register(document)
-    store._write_object("beta", "manifests", result.manifest_digest, canonical_json(document.manifest))
-    with pytest.raises(StoreError) as error:
-        store.read_manifest("beta", result.manifest_digest, allowed_compartments={"beta"})
-    assert not isinstance(error.value, AccessDenied)
+def test_wrong_containing_pod_is_corruption_not_access_denial(tmp_path):
+    document = prepared(tmp_path, public=False, pods=('alpha',))
+    store = Store(tmp_path / 'store')
+    first = store.register(document)
+    second = store.register(replace(document, pod='beta'))
+    assert first.manifest_digest == second.manifest_digest
+    assert store.read_manifest('beta', second.manifest_digest) == document.manifest
 
 
 def test_ref_hardlink_does_not_overwrite_other_file(tmp_path):
@@ -171,7 +166,7 @@ def test_ref_hardlink_does_not_overwrite_other_file(tmp_path):
     os.link(first.ref_path, outside)
     original = outside.read_bytes()
     document.source_path.write_bytes(b"# Different\nChanged\n")
-    metadata = {key: document.manifest[key] for key in ("issuer", "part", "doc_type", "version", "structure", "labels")}
+    metadata = {key: document.manifest[key] for key in ("issuer", "part", "doc_type", "version", "structure")}
     store.register(prepare_document(document.source_path, metadata))
     assert outside.read_bytes() == original
     assert first.ref_path.read_bytes() != original
@@ -182,7 +177,7 @@ def test_ref_repoint_preserves_previous_digest(tmp_path):
     store = Store(tmp_path / "store")
     a = store.register(first)
     first.source_path.write_bytes(b"# Synthetic manual\n\n## Changed\nDifferent content\n")
-    metadata = {key: first.manifest[key] for key in ("issuer", "part", "doc_type", "version", "structure", "labels")}
+    metadata = {key: first.manifest[key] for key in ("issuer", "part", "doc_type", "version", "structure")}
     second = prepare_document(first.source_path, metadata)
     b = store.register(second)
     assert a.ref_path == b.ref_path

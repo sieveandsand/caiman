@@ -20,11 +20,13 @@ class BoardEditReviewApp(NavigationApp):
     TITLE = 'Caiman · Review board changes'
     CSS = TERMINAL_CSS + '\n#changes { height: 18; }\n'
 
-    def __init__(self, *, root, original, prepared=None, error=None):
+    def __init__(self, *, root, original, prepared=None, error=None, original_pod=None, original_digest=None):
         super().__init__()
         apply_theme(self)
         self.root = root
         self.original = original
+        self.original_pod = original_pod
+        self.original_digest = original_digest
         self.prepared = prepared
         self.error = error
         self.saving = False
@@ -38,7 +40,7 @@ class BoardEditReviewApp(NavigationApp):
                 yield Static('Your edited file is retained while you keep editing. Back discards this draft.', classes='hint')
             else:
                 manifest = self.prepared.manifest
-                yield Static(f"Board: {manifest['board']} @ {manifest['version']}\nAccess: Public", markup=False)
+                yield Static(f"Board: {manifest['board']} @ {manifest['version']}\nPod: {self.prepared.pod}", markup=False)
                 same_label = all(manifest[key] == self.original[key] for key in ('board', 'version'))
                 yield Static('Register updates this version label. Existing digest pins remain unchanged.' if same_label else
                              'Register saves the name/version below. Choose another label if it already exists.', classes='hint')
@@ -81,9 +83,13 @@ class BoardEditReviewApp(NavigationApp):
             try:
                 require_new_label = any(self.prepared.manifest[key] != self.original[key]
                                         for key in ('board', 'version'))
+                replaces = None
+                if (not require_new_label and self.original_digest and self.original_pod
+                    and self.original_pod != self.prepared.pod):
+                    replaces = {'manifest': self.original, 'digest': self.original_digest, 'pod': self.original_pod}
                 registration = await asyncio.to_thread(ConfigurationService(Store(self.root)).register,
-                                                       self.prepared, require_new_label=require_new_label)
-                self.exit({'manifest': deepcopy(self.prepared.manifest), 'digest': registration.digest})
+                                                       self.prepared, require_new_label=require_new_label, replaces=replaces)
+                self.exit({'manifest': deepcopy(self.prepared.manifest), 'digest': registration.digest, 'pod': self.prepared.pod})
             except (OSError, ValueError) as error:
                 self.query_one('#status', Static).update(str(error))
             finally:
@@ -109,6 +115,7 @@ def edit_board(root: Path, service: ConfigurationService, selection: dict) -> di
 
     original = selection['manifest']
     draft, message = deepcopy(original), ''
+    draft['pod'] = selection.get('pod', service.store.pods.default)
     while True:
         outcome = BoardFormApp(original=original, draft=draft, message=message).run()
         if outcome is None:
@@ -125,10 +132,11 @@ def edit_board(root: Path, service: ConfigurationService, selection: dict) -> di
         except (OSError, ValueError) as invalid:
             message = str(invalid)
             continue
-        if prepared.digest == selection['digest']:
+        if prepared.digest == selection['digest'] and prepared.pod == selection.get('pod', prepared.pod):
             message = 'This draft matches the registered snapshot. There is nothing to register.'
             continue
-        reviewed = BoardEditReviewApp(root=root, original=original, prepared=prepared).run()
+        reviewed = BoardEditReviewApp(root=root, original=original, prepared=prepared,
+                                      original_pod=selection.get('pod'), original_digest=selection['digest']).run()
         if reviewed == 'edit':
             continue
         return reviewed if isinstance(reviewed, dict) else None
@@ -145,10 +153,15 @@ def run_board_gallery(root: Path) -> dict | None:
 
     registered = None
     service = ConfigurationService(Store(root))
+    active_pod = None
     while True:
-        selection = BoardGalleryApp(store_root=root).run()
+        selection = BoardGalleryApp(store_root=root, pod=active_pod).run()
         if selection is None:
             return registered
+        if isinstance(selection, dict):
+            active_pod = selection.get('pod', active_pod)
+        if isinstance(selection, dict) and selection.get('action') == 'add':
+            return {'action': 'create-board', 'registered': registered, 'pod': active_pod}
         if selection == 'add':
             return {'action': 'create-board', 'registered': registered}
         try:

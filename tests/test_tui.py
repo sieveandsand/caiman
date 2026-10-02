@@ -32,7 +32,7 @@ async def test_cancel_has_no_side_effects(tmp_path):
         assert "ingest document" in str(app.query_one("#brand", Static).render())
         await advance(pilot)
         fill_document(app)
-        app.query_one("#visibility", Select).value = "public"
+        app.query_one("#pod", Select).value = "public"
         await advance(pilot)
         await advance(pilot)
         assert app.step == 3, str(app.query_one("#status", Static).render())
@@ -51,13 +51,10 @@ async def test_invalid_labels_retained_then_register_and_edit(tmp_path):
     async with app.run_test(size=(100, 45)) as pilot:
         await advance(pilot)
         fill_document(app)
-        assert app.query_one("#visibility", Select).value == Select.NULL
-        await advance(pilot)
-        assert app.step == 1
-        assert "labels" in str(app.query_one("#status", Static).render())
+        assert app.query_one("#pod", Select).value == "public"
         assert app.value("issuer") == "synthetic"
         assert not store.exists()
-        app.query_one("#visibility", Select).value = "public"
+        app.query_one("#pod", Select).value = "public"
         await advance(pilot)
         assert app.step == 2
         await advance(pilot)
@@ -103,8 +100,8 @@ async def test_optional_errors_can_be_corrected_after_going_back(tmp_path):
     async with app.run_test(size=(80, 24)) as pilot:
         await advance(pilot)
         fill_document(app)
-        app.query_one("#visibility", Select).value = "compartments"
-        app.query_one("#compartments", Input).value = "synthetic-program"
+        app.query_one("#pod", Select).set_options([("Program", "synthetic-program")])
+        app.query_one("#pod", Select).value = "synthetic-program"
         await advance(pilot)
         app.query_one(Collapsible).collapsed = False
         app.query_one("#source_pages", Input).value = "not a number"
@@ -120,7 +117,7 @@ async def test_optional_errors_can_be_corrected_after_going_back(tmp_path):
         await advance(pilot)
         assert app.step == 3
         assert app.prepared.manifest["converter"] == {"version": "1.2"}
-        assert "Compartment: synthetic-program" in app.review_text()
+        assert "Pod: synthetic-program" in app.review_text()
         assert "Conversion location: Unknown" in app.review_text()
     assert not (tmp_path / "store").exists()
 
@@ -133,7 +130,7 @@ async def test_optional_requirement_pattern_can_be_corrected_after_back(tmp_path
     async with app.run_test(size=(100, 45)) as pilot:
         await advance(pilot)
         fill_document(app)
-        app.query_one('#visibility', Select).value = 'public'
+        app.query_one('#pod', Select).value = 'public'
         await advance(pilot)
         app.query_one('#pattern', Input).value = '['
         await advance(pilot)
@@ -160,7 +157,7 @@ def registered_contexts(root):
     for scope in ("synthetic-alpha", "synthetic-beta"):
         project = service.prepare("project", {
             "project": scope + "-program", "version": "1", "customer": "Synthetic Customer",
-            "compartments": [scope], "boards": [{"name": "synthetic-board", "version": "A"}],
+            'pod': ([scope])[0], "boards": [{"name": "synthetic-board", "version": "A"}],
             "spec_set": "release-1", "documents": [], "features": [],
         })
         service.register(project)
@@ -168,42 +165,23 @@ def registered_contexts(root):
 
 
 @pytest.mark.asyncio
-async def test_document_form_rejects_multiple_compartments(tmp_path):
-    source = tmp_path / "manual.md"
-    source.write_text("# Synthetic manual\nBody.\n")
-    app = IngestApp(tmp_path / "store", source)
-    async with app.run_test(size=(100, 45)) as pilot:
-        await advance(pilot)
-        fill_document(app)
-        app.query_one("#visibility", Select).value = "compartments"
-        app.query_one("#compartments", Input).value = "alpha, falcon"
-        await advance(pilot)
-        assert app.step == 1
-        assert "exactly one compartment" in str(app.query_one("#status", Static).render())
-        assert not (tmp_path / "store").exists()
+async def test_document_form_rejects_multiple_pods(tmp_path):
+    app = IngestApp(tmp_path / 'store')
+    async with app.run_test() as pilot:
+        assert app.query_one('#pod', Select).value == 'public'
+        assert not app.query('#pods') and not app.query('#visibility')
+        assert not (tmp_path / 'store').exists()
 
 
 @pytest.mark.asyncio
-async def test_multi_compartment_project_does_not_choose_document_compartment(tmp_path):
-    service, board = registered_contexts(tmp_path / "store")
-    project = service.prepare("project", {
-        "project": "combined", "version": "1", "customer": "Synthetic Customer",
-        "spec_set": "release-1",
-        "compartments": ["synthetic-alpha", "synthetic-beta"],
-        "boards": [{"name": "synthetic-board", "version": "A"}],
-        "documents": [], "features": [],
-    })
-    service.register(project)
-    source = tmp_path / "manual.md"
-    source.write_text("# Synthetic manual\nBody.\n")
-    app = IngestApp(service.store.root, source)
-    async with app.run_test(size=(100, 45)) as pilot:
-        await advance(pilot)
-        app.query_one("#compartments", Input).value = "stale"
-        await app.apply_project({"manifest": project.manifest, "digest": project.digest})
-        assert app.value("compartments") == ""
-        assert set(app.csv("project_scope")) == {"synthetic-alpha", "synthetic-beta"}
-        assert app.query_one("#visibility", Select).value == Select.NULL
+async def test_multi_pod_project_does_not_choose_document_pod(tmp_path):
+    service, _ = registered_contexts(tmp_path / 'store')
+    record = service.list_configs('project', pods=['synthetic-alpha'])[0]
+    app = IngestApp(service.store.root)
+    async with app.run_test() as pilot:
+        await app.apply_project(record)
+        assert app.query_one('#pod', Select).value == 'synthetic-alpha'
+        assert app.value('program') == record['manifest']['project']
 
 
 @pytest.mark.asyncio
@@ -225,30 +203,27 @@ async def test_existing_board_part_then_project_and_manual_clear_stale_metadata(
         assert app.value("issuer") == "synthetic"
         assert app.value("part") == "chip"
         assert app.value("silicon_revisions") == "mask-1"
-        assert app.query_one("#visibility", Select).value == Select.NULL
-        app.query_one("#visibility", Select).value = "public"
+        assert isinstance(app.query_one("#pod", Select).value, str)
+        app.query_one("#pod", Select).value = "public"
         state = app.export_state()
         selected_context = deepcopy(app.context)
         app.query_one("#identity_source", Select).value = "project"
         await pilot.pause(0.15)
         assert app.value("part") == ""
         await app.find_projects()
-        assert app.projects == []
-        app.query_one("#project_scope", Input).value = "synthetic-alpha"
-        await app.find_projects()
-        assert len(app.projects) == 1
+        assert len(app.projects) == 2
         app.query_one("#project_choice", Select).value = "0"
         await pilot.pause(0.15)
         assert app.value("program") == "synthetic-alpha-program"
         assert app.value("issuer") == ""
         assert app.value("silicon_revisions") == ""
-        assert app.value("compartments") == "synthetic-alpha"
-        assert app.query_one("#visibility", Select).value == Select.NULL
+        assert app.query_one("#pod", Select).value == "synthetic-alpha"
+        assert isinstance(app.query_one("#pod", Select).value, str)
         assert "Synthetic Customer" in str(app.query_one("#context-status", Static).render())
         app.query_one("#identity_source", Select).value = "manual"
         await pilot.pause(0.15)
         assert app.value("program") == ""
-        assert app.value("compartments") == ""
+        assert app.query_one("#pod", Select).value == "synthetic-alpha"
         assert "project" in app.context and "board" in app.context
         app.query_one("#identity_source", Select).value = "project"
         await pilot.pause(0.15)
@@ -262,14 +237,14 @@ async def test_existing_board_part_then_project_and_manual_clear_stale_metadata(
         assert resumed.query_one("#board_choice", Select).value == "0"
         assert resumed.query_one("#board_part", Select).value == "0"
         assert resumed.value("part") == "chip"
-        assert resumed.query_one("#visibility", Select).value == "public"
+        assert resumed.query_one("#pod", Select).value == "public"
 
 
 @pytest.mark.asyncio
 async def test_inline_create_cancel_resume_retains_ingestion_form(tmp_path):
     store = tmp_path / "store"
     service, _ = registered_contexts(store)
-    context = {"project": service.list_configs("project", compartments={"synthetic-alpha"})[0]}
+    context = {"project": service.list_configs("project", pods={"synthetic-alpha"})[0]}
     source = tmp_path / "spec.md"
     source.write_text("# Synthetic specification\nBody.\n")
     app = IngestApp(store, source, context=context)
@@ -278,7 +253,7 @@ async def test_inline_create_cancel_resume_retains_ingestion_form(tmp_path):
         app.query_one("#issuer", Input).value = "synthetic-publisher"
         app.query_one("#name", Input).value = "Specification"
         app.query_one("#version", Input).value = "release-A"
-        app.query_one("#visibility", Select).value = "compartments"
+        app.query_one("#pod", Select).value = "synthetic-alpha"
         app.query_one("#create-project", Button).press()
         await pilot.pause(0.15)
     request = app.return_value
@@ -292,7 +267,7 @@ async def test_inline_create_cancel_resume_retains_ingestion_form(tmp_path):
         assert resumed.value("issuer") == "synthetic-publisher"
         assert resumed.value("name") == "Specification"
         assert resumed.value("version") == "release-A"
-        assert resumed.query_one("#visibility", Select).value == "compartments"
+        assert resumed.query_one("#pod", Select).value == "synthetic-alpha"
         await advance(pilot)
         assert resumed.step == 2
     assert not (store / "synthetic-alpha" / "refs" / "documents").exists()
@@ -305,7 +280,7 @@ async def test_project_selection_never_uses_repointed_board_ref_for_hardware(tmp
     replacement = deepcopy(original.manifest)
     replacement["parts"][0]["part"] = "replacement"
     service.register(service.prepare("board", replacement))
-    context = {"project": service.list_configs("project", compartments={"synthetic-alpha"})[0]}
+    context = {"project": service.list_configs("project", pods={"synthetic-alpha"})[0]}
     app = IngestApp(root, context=context)
     async with app.run_test(size=(100, 45)) as pilot:
         await pilot.pause(0.15)

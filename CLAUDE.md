@@ -38,71 +38,29 @@ Three framing facts that constrain most changes:
 
 A change that violates one of these is a bug even if every test passes.
 
-### I-1. Fail closed on labels
+### I-1. One owning pod; no application authorization layer
 
-Content that is neither asserted **public** nor carries a **compartment** is
-unreachable. The default `AccessLabel` is the empty set with `is_public=False`.
-If either label is lost anywhere in ingest → store → materialize, the affected
-content must become unreachable, not world-readable.
+A pod is a local folder, optionally its own Git repository. The Git host owns
+remote access; local filesystem availability owns local access. `public` is an
+ordinary default pod. Do not reintroduce document access labels, session
+membership lists, or public-only board/collection rules. [PODS.md](docs/PODS.md)
+owns the current model and supersedes older compartment policy sections.
 
-Two distinct failure paths, tested separately: no labels at all, and a
-compartment dropped while other fields survived.
+### I-2. Stable routes and immutable identities
 
-Every document is explicitly public or belongs to exactly one compartment.
-Reject multiple entries (including duplicates) during ingestion, registration
-and reads; never choose one or silently reinterpret a legacy multi-compartment
-document. Projects and sessions may still refer to multiple compartments, since
-their documents may belong to different compartments. No separate storage
-"domain" concept is needed (S-33).
+Each artifact lives in one pod. Cross-pod pins carry a stable pod ID and immutable
+manifest digest. Folder/display-name changes must not retarget references. Old
+snapshots keep their original bytes and hashes; legacy adapters operate in memory.
+Missing dependencies must be reported, never silently substituted or copied.
 
-The same rule covers the session mode. `sync --mode` is required and has no
-default: omitting it fails and materializes nothing. Never infer a mode, never
-default to `open`, and do not reintroduce a policy file that maps agents to
-modes — S-19 records why that was removed. If a convenience layer ever returns,
-it may only narrow the mode, never widen it.
+### I-3. Sharing is explicit and per pod
 
-### I-2. One function generates both write-time and filter-time labels
-
-The strings written into an access list and the strings used to decide what
-materializes MUST come from the same prefixing code, over `is_public` and
-compartments alike. If they diverge, the filter silently under- or over-matches
-and nobody notices. Never hand-roll a label string at a call site.
-
-### I-3. Compartmented documents never enter a repository that was not built for them
-
-There is exactly one git repository a compartmented document may live in: **that
-compartment's own private store repository** (S-22). Everywhere else it is a
-commercial incident.
-
-| Repository | Compartmented documents |
-|---|---|
-| `store/<compartment>/` — private, one per counterparty | **Yes.** This is what it is for |
-| `store/public/` | No. Public documents only |
-| The firmware code repository | **Never.** The blob cache, materialized documents, and `.caiman/` are gitignored *and* pre-commit-hook guarded |
-| This repository | **Never.** Not even as a fixture |
-
-Git history is permanent, so every one of these is one-way. An accidental
-`git add .` that commits a customer's specification cannot be undone by deleting
-the file — and once pushed, not by rewriting history either, because clones,
-forks, and host caches retain it.
-
-Three rules follow:
-
-- Do not weaken either guard on the code repository, and do not add exceptions
-  "just for testing".
-- Never commit private customer documents or vendor documents without verified
-  redistribution rights. Public open-source examples in `fixtures/` are allowed
-  when pinned provenance, per-file licenses, and required notices are retained
-  (D-08). Keep Caiman-authored acceptance criteria clearly separate from upstream
-  specifications; never misrepresent an example as a real customer contract.
-- **Ingest does not push.** Writing to the local store and publishing it to a
-  remote are separate acts with a label review between them, because a mislabel
-  caught before push costs a `git reset` and one caught after does not
-  (`STORAGE.md` §9.5).
-
-`docs/` at the root of *this* repository is Caiman's own design documentation and
-is committed normally. Materialized documents live elsewhere. Do not conflate
-them.
+Saving locally never commits or pushes. A pod's Git repository contains only that
+pod's data. Sync uses normal fast-forward protection and preserves local work on
+failure. Do not copy dependencies into a repository to make them accessible.
+Keep materialized content out of firmware repositories and preserve their guards.
+Never commit customer documents or vendor content without redistribution rights
+to this source repository; licensed examples retain their provenance and notices.
 
 ### I-4. Pin digests, not tags
 
@@ -128,10 +86,10 @@ do not repair the input or fall back to line-only citations. A document declared
 requirement-structured must also contain IDs matching its declared pattern.
 
 Registration stores one input file byte-for-byte as one content blob (S-25).
-Labels apply to the whole document and are supplied by a human. No splitting,
+The destination pod is chosen by the user. No splitting,
 chunk entities, generated maps, summaries, or AI calls belong in ingest.
 Original-source and converter information are optional (S-26). Missing provenance
-never implies public access or local conversion; explicit labels remain required.
+never implies public access or local conversion; the chosen pod determines storage.
 
 ### I-6. The brief is metadata only
 
@@ -170,8 +128,7 @@ spec looks like it supersedes that one", and above all not conflict detection
 between specifications. If a deviation amends a requirement, a human says so by
 naming the requirement IDs, and `grep` surfaces both together.
 
-The same applies to compartments: membership is declared at ingest and at project
-registration, never derived from content, filename, or directory.
+A destination pod is chosen at registration, never inferred from document content.
 
 ### I-9. The document set must be complete and greppable
 
@@ -264,8 +221,7 @@ src/caiman/
 
 Tests live under `tests/`, public example datasets under `fixtures/`, and design
 documentation under `docs/`. Session materialization remains planned; create
-new feature packages when their implementation arrives. Remembered workflow
-state contains compartments, never a default board or project.
+new feature packages when their implementation arrives. The default pod is a local preference; no board or project is a remembered default.
 
 No `server/`. If semantic fallback is ever built (S-18) it arrives as one tool
 behind one server, and not before search and selective reading of the source documents have

@@ -1,7 +1,7 @@
-"""Local, compartment-separated content storage. Registration never publishes remotely.
+"""Local content storage in independent pod folders. Registration never publishes remotely.
 
 Objects are durable before a ref becomes visible. Failure may leave unreachable
-objects; existing refs remain valid. Multi-compartment refs are not a transaction.
+objects; existing refs remain valid. Each document has one owning pod.
 The store assumes a single writer, not a hostile process modifying directories.
 """
 from dataclasses import dataclass
@@ -15,15 +15,11 @@ import tempfile
 from urllib.parse import quote
 
 from caiman.documents.ingest import PreparedDocument, validate_metadata, verify_prepared
-from caiman.documents.models import AccessLabel, canonical_json, is_schema
+from caiman.documents.models import canonical_json, is_schema
 
 
 class StoreError(ValueError):
     """Invalid or corrupt store data; no unverified content is returned."""
-
-
-class AccessDenied(StoreError):
-    """Valid stored metadata requires compartments absent from the caller's scope."""
 
 
 @dataclass(frozen=True)
@@ -31,7 +27,7 @@ class Registration:
     manifest_digest: str
     blob_digest: str
     ref_path: Path
-    compartments: tuple[str, ...]
+    pod: str
 
 
 def _hex(digest: str) -> str:
@@ -52,26 +48,6 @@ def _component(value: str) -> str:
     if value in (".", ".."):
         return "%2E" * len(value)
     return quote(value, safe="")
-
-
-def _compartments(manifest: dict) -> tuple[str, ...]:
-    labels = manifest.get("labels")
-    if not isinstance(labels, dict) or set(labels) != {"public", "compartments"}:
-        raise StoreError("Explicit public and compartment labels are required")
-    public, names = labels["public"], labels["compartments"]
-    if type(public) is not bool or not isinstance(names, list):
-        raise StoreError("Invalid access labels")
-    if public:
-        if names:
-            raise StoreError("Public and compartment labels cannot be mixed")
-        return ("public",)
-    if len(names) != 1 or any(not isinstance(n, str) for n in names):
-        raise StoreError("A private document requires exactly one compartment")
-    if len(set(names)) != len(names) or "public" in names:
-        raise StoreError("Invalid compartment labels")
-    for name in names:
-        _component(name)
-    return tuple(sorted(names))
 
 
 def _validate_manifest(manifest: dict) -> None:
@@ -101,6 +77,14 @@ class Store:
         # allowed, but the store root and everything within it may not be links.
         root = Path(root).expanduser().absolute()
         self.root = root.parent.resolve() / root.name
+        from caiman.pods.service import PodRegistry
+        self.pods = PodRegistry(self)
+
+    def pod_path(self, pod):
+        return self.pods.resolve(pod)["path"]
+
+    def pod_name(self, pod):
+        return self.pods.resolve(pod)["name"]
 
     def _directory(self, path: Path, *, create: bool = False) -> None:
         if not path.is_relative_to(self.root):
@@ -136,9 +120,9 @@ class Store:
         finally:
             os.close(fd)
 
-    def _path(self, compartment: str, kind: str, digest: str) -> Path:
+    def _path(self, pod: str, kind: str, digest: str) -> Path:
         value = _hex(digest)
-        return self.root / _component(compartment) / kind / "sha256" / value[:2] / value
+        return self.pod_path(pod) / kind / "sha256" / value[:2] / value
 
     def _read(self, path: Path) -> bytes:
         self._directory(path.parent)
@@ -151,29 +135,24 @@ class Store:
                 raise StoreError(f"Store object is not a regular file: {path}")
             return stream.read()
 
-    def _read_object(self, compartment: str, kind: str, digest: str) -> bytes:
-        content = self._read(self._path(compartment, kind, digest))
+    def _read_object(self, pod: str, kind: str, digest: str) -> bytes:
+        content = self._read(self._path(pod, kind, digest))
         if _digest(content) != digest:
             raise StoreError(f"Store object digest mismatch: {digest}")
         return content
 
-    def read_blob(self, compartment: str, digest: str) -> bytes:
-        return self._read_object(compartment, "blobs", digest)
+    def read_blob(self, pod: str, digest: str) -> bytes:
+        return self._read_object(pod, "blobs", digest)
 
-    def read_manifest(self, compartment: str, digest: str, *,
-                      allowed_compartments: set[str] | None = None) -> dict:
-        content = self._read_object(compartment, "manifests", digest)
+    def read_manifest(self, pod: str, digest: str) -> dict:
+        content = self._read_object(pod, "manifests", digest)
         try:
             manifest = json.loads(content)
-            _validate_manifest(manifest)
             if canonical_json(manifest) != content:
                 raise StoreError("Manifest is not canonical")
-            if compartment not in _compartments(manifest):
-                raise StoreError("Manifest labels do not match containing compartment")
-            allowed = (set() if compartment == "public" else {compartment}) if allowed_compartments is None else allowed_compartments
-            labels = AccessLabel(manifest["labels"]["public"], frozenset(manifest["labels"]["compartments"]))
-            if not labels.permits(allowed):
-                raise AccessDenied("The document compartment must be authorized")
+            from caiman.storage.legacy import manifest_view
+            manifest = manifest_view(manifest)
+            _validate_manifest(manifest)
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise StoreError("Invalid manifest JSON") from exc
         return manifest
@@ -207,28 +186,26 @@ class Store:
             except FileNotFoundError:
                 pass
 
-    def _write_object(self, compartment: str, kind: str, digest: str, content: bytes) -> None:
+    def _write_object(self, pod: str, kind: str, digest: str, content: bytes) -> None:
         if _digest(content) != digest:
             raise StoreError("Prepared object digest mismatch")
-        path = self._path(compartment, kind, digest)
+        path = self._path(pod, kind, digest)
         self._atomic_write(path, content, immutable=True)
 
     def register(self, prepared: PreparedDocument) -> Registration:
         verify_prepared(prepared)
         manifest = prepared.manifest
         _validate_manifest(manifest)
-        compartments = _compartments(manifest)
+        pod = self.pods.resolve(prepared.pod)["id"]
         content = canonical_json(manifest)
         if _digest(content) != prepared.manifest_digest or _digest(prepared.content) != prepared.blob_digest:
             raise StoreError("Prepared document digest mismatch")
         if manifest["files"][0] != {"path": "document.md", "sha256": _hex(prepared.blob_digest), "size": len(prepared.content)}:
             raise StoreError("Manifest does not describe prepared document bytes")
-        refs = [self.root / _component(name) / "refs" / "documents" / document_ref(manifest)
-                for name in compartments]
+        ref = self.pod_path(pod) / "refs" / "documents" / document_ref(manifest)
         # Source verification and all input checks precede the first mkdir.
-        for compartment in compartments:
-            self._write_object(compartment, "blobs", prepared.blob_digest, prepared.content)
-            self._write_object(compartment, "manifests", prepared.manifest_digest, content)
-        for ref in refs:
-            self._atomic_write(ref, (prepared.manifest_digest + "\n").encode(), immutable=False)
-        return Registration(prepared.manifest_digest, prepared.blob_digest, refs[0], compartments)
+        self.pods.ensure(pod)
+        self._write_object(pod, "blobs", prepared.blob_digest, prepared.content)
+        self._write_object(pod, "manifests", prepared.manifest_digest, content)
+        self._atomic_write(ref, (prepared.manifest_digest + "\n").encode(), immutable=False)
+        return Registration(prepared.manifest_digest, prepared.blob_digest, ref, pod)

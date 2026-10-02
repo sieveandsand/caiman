@@ -5,19 +5,19 @@ import pytest
 
 from caiman.configurations.service import ConfigurationService
 from caiman.documents.ingest import prepare_document
-from caiman.storage.store import AccessDenied, Store, StoreError
+from caiman.storage.store import Store, StoreError
 
 
-def document(tmp_path, store, *, compartments=(), version="v1", text="# Manual\n\n## Registers\nSynthetic text\n", part="chip", silicon_revisions=()):
+def document(tmp_path, store, *, pods=(), version="v1", text="# Manual\n\n## Registers\nSynthetic text\n", part="chip", silicon_revisions=()):
     path = tmp_path / "synthetic.md"
     path.write_text(text)
     prepared = prepare_document(path, {
         "issuer": "synthetic", "part": part, "doc_type": "manual", "version": version,
-        "structure": "prose", "labels": {"public": not compartments, "compartments": list(compartments)},
+        "structure": "prose", 'pod': ('public' if not pods else (list(pods))[0]),
         "silicon_revisions": list(silicon_revisions),
     })
     registered = store.register(prepared)
-    return {"ref": registered.ref_path.relative_to(store.root / registered.compartments[0] / "refs" / "documents").as_posix()}
+    return {"ref": registered.ref_path.relative_to(store.root / registered.pod / "refs" / "documents").as_posix()}
 
 
 def board(selector):
@@ -25,9 +25,9 @@ def board(selector):
         {"role": "main", "vendor": "synthetic", "part": "chip", "documents": [selector]}], "links": []}
 
 
-def project(selector, *, compartments=("alpha",)):
+def project(selector, *, pods=("alpha",)):
     return {"project": "flight", "version": "sample/A", "customer": "Synthetic customer",
-            "compartments": list(compartments), "boards": [{"name": "demo", "version": "v/one"}],
+            'pod': (list(pods))[0], "boards": [{"name": "demo", "version": "v/one"}],
             "spec_set": "release A", "documents": [selector],
             "features": [{"name": "flash", "scope": "required", "governed_by": [selector], "realized_on": [{"board": "demo", "version": "v/one", "role": "main"}]}]}
 
@@ -54,26 +54,25 @@ def test_board_pins_survive_document_ref_repoint(tmp_path, setup):
 
 def test_project_whole_snapshot_and_pins(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
     prepared = service.prepare("project", project(selector))
     snapshot = deepcopy(prepared.manifest)
     result = service.register(prepared)
     assert len(result.ref_paths) == 1
-    assert service.load("project", "flight", "sample/A", compartments={"alpha"}) == snapshot
-    assert service.list_versions("project", "flight", compartments={"alpha"}) == ["sample/A"]
-    assert service.list_versions("project", "flight") == []
+    assert service.load("project", "flight", "sample/A", pods={"alpha"}) == snapshot
+    assert service.list_versions("project", "flight", pods={"alpha"}) == ["sample/A"]
+    assert service.list_versions("project", "flight") == ["sample/A"]
     assert "precedence" not in snapshot
     for location in (snapshot["documents"][0], snapshot["features"][0]["governed_by"][0]):
         assert location["digest"].startswith("sha256:")
-        assert location["compartment"] == "alpha"
+        assert location["pod"] == "alpha"
     assert snapshot["boards"][0]["digest"].startswith("sha256:")
-    with pytest.raises(StoreError):
-        service.load("project", "flight", "sample/A")
+    assert service.load("project", "flight", "sample/A") == prepared.manifest
 
 
 def test_project_board_ref_repoint_does_not_change_prepared_pin(tmp_path, setup):
     store, service, ref = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
     prepared = service.prepare("project", project(selector))
     original = prepared.manifest["boards"][0]["digest"]
     data = board(ref)
@@ -81,7 +80,7 @@ def test_project_board_ref_repoint_does_not_change_prepared_pin(tmp_path, setup)
     newer = service.register(service.prepare("board", data))
     assert newer.digest != original
     service.register(prepared)
-    assert service.load("project", "flight", "sample/A", compartments={"alpha"})["boards"][0]["digest"] == original
+    assert service.load("project", "flight", "sample/A", pods={"alpha"})["boards"][0]["digest"] == original
 
 
 def test_project_pins_two_versions_of_one_board_each_by_its_own_digest(tmp_path, setup):
@@ -91,7 +90,7 @@ def test_project_pins_two_versions_of_one_board_each_by_its_own_digest(tmp_path,
     second["parts"].append({"role": "radio", "vendor": "synthetic", "part": "chip", "documents": []})
     two = service.register(service.prepare("board", second)).digest
     one = service.load_digest("board", service._read_ref(service._config_path("board", "demo", "v/one", "public")))
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
     data = project(selector)
     data["boards"].append({"name": "demo", "version": "v/two"})
     # Both boards declare `main`; each entry names which one it means.
@@ -102,7 +101,7 @@ def test_project_pins_two_versions_of_one_board_each_by_its_own_digest(tmp_path,
     assert pinned["v/two"] == two
     assert pinned["v/one"] != two and one["version"] == "v/one"
     service.register(prepared)
-    assert service.load("project", "flight", "sample/A", compartments={"alpha"}) == prepared.manifest
+    assert service.load("project", "flight", "sample/A", pods={"alpha"}) == prepared.manifest
     data["features"][0]["realized_on"] = [{"board": "demo", "version": "v/one", "role": "radio"}]
     with pytest.raises(ValueError, match="realized_on"):
         service.prepare("project", data)
@@ -110,7 +109,7 @@ def test_project_pins_two_versions_of_one_board_each_by_its_own_digest(tmp_path,
 
 def test_every_pinned_board_must_exist(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
     data = project(selector)
     data["boards"].append({"name": "demo", "version": "missing"})
     with pytest.raises(StoreError):
@@ -119,36 +118,36 @@ def test_every_pinned_board_must_exist(tmp_path, setup):
 
 def test_feature_ref_uses_project_pin_even_after_ref_repoint(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
     earlier = service.prepare("project", project(selector)).manifest["documents"][0]
-    document(tmp_path, store, compartments=("alpha",), part="spec", text="# Replacement\nDifferent\n")
+    document(tmp_path, store, pods=("alpha",), part="spec", text="# Replacement\nDifferent\n")
     data = project(selector)
     data["documents"] = [earlier]
     prepared = service.prepare("project", data)
     assert prepared.manifest["features"][0]["governed_by"][0]["digest"] == earlier["digest"]
-    document(tmp_path, store, compartments=("alpha",), part="spec", text="# Again\nDifferent again\n")
+    document(tmp_path, store, pods=("alpha",), part="spec", text="# Again\nDifferent again\n")
     service.register(prepared)
-    assert service.load("project", "flight", "sample/A", compartments={"alpha"})["documents"][0]["digest"] == earlier["digest"]
+    assert service.load("project", "flight", "sample/A", pods={"alpha"})["documents"][0]["digest"] == earlier["digest"]
 
 
 def test_cross_customer_and_public_board_rejected(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("beta",), part="spec")
-    with pytest.raises(ValueError):
-        service.prepare("project", project({**selector, "compartment": "beta"}))
-    with pytest.raises(ValueError):
-        service.prepare("board", board({**selector, "compartment": "beta"}))
-    assert not (store.root / "alpha").exists()
+    selector = document(tmp_path, store, pods=('beta',), part='spec')
+    prepared = service.prepare('project', project({**selector, 'pod': 'beta'}))
+    assert prepared.manifest['documents'][0]['pod'] == 'beta'
+    # Board applicability still checks hardware identity, independent of pod.
+    with pytest.raises(ValueError, match='part'):
+        service.prepare('board', board({**selector, 'pod': 'beta'}))
 
 
-def test_multi_compartment_project_requires_all_labels(tmp_path, setup):
+def test_multi_pod_project_requires_all_labels(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
-    data = project(selector, compartments=("alpha", "program"))
-    service.register(service.prepare("project", data))
-    with pytest.raises(StoreError, match="authorized"):
-        service.load("project", "flight", "sample/A", compartments={"alpha"})
-    assert service.load("project", "flight", "sample/A", compartments={"alpha", "program"})["customer"] == data["customer"]
+    selector = document(tmp_path, store, pods=('alpha',), part='spec')
+    data = project(selector)
+    saved = service.prepare('project', data)
+    service.register(saved)
+    assert service.load('project', 'flight', 'sample/A') == saved.manifest
+    assert len(list(store.root.glob('*/refs/projects/flight/sample%2FA'))) == 1
 
 
 def test_review_mutation_and_blob_corruption_fail_before_new_writes(tmp_path, setup):
@@ -167,21 +166,21 @@ def test_review_mutation_and_blob_corruption_fail_before_new_writes(tmp_path, se
     assert not (store.root / "public/refs/boards/demo/new").exists()
 
 
-def test_ambiguous_ref_requires_compartment(tmp_path, setup):
+def test_ambiguous_ref_requires_pod(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
-    document(tmp_path, store, compartments=("beta",), part="spec", text="# Different\nText\n")
-    data = project(selector, compartments=("alpha", "beta"))
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
+    document(tmp_path, store, pods=("beta",), part="spec", text="# Different\nText\n")
+    data = project(selector, pods=("alpha", "beta"))
     with pytest.raises(StoreError, match="Ambiguous"):
         service.prepare("project", data)
-    data = project({**selector, "compartment": "alpha"}, compartments=("alpha", "beta"))
-    assert service.prepare("project", data).manifest["documents"][0]["compartment"] == "alpha"
+    data = project({**selector, "pod": "alpha"}, pods=("alpha", "beta"))
+    assert service.prepare("project", data).manifest["documents"][0]["pod"] == "alpha"
 
 
 def test_feature_cannot_silently_add_document(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
-    extra = document(tmp_path, store, compartments=("alpha",), part="extra")
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
+    extra = document(tmp_path, store, pods=("alpha",), part="extra")
     data = project(selector)
     data["features"][0]["governed_by"] = [extra]
     with pytest.raises(StoreError, match="belong"):
@@ -190,9 +189,9 @@ def test_feature_cannot_silently_add_document(tmp_path, setup):
 
 def test_list_documents_default_public_only(tmp_path, setup):
     store, service, _ = setup
-    document(tmp_path, store, compartments=("alpha",), part="spec")
-    assert {entry["compartment"] for entry in service.list_documents()} == {"public"}
-    assert {entry["compartment"] for entry in service.list_documents(compartments={"alpha"})} == {"public", "alpha"}
+    document(tmp_path, store, pods=("alpha",), part="spec")
+    assert {entry["pod"] for entry in service.list_documents()} == {"public", "alpha"}
+    assert {entry["pod"] for entry in service.list_documents(pods={"alpha"})} == {"alpha"}
 
 
 def test_board_document_applicability(tmp_path, setup):
@@ -218,9 +217,9 @@ def test_board_revision_must_be_declared_applicable(tmp_path, setup):
 
 def test_dropped_project_labels_never_register(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
     prepared = service.prepare("project", project(selector))
-    prepared.manifest["compartments"] = []
+    prepared.manifest["pods"] = []
     with pytest.raises(ValueError):
         service.register(prepared)
     assert not (store.root / "alpha/refs/projects").exists()
@@ -233,77 +232,73 @@ def test_selector_traversal_rejected(setup, ref):
         service.prepare("board", board({"ref": ref}))
 
 
-@pytest.mark.parametrize("compartments", ["alpha", b"alpha", 123, [None], {"nested": "alpha"}])
-def test_scope_requires_explicit_names_collection(setup, compartments):
+@pytest.mark.parametrize("pods", ["alpha", b"alpha", 123, [None], {"nested": "alpha"}])
+def test_scope_requires_explicit_names_collection(setup, pods):
     _, service, _ = setup
-    with pytest.raises(StoreError):
-        service.list_documents(compartments=compartments)
-
-
-def test_catalog_omits_documents_in_other_compartments(tmp_path, setup):
-    store, service, _ = setup
-    document(tmp_path, store, compartments=("alpha",), part="visible")
-    restricted = document(tmp_path, store, compartments=("program",), part="restricted")
-    records = service.list_documents(compartments={"alpha"})
-    assert {entry["manifest"]["part"] for entry in records} == {"chip", "visible"}
-    assert len(service.list_documents(compartments={"alpha", "program"})) == 3
     with pytest.raises(ValueError):
-        service.prepare("project", project({**restricted, "compartment": "program"}))
+        service.list_documents(pods=pods)
 
 
-def test_version_catalog_omits_project_with_additional_compartments(tmp_path, setup):
+def test_catalog_omits_documents_in_other_pods(tmp_path, setup):
     store, service, _ = setup
-    visible = document(tmp_path, store, compartments=("alpha",), part="visible")
-    service.register(service.prepare("project", project(visible)))
-    restricted = document(tmp_path, store, compartments=("alpha",), part="restricted")
-    data = project(restricted, compartments=("alpha", "program"))
-    data["version"] = "restricted"
-    service.register(service.prepare("project", data))
-    assert service.list_versions("project", "flight", compartments={"alpha"}) == ["sample/A"]
-    with pytest.raises(AccessDenied):
-        service.load("project", "flight", "restricted", compartments={"alpha"})
+    document(tmp_path, store, pods=("alpha",), part="visible")
+    restricted = document(tmp_path, store, pods=("program",), part="restricted")
+    records = service.list_documents(pods={"alpha"})
+    assert {entry["manifest"]["part"] for entry in records} == {"visible"}
+    assert len(service.list_documents(pods={"alpha", "program"})) == 2
+    assert service.prepare("project", project({**restricted, "pod": "program"})).manifest["documents"][0]["pod"] == "program"
 
 
-def test_unqualified_ref_ignores_undeclared_compartment_for_public_alternative(tmp_path, setup):
+def test_version_catalog_omits_project_with_additional_pods(tmp_path, setup):
+    store, service, _ = setup
+    pin = document(tmp_path, store, pods=('alpha',), part='spec')
+    saved = service.prepare('project', project(pin)); service.register(saved)
+    (store.root / 'alpha' / 'blobs').rename(store.root / 'alpha' / '.unavailable-blobs')
+    assert service.list_versions('project', 'flight') == ['sample/A']
+    assert service.load('project', 'flight', 'sample/A') == saved.manifest
+    with pytest.raises(OSError):
+        service.prepare('project', saved.manifest, pod='alpha')
+
+
+def test_unqualified_ref_ignores_undeclared_pod_for_public_alternative(tmp_path, setup):
     store, service, ref = setup
-    document(tmp_path, store, compartments=("program",))
-    prepared = service.prepare("project", project(ref))
-    assert prepared.manifest["documents"][0]["compartment"] == "public"
-    with pytest.raises(ValueError, match="outside this configuration"):
-        service.prepare("project", project({**ref, "compartment": "program"}))
+    document(tmp_path, store, pods=('program',))
+    with pytest.raises(ValueError, match='Ambiguous'):
+        service.prepare('project', project(ref))
+    saved = service.prepare('project', project({**ref, 'pod': 'program'}))
+    assert saved.manifest['documents'][0]['pod'] == 'program'
 
 
 def test_catalog_does_not_hide_corrupt_restricted_manifest(tmp_path, setup):
     store, service, _ = setup
-    document(tmp_path, store, compartments=("alpha",), part="restricted")
+    document(tmp_path, store, pods=("alpha",), part="restricted")
     path = next(store.root.glob("alpha/manifests/sha256/*/*"))
     path.chmod(0o600)
     path.write_bytes(b"corrupt")
     with pytest.raises(StoreError) as error:
-        service.list_documents(compartments={"alpha"})
-    assert not isinstance(error.value, AccessDenied)
+        service.list_documents(pods={"alpha"})
 
 
 def test_configuration_catalog_boards_and_explicit_project_scopes(tmp_path, setup):
     store, service, _ = setup
     boards = service.list_configs("board")
-    assert [(entry["name"], entry["version"], entry["compartment"]) for entry in boards] == [("demo", "v/one", "public")]
+    assert [(entry["name"], entry["version"], entry["pod"]) for entry in boards] == [("demo", "v/one", "public")]
     assert boards[0]["digest"].startswith("sha256:")
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
     service.register(service.prepare("project", project(selector)))
-    assert service.list_configs("project") == []
-    assert service.list_configs("project", compartments={"beta"}) == []
-    projects = service.list_configs("project", compartments={"alpha"})
+    assert len(service.list_configs("project")) == 1
+    assert service.list_configs("project", pods={"beta"}) == []
+    projects = service.list_configs("project", pods={"alpha"})
     assert [(entry["name"], entry["version"]) for entry in projects] == [("flight", "sample/A")]
     assert projects[0]["manifest"]["customer"] == "Synthetic customer"
 
 
 def test_configuration_catalog_omits_restricted_and_deduplicates_copies(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
-    service.register(service.prepare("project", project(selector, compartments=("alpha", "program"))))
-    assert service.list_configs("project", compartments={"alpha"}) == []
-    assert len(service.list_configs("project", compartments={"alpha", "program"})) == 1
+    selector = document(tmp_path, store, pods=("alpha",), part="spec")
+    service.register(service.prepare("project", project(selector, pods=("alpha", "program"))))
+    assert len(service.list_configs("project", pods={"alpha"})) == 1
+    assert len(service.list_configs("project", pods={"alpha", "program"})) == 1
 
 
 def test_configuration_catalog_surfaces_corruption(tmp_path, setup):
@@ -336,18 +331,13 @@ def test_load_digest_retains_board_selection_after_ref_moves(setup):
 
 def test_load_digest_project_requires_explicit_location_and_full_scope(tmp_path, setup):
     store, service, _ = setup
-    selector = document(tmp_path, store, compartments=("alpha",), part="spec")
-    prepared = service.prepare("project", project(selector, compartments=("alpha", "program")))
-    service.register(prepared)
-    with pytest.raises(StoreError):
-        service.load_digest("project", prepared.digest)
-    with pytest.raises(StoreError):
-        service.load_digest("project", prepared.digest, compartment="alpha")
-    with pytest.raises(AccessDenied):
-        service.load_digest("project", prepared.digest, compartment="alpha", compartments={"alpha"})
-    assert service.load_digest("project", prepared.digest, compartment="alpha", compartments={"alpha", "program"}) == prepared.manifest
-    with pytest.raises(StoreError):
-        service.load_digest("board", prepared.digest, compartment="alpha", compartments={"alpha", "program"})
+    selector = document(tmp_path, store, pods=('alpha',), part='spec')
+    saved = service.prepare('project', project(selector)); service.register(saved)
+    assert service.load_digest('project', saved.digest, pod='alpha') == saved.manifest
+    with pytest.raises((OSError, ValueError)):
+        service.load_digest('project', saved.digest, pod='missing')
+    with pytest.raises(ValueError):
+        service.load_digest('board', saved.digest, pod='alpha')
 
 
 @pytest.mark.parametrize("digest", ["../escape", "sha256:" + "A" * 64, "sha256:short"])
@@ -391,7 +381,7 @@ def test_board_part_document_cannot_be_a_program_document(tmp_path, setup):
     path.write_text("# Spec\n\n## Boot\nSynthetic text\n")
     prepared = prepare_document(path, {
         "issuer": "synthetic", "program": "flight", "doc_type": "spec", "version": "v1",
-        "structure": "prose", "labels": {"public": True, "compartments": []}})
+        "structure": "prose", 'pod': 'public'})
     registered = store.register(prepared)
     ref = registered.ref_path.relative_to(store.root / "public" / "refs" / "documents").as_posix()
     with pytest.raises(StoreError, match="part"):

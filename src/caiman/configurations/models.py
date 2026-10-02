@@ -61,8 +61,8 @@ class _Validator:
             if key in data:
                 self.string(data[key], key)
 
-    def selector(self, value, path, compartments, extra=()):
-        if not self.object(value, path, {'ref', 'digest', 'compartment', *extra}):
+    def selector(self, value, path, pods, extra=()):
+        if not self.object(value, path, {'ref', 'digest', 'pod', *extra}):
             return
         if not {'ref', 'digest'} & value.keys():
             self.error(path, 'Supply a document ref or digest')
@@ -73,10 +73,9 @@ class _Validator:
                     self.error(path + '.ref', 'Use a relative document ref without traversal segments')
         if 'digest' in value:
             self.digest(value['digest'], path + '.digest')
-        if 'compartment' in value:
-            compartment = value['compartment']
-            if self.string(compartment, path + '.compartment', True) and compartment not in compartments:
-                self.error(path + '.compartment', 'Document compartment is outside this configuration')
+        if 'pod' in value:
+            pod = value['pod']
+            self.string(pod, path + '.pod', True)
         if 'note' in value:
             self.string(value['note'], path + '.note')
         if 'notes' in value:
@@ -84,21 +83,19 @@ class _Validator:
         if 'requirements' in value:
             self.strings(value['requirements'], path + '.requirements', nonempty=True)
 
-    def selectors(self, value, path, compartments, extra=(), board=False):
+    def selectors(self, value, path, pods, extra=(), board=False):
         seen = set()
         for index, selector in enumerate(self.sequence(value, path)):
             location = f'{path}.{index}'
-            self.selector(selector, location, compartments, extra)
+            self.selector(selector, location, pods, extra)
             if not isinstance(selector, dict):
                 continue
-            if board:
-                selector.setdefault('compartment', 'public')
-            # Duplicate refs or pinned digests in the same compartment are ambiguous.
+            # Duplicate refs or pinned digests in the same pod are ambiguous.
             for key in ('ref', 'digest'):
                 item = selector.get(key)
-                compartment = selector.get('compartment')
-                if isinstance(item, str) and (compartment is None or isinstance(compartment, str)):
-                    identity = (compartment, key, item)
+                pod = selector.get('pod')
+                if isinstance(item, str) and (pod is None or isinstance(pod, str)):
+                    identity = (pod, key, item)
                     if identity in seen:
                         self.error(location, 'Duplicate document selector')
                     seen.add(identity)
@@ -122,7 +119,7 @@ def declared_schema(data, kind):
 
 def _base(data, kind, allowed, required):
     validator = _Validator()
-    if not validator.object(data, '', allowed | {'schema', 'derives_from', 'relation'}, required):
+    if not validator.object(data, '', allowed | {'schema', 'derives_from', 'relation', 'pod'}, required):
         validator.finish(data)
     data = deepcopy(data)
     accepted = accepted_schemas(kind)
@@ -133,6 +130,8 @@ def _base(data, kind, allowed, required):
     data.setdefault('schema', current_schema(kind))
     validator.string(data.get(kind), kind, True)
     validator.string(data.get('version'), 'version')
+    if 'pod' in data:
+        validator.string(data['pod'], 'pod', True)
     validator.lineage(data)
     return validator, data
 
@@ -341,7 +340,7 @@ def _same_pin(selector, documents) -> bool:
     if not isinstance(selector, dict):
         return False
     for document in documents:
-        if not isinstance(document, dict) or document.get('compartment') != selector.get('compartment'):
+        if not isinstance(document, dict) or document.get('pod') != selector.get('pod'):
             continue
         if 'digest' in selector and document.get('digest') == selector['digest']:
             return True
@@ -351,8 +350,10 @@ def _same_pin(selector, documents) -> bool:
 
 
 def _board_selector(board, validator, path) -> bool:
-    if not validator.object(board, path, {'name', 'version', 'digest'}, {'name', 'version'}):
+    if not validator.object(board, path, {'name', 'version', 'digest', 'pod'}, {'name', 'version'}):
         return False
+    if 'pod' in board:
+        validator.string(board['pod'], path + '.pod', True)
     named = validator.string(board.get('name'), path + '.name', True)
     versioned = validator.string(board.get('version'), path + '.version')
     if 'digest' in board:
@@ -362,15 +363,12 @@ def _board_selector(board, validator, path) -> bool:
 
 def validate_project(data: dict) -> dict:
     legacy = project_is_legacy(data)
-    fields = {'project', 'version', 'customer', 'compartments', 'spec_set', 'documents', 'features'}
+    fields = {'project', 'version', 'customer', 'spec_set', 'documents', 'features'}
     # v1 snapshots may still carry a declared precedence; v2 has none.
     fields |= {'board', 'precedence'} if legacy else {'boards'}
     validator, data = _base(data, 'project', fields, fields - {'precedence'})
     validator.string(data.get('customer'), 'customer')
     validator.string(data.get('spec_set'), 'spec_set')
-    compartments = validator.strings(data.get('compartments'), 'compartments', True, True)
-    if 'public' in compartments:
-        validator.error('compartments', 'Projects must carry named compartments, never public')
     pinned = set()
     if legacy:
         if _board_selector(data.get('board'), validator, 'board'):
@@ -387,7 +385,7 @@ def validate_project(data: dict) -> dict:
                 if identity in pinned:
                     validator.error(path, 'Duplicate board version; pin each board version once')
                 pinned.add(identity)
-    allowed = compartments | {'public'}
+    allowed = set()
     validator.selectors(data.get('documents'), 'documents', allowed)
     if legacy:
         validator.selectors(data.get('precedence', []), 'precedence', allowed, ('note',))

@@ -57,7 +57,7 @@ async def test_register_requires_explicit_button_and_preserves_old_digest(board_
         assert service.load('board', 'demo', 'v1') == original.manifest
         await pilot.click('#register')
         await wait_for(pilot, lambda: app.return_value is not None)
-    assert app.return_value == {'manifest': prepared.manifest, 'digest': prepared.digest}
+    assert app.return_value == {'manifest': prepared.manifest, 'digest': prepared.digest, 'pod': prepared.pod}
     assert service.load('board', 'demo', 'v1') == prepared.manifest
     assert service.load_digest('board', original.digest) == original.manifest
 

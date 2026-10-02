@@ -32,7 +32,7 @@ class DocumentEditReviewApp(NavigationApp):
         yield Static('caiman  /  review document changes', id='brand')
         with VerticalScroll(id='body'):
             manifest = self.prepared.manifest
-            yield Static(f"{document_name(manifest)} · {manifest['version']}\nAccess: {self.selection['compartment']}", markup=False)
+            yield Static(f"{document_name(manifest)} · {manifest['version']}\nPod: {self.selection['pod']}", markup=False)
             yield Static('Register saves a metadata snapshot. Existing document pins keep their original snapshot.', classes='hint')
             with Collapsible(title='Review every changed field', collapsed=False):
                 before = json.dumps(self.selection['manifest'], indent=2, ensure_ascii=False, sort_keys=True).splitlines()
@@ -72,8 +72,8 @@ class DocumentEditReviewApp(NavigationApp):
                     button.disabled = False
 
 
-def edit_document(root, selection, *, compartments=()):
-    service = DocumentEditService(Store(root), compartments=compartments)
+def edit_document(root, selection, *, pods=()):
+    service = DocumentEditService(Store(root), pods=pods)
     original = service.original(selection)
     draft, message = deepcopy(original), ''
     while True:

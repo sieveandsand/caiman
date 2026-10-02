@@ -1,5 +1,10 @@
 # Storage Design
 
+**Current pod model:** [PODS.md](PODS.md) supersedes the access-label,
+compartment, catalog-authorization, and separate-repository-mirror rules below.
+Pods are local folders with optional Git sharing; the Git host owns remote
+permissions. Older sections are retained as design history.
+
 **Status:** Accepted. Local storage and Repo Manager repository setup are
 implemented. Team storage (per-compartment Git transport, publication, verified
 fetch, and context snapshots) is adopted (S-35) and not yet implemented; §14 sets

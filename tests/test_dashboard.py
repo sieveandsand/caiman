@@ -52,7 +52,7 @@ async def test_dashboard_actions_are_reachable_by_keyboard(action):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('category, actions', [
     ('hooks', ['hooks-claude', 'hooks-codex']),
-    ('repos', ['repo-remove', 'repo-initialize', 'repo-add'])])
+    ('repos', ['repo-create', 'repo-sync', 'repo-default', 'repo-remove', 'repo-initialize', 'repo-add'])])
 async def test_category_pages_offer_their_actions_as_cards(category, actions):
     from caiman.dashboard.onboarding import CategoryApp
     from caiman.ui.cards import AddTile

@@ -51,7 +51,7 @@ def template(kind: str) -> dict:
         }
     if kind == "project":
         return {
-            "project": "", "version": "", "customer": "", "compartments": [],
+            "project": "", "version": "", "customer": "", "pod": "public",
             "boards": [{"name": "", "version": ""}], "spec_set": "",
             "documents": [], "features": [],
         }

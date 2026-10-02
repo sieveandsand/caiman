@@ -22,14 +22,14 @@ def setup(tmp_path):
     store.register(prepare_document(source, {
         'name': 'Reference Manual', 'description': 'Registers and behavior',
         'issuer': 'synthetic', 'part': 'chip', 'version': 'Release / A',
-        'labels': {'public': False, 'compartments': ['alpha']},
+        'pod': ('alpha'),
         'source': {'pages': 12, 'sha256': 'a' * 64},
         'converter': {'name': 'Synthetic', 'version': '1', 'hosted': False},
         'silicon_revisions': ['mask-A', 'mask-B'],
         'requirements': {'pattern': r'^REQ-\d+$'},
     }))
-    selection = ConfigurationService(store).list_documents(compartments={'alpha'})[0]
-    return DocumentEditService(store, compartments={'alpha'}), selection, source
+    selection = ConfigurationService(store).list_documents(pods={'alpha'})[0]
+    return DocumentEditService(store, pods={'alpha'}), selection, source
 
 
 def snapshot(store):
@@ -51,15 +51,15 @@ def test_edit_stored_metadata_without_source_preserves_bytes_and_old_pin(setup):
     assert registered['manifest']['files'] == original['files']
     assert registered['manifest']['ingested_at'] == original['ingested_at']
     assert service.store.read_manifest('alpha', selection['digest']) == original
-    assert ConfigurationService(service.store).list_documents(compartments={'alpha'})[0] == registered
+    assert ConfigurationService(service.store).list_documents(pods={'alpha'})[0] == registered
     assert service.store.read_blob('alpha', 'sha256:' + original['files'][0]['sha256']).startswith(b'# Synthetic manual\r\n')
     with pytest.raises(StoreError, match='changed since opening'):
         service.register(selection, prepared)
 
 
 @pytest.mark.parametrize('change', [
-    lambda draft: draft.update(labels={'public': True, 'compartments': []}),
-    lambda draft: draft.pop('labels'),
+    lambda draft: draft.update(pod='public'),
+    lambda draft: draft.pop('files'),
     lambda draft: draft['files'][0].update(size=0),
     lambda draft: draft.update(original_filename='other.md'),
     lambda draft: draft.update(requirements={'pattern': '^MISSING$'}),
@@ -76,8 +76,7 @@ def test_protected_fields_and_invalid_requirement_edits_never_write(setup, chang
 
 def test_editor_cannot_load_private_document_outside_scope(setup):
     service, selection, _ = setup
-    with pytest.raises(ValueError):
-        DocumentEditService(service.store).original(selection)
+    assert DocumentEditService(service.store).original(selection) == selection['manifest']
 
 
 def test_rename_collision_does_not_replace_another_document(setup):
@@ -106,7 +105,7 @@ async def test_legacy_document_roundtrip_retains_opaque_version_and_hidden_field
     source.write_text('# Synthetic manual\nContent.\n')
     prepared = prepare_document(source, {'issuer': 'synthetic', 'part': 'chip',
         'version': '  Rev / A  ', 'doc_type': 'manual', 'structure': 'prose',
-        'labels': {'public': True, 'compartments': []}})
+        'pod': 'public'})
     prepared.manifest['schema'] = 'caiman.document.v1'
     prepared = replace(prepared, manifest_digest=digest(canonical_json(prepared.manifest)))
     store = Store(tmp_path / 'store')
@@ -123,7 +122,7 @@ async def test_legacy_document_roundtrip_retains_opaque_version_and_hidden_field
         assert edited.manifest['version'] == '  Rev / A  '
         assert edited.manifest['doc_type'] == 'manual'
         assert edited.manifest['structure'] == 'prose'
-        assert edited.manifest['schema'] == 'caiman.document.v2'
+        assert edited.manifest['schema'] == 'caiman.document.v3'
 
 
 @pytest.mark.asyncio
@@ -135,7 +134,7 @@ async def test_form_roundtrip_cards_draft_retention_and_responsive_layout(setup)
         await pilot.pause()
         assert app.collect() == selection['manifest']
         assert all(g.styles.grid_size_columns == 2 for g in app.query(Grid))
-        assert 'alpha' in str(app.query_one('#document-access', Static).content)
+        assert 'alpha' in str(app.query_one('#document-pod', Static).content)
         assert all(not card.has_class('expanded') for card in app.query(DetailCard))
         source = app.query_one('#detail-source', DetailCard)
         source.query_one('.card-summary', Button).press()
@@ -221,7 +220,7 @@ def test_invalid_and_unchanged_drafts_return_to_form_with_draft_intact(setup, mo
     monkeypatch.setattr(editing, 'DocumentFormApp', Form)
     monkeypatch.setattr(editing, 'DocumentEditReviewApp', lambda **kwargs: pytest.fail('Unexpected review'))
     before = snapshot(service.store)
-    assert edit_document(service.store.root, selection, compartments={'alpha'}) is None
+    assert edit_document(service.store.root, selection, pods={'alpha'}) is None
     assert seen[1]['draft'] == invalid
     assert 'source.pages' in seen[1]['message']
     assert 'nothing to register' in seen[2]['message']

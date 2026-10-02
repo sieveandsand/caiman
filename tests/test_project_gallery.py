@@ -9,10 +9,10 @@ from caiman.configurations.service import ConfigurationService
 from caiman.storage.store import Store
 
 
-def register_project(service, name, compartments):
+def register_project(service, name, pods):
     prepared = service.prepare('project', {
         'project': name, 'version': 'release / B', 'customer': 'Example customer',
-        'compartments': compartments, 'boards': [{'name': 'demo', 'version': 'A'}],
+        'pod': pods[0], 'boards': [{'name': 'demo', 'version': 'A'}],
         'spec_set': 'Specification A', 'documents': [], 'features': [],
     })
     service.register(prepared)
@@ -30,11 +30,12 @@ async def test_project_cards_scope_layout_focus_and_selection(tmp_path):
     register_project(service, 'second', ['alpha'])
     shared = register_project(service, 'shared', ['alpha', 'beta'])
     register_project(service, 'hidden', ['secret'])
-    app = ProjectGalleryApp(root=tmp_path, compartments=['alpha', 'beta'])
+    app = ProjectGalleryApp(root=tmp_path, pods=['alpha', 'beta'])
     async with app.run_test(size=(120, 45)) as pilot:
         await pilot.pause()
-        assert not app.query('#compartments')
-        assert [str(widget.content) for widget in app.query('.compartment-heading')] == ['alpha', 'alpha, beta']
+        assert not app.query('#pods')
+        assert app.active_pod == 'alpha'
+        assert app.query_one('#pod-tabs')
         cards = list(app.query(ProjectCard))
         assert len(cards) == 3
         assert all(grid.styles.grid_size_columns == 2 for grid in app.query(Grid))
@@ -54,7 +55,8 @@ async def test_project_cards_scope_layout_focus_and_selection(tmp_path):
         assert all(card.region.right <= 65 for card in cards)
         cards[2].focus()
         await pilot.press('enter')
-    assert app.return_value == {'manifest': shared.manifest, 'digest': shared.digest}
+    assert app.return_value['digest'] == shared.digest
+    assert app.return_value['pod'] == shared.pod
 
 
 @pytest.mark.asyncio
@@ -105,11 +107,12 @@ async def test_e_opens_the_focused_project_for_editing(tmp_path):
         'parts': [{'role': 'main', 'vendor': 'vendor', 'part': 'chip', 'documents': []}],
     }))
     project = register_project(service, 'first', ['alpha'])
-    app = ProjectGalleryApp(root=tmp_path, compartments=['alpha'])
+    app = ProjectGalleryApp(root=tmp_path, pods=['alpha'])
     async with app.run_test(size=(120, 45)) as pilot:
         await pilot.pause()
         await pilot.press('e')
-    assert app.return_value == {'manifest': project.manifest, 'digest': project.digest}
+    assert app.return_value['digest'] == project.digest
+    assert app.return_value['pod'] == project.pod
 
 
 @pytest.mark.asyncio
@@ -118,5 +121,5 @@ async def test_empty_project_gallery_add_card_requests_creation(tmp_path):
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await pilot.press('enter')
-    assert app.return_value == 'add'
+    assert app.return_value == {'action': 'add', 'pod': 'public'}
     assert not (tmp_path / 'absent').exists()

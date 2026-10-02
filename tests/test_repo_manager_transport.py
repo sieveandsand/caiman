@@ -34,80 +34,60 @@ def git(path, *args):
 
 def test_initialize_push_add_and_retry(transport, tmp_path):
     manager, remote = transport
-    manager.apply(manager.prepare('initialize', 'alpha', REMOTE, push=True))
-    assert json.loads(git(remote, 'show', 'caiman-store:store.json')) == {
-        'schema': 'caiman.store.v1', 'compartment': 'alpha'}
-    assert git(remote, 'ls-tree', '--name-only', 'caiman-store').splitlines() == ['.gitattributes', 'store.json']
+    manager.apply(manager.prepare('initialize', 'alpha', REMOTE))
+    manager.apply(manager.prepare('sync', 'alpha'))
+    assert json.loads(git(remote, 'show', 'caiman-store:pod.json'))['id'] == 'alpha'
     head = git(remote, 'rev-parse', 'caiman-store')
-    # Existing files and commits in the mirror must never be pushed by Initialize.
-    local = manager.local_path('alpha')
-    (local / 'private.md').write_text('Synthetic local-only document')
-    git(local, 'add', '.')
-    git(local, '-c', 'user.name=Test', '-c', 'user.email=test@localhost', '-c', 'commit.gpgSign=false', 'commit', '-qm', 'Local changes')
-    manager.apply(manager.prepare('initialize', 'alpha', push=True))
+    manager.apply(manager.prepare('sync', 'alpha'))
     assert git(remote, 'rev-parse', 'caiman-store') == head
     teammate = RepoManager(tmp_path / 'teammate')
     teammate.apply(teammate.prepare('add', 'alpha', REMOTE))
-    assert teammate.list_repos()[0]['remote'] == REMOTE
-    assert not teammate.local_path('alpha').exists()
-    with pytest.raises(ValueError, match='mismatch'):
-        teammate.apply(teammate.prepare('add', 'falcon', REMOTE))
-    assert len(teammate.list_repos()) == 1
+    assert teammate.local_path('alpha').exists()
+    assert next(r for r in teammate.list_repos() if r['pod'] == 'alpha')['remote'] == REMOTE
 
 
 def test_empty_remote_cannot_be_added(transport):
     manager, _ = transport
     with pytest.raises(ValueError, match='Git repository operation failed'):
         manager.apply(manager.prepare('add', 'alpha', REMOTE))
-    assert manager.list_repos() == []
+    assert [r['pod'] for r in manager.list_repos()] == ['public']
 
 
 @pytest.mark.parametrize('change', ['header', 'extra', 'symlink', 'attributes'])
 def test_invalid_remote_is_not_registered(transport, tmp_path, change):
     manager, remote = transport
-    manager.apply(manager.prepare('initialize', 'alpha', REMOTE, push=True))
+    manager.apply(manager.prepare('initialize', 'alpha', REMOTE))
+    manager.apply(manager.prepare('sync', 'alpha'))
     work = tmp_path / 'editor'
     subprocess.run(['git', 'clone', '--quiet', '--branch', 'caiman-store', str(remote), str(work)], check=True)
     if change == 'header':
-        (work / 'store.json').write_text('{"schema":"other"}')
+        (work / 'pod.json').write_text('{"schema":"other"}')
     elif change == 'extra':
         (work / 'script.sh').write_text('echo unexpected')
     elif change == 'symlink':
-        (work / 'store.json').unlink()
-        (work / 'store.json').symlink_to('/tmp/not-a-header')
+        (work / 'pod.json').unlink()
+        (work / 'pod.json').symlink_to('/tmp/not-a-header')
     else:
         (work / '.gitattributes').write_text('* filter=unexpected')
     git(work, 'add', '.')
     git(work, '-c', 'user.name=Test', '-c', 'user.email=test@localhost', '-c', 'commit.gpgSign=false', 'commit', '-qm', 'Invalid format')
     git(work, 'push', '-q', 'origin', 'caiman-store')
     reader = RepoManager(tmp_path / 'reader')
-    with pytest.raises(ValueError, match='not a Caiman repository'):
+    with pytest.raises(ValueError):
         reader.apply(reader.prepare('add', 'alpha', REMOTE))
-    assert reader.list_repos() == []
+    assert [r['pod'] for r in reader.list_repos()] == ['public']
     before = git(remote, 'rev-parse', 'caiman-store')
-    with pytest.raises(ValueError, match='Local repository saved'):
-        manager.apply(manager.prepare('initialize', 'alpha', push=True))
+    with pytest.raises(ValueError):
+        manager.apply(manager.prepare('sync', 'alpha'))
     assert git(remote, 'rev-parse', 'caiman-store') == before
-
-
-def test_push_failure_keeps_local_setup_and_can_retry(transport, monkeypatch):
-    manager, remote = transport
-    original = manager._push_initial
-    monkeypatch.setattr(manager, '_push_initial', lambda plan: (_ for _ in ()).throw(ValueError('offline')))
-    with pytest.raises(ValueError, match='Local repository saved'):
-        manager.apply(manager.prepare('initialize', 'alpha', REMOTE, push=True))
-    assert manager.list_repos()[0]['initialized']
-    assert (manager.local_path('alpha') / '.git').is_dir()
-    monkeypatch.setattr(manager, '_push_initial', original)
-    manager.apply(manager.prepare('initialize', 'alpha', push=True))
-    assert git(remote, 'rev-parse', 'caiman-store')
 
 
 def test_local_initialization_can_later_push(transport):
     manager, remote = transport
     manager.apply(manager.prepare('initialize', 'alpha'))
-    manager.apply(manager.prepare('initialize', 'alpha', REMOTE, push=True))
-    assert manager.list_repos()[0]['remote'] == REMOTE
+    manager.apply(manager.prepare('initialize', 'alpha', REMOTE))
+    manager.apply(manager.prepare('sync', 'alpha'))
+    assert next(r for r in manager.list_repos() if r['pod'] == 'alpha')['remote'] == REMOTE
     assert git(remote, 'rev-parse', 'caiman-store')
 
 
@@ -128,4 +108,4 @@ def test_https_imports_credentials_without_other_git_settings(tmp_path, monkeypa
     assert 'credential.username=engineer' in args
     assert not any('insteadof' in value for value in args)
     assert env['GIT_CONFIG_GLOBAL'] == '/dev/null'
-    assert env['GIT_ALLOW_PROTOCOL'] == 'ssh:https'
+    assert env['GIT_ALLOW_PROTOCOL'] == 'ssh:https:file'

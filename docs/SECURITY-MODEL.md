@@ -1,5 +1,10 @@
 # Security Model
 
+**Current pod model:** [PODS.md](PODS.md) supersedes the access-label,
+compartment, catalog-authorization, and separate-repository-mirror rules below.
+Pods are local folders with optional Git sharing; the Git host owns remote
+permissions. Older sections are retained as design history.
+
 **Purpose:** What the system defends against, what it does not, and where
 enforcement actually lives.
 **Owns:** The threat model, the classification scheme, the agent-selection

@@ -9,11 +9,11 @@ import re
 
 from markdown_it import MarkdownIt
 
-from caiman.documents.models import AccessLabel, ValidationError, canonical_json, current_schema, is_schema, valid_identifier
+from caiman.documents.models import ValidationError, canonical_json, current_schema, is_schema, valid_identifier
 
 
 METADATA_FIELDS = frozenset({'name', 'description', 'issuer', 'part', 'program', 'doc_type', 'version', 'structure',
-                             'labels', 'silicon_revisions', 'source', 'converter', 'requirements'})
+                             'silicon_revisions', 'source', 'converter', 'requirements'})
 GENERATED_FIELDS = frozenset({'schema', 'original_filename', 'pipeline_version', 'ingested_at', 'files'})
 
 
@@ -31,6 +31,7 @@ class PreparedDocument:
     blob_digest: str
     manifest_digest: str
     headings: tuple[Heading, ...]
+    pod: str = "public"
 
 
 def digest(content: bytes) -> str:
@@ -114,21 +115,6 @@ def validate_metadata(metadata: dict) -> dict:
         errors['structure'] = 'Choose prose or requirement'
     else:
         result['structure'] = structure
-    labels = metadata.get('labels')
-    try:
-        if not isinstance(labels, dict) or labels.keys() - {'public', 'compartments'}:
-            raise ValueError('Supply explicit public access or exactly one compartment')
-        compartments = labels.get('compartments', [])
-        if not isinstance(compartments, list) or any(not isinstance(c, str) for c in compartments):
-            raise ValueError('Compartments must be a list of names')
-        if len(compartments) > 1:
-            raise ValueError('A private document requires exactly one compartment')
-        label = AccessLabel(labels.get('public', False), frozenset(compartments))
-        if not label.prefixed_labels():
-            raise ValueError('Choose public access or exactly one compartment')
-        result['labels'] = {'public': label.is_public, 'compartments': sorted(label.compartments)}
-    except (ValueError, TypeError) as error:
-        errors['labels'] = str(error)
     if 'silicon_revisions' in metadata:
         revisions = metadata['silicon_revisions']
         if not isinstance(revisions, list) or any(not _text(v) for v in revisions):
@@ -190,7 +176,11 @@ def validate_document_text(text: str, manifest: dict) -> tuple[Heading, ...]:
     return headings
 
 
-def prepare_document(path: Path, metadata: dict) -> PreparedDocument:
+def prepare_document(path: Path, metadata: dict, *, pod: str = "public") -> PreparedDocument:
+    metadata = dict(metadata)
+    pod = metadata.pop("pod", pod)
+    if not valid_identifier(pod):
+        raise ValidationError({"pod": "Choose a pod"})
     manifest = validate_metadata(metadata)
     path = Path(path).expanduser().absolute()
     if path.suffix.lower() not in {'.md', '.markdown'} or not _text(path.name):
@@ -208,11 +198,13 @@ def prepare_document(path: Path, metadata: dict) -> PreparedDocument:
                     pipeline_version='caiman-ingest/0.1',
                     ingested_at=datetime.now(timezone.utc).isoformat(timespec='microseconds').replace('+00:00', 'Z'),
                     files=[{'path': 'document.md', 'sha256': blob_digest[7:], 'size': len(content)}])
-    return PreparedDocument(path, content, manifest, blob_digest, digest(canonical_json(manifest)), headings)
+    return PreparedDocument(path, content, manifest, blob_digest, digest(canonical_json(manifest)), headings, pod)
 
 
 def verify_prepared(prepared: PreparedDocument) -> None:
     try:
+        if not valid_identifier(prepared.pod):
+            raise ValueError("Invalid pod")
         manifest = prepared.manifest
         metadata = {key: value for key, value in manifest.items() if key in METADATA_FIELDS}
         validated = validate_metadata(metadata)

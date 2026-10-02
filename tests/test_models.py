@@ -1,28 +1,29 @@
 import pytest
-
-from caiman.documents.models import AccessLabel, canonical_json
-
-
-def test_missing_and_dropped_labels_fail_closed():
-    assert not AccessLabel().permits({'alpha'})
-    assert not AccessLabel(False, frozenset()).permits({'alpha'})
-    assert not AccessLabel(False, frozenset({'alpha', 'beta'})).permits({'alpha'})
-    assert not AccessLabel(False, frozenset({'a'})).permits('alpha')
-
-
-def test_labels_share_prefixing_and_subset_semantics():
-    label = AccessLabel(False, frozenset({'alpha'}))
-    assert label.prefixed_labels() == frozenset({'compartment:alpha'})
-    assert label.permits({'alpha', 'beta'})
-    assert AccessLabel(True).permits(set())
-
-
-@pytest.mark.parametrize('label', [lambda: AccessLabel(True, frozenset({'alpha'})),
-                                  lambda: AccessLabel(False, frozenset({'../alpha'}))])
-def test_ambiguous_or_unsafe_labels_rejected(label):
-    with pytest.raises(ValueError):
-        label()
+from caiman.documents.models import canonical_json
+from caiman.storage.store import Store
 
 
 def test_canonical_json():
     assert canonical_json({'b': 1, 'a': 'é'}) == '{"a":"é","b":1}'.encode()
+
+
+def test_pods_are_local_folders_not_authorization(tmp_path):
+    store = Store(tmp_path)
+    store.pods.ensure('alpha')
+    assert store.pods.selected() == {'public', 'alpha'}
+    assert store.pods.selected(['alpha']) == {'alpha'}
+    store.pods.set_default('alpha')
+    assert store.pods.default == 'alpha'
+
+
+@pytest.mark.parametrize('name', ['../alpha', '', '/tmp/alpha', 'a/b'])
+def test_invalid_pod_paths_are_rejected(tmp_path, name):
+    with pytest.raises(ValueError):
+        Store(tmp_path).pods.ensure(name)
+
+
+def test_pod_identity_survives_folder_rename(tmp_path):
+    store = Store(tmp_path)
+    store.pods.ensure('alpha')
+    (tmp_path / 'alpha').rename(tmp_path / 'renamed')
+    assert store.pod_path('alpha') == tmp_path / 'renamed'

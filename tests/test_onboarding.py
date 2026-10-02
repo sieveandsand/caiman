@@ -38,7 +38,7 @@ async def test_guided_board_then_project_without_documents(tmp_path):
     async with project_app.run_test(size=(110, 45)) as pilot:
         await pilot.pause()
         await fill(project_app, {'name': 'program', 'version': 'A', 'customer': 'Synthetic Customer',
-                                 'compartments': 'alpha', 'spec_set': 'release A'})
+                                 'pod': 'alpha', 'spec_set': 'release A'})
         await pilot.click('#next')
         await wait_for(pilot, lambda: project_app.reviewing and not project_app.busy)
         assert project_app.reviewing
@@ -71,7 +71,7 @@ async def test_project_requires_an_explicitly_chosen_board(tmp_path):
         await wait_for(pilot, lambda: app.boards and not app.busy)
         assert app.query_one('#board-choice', SelectionList).selected == []
         await fill(app, {'name': 'program', 'version': 'A', 'customer': 'Synthetic Customer',
-                         'compartments': 'alpha', 'spec_set': 'release A'})
+                         'pod': 'alpha', 'spec_set': 'release A'})
         await pilot.click('#next')
         await wait_for(pilot, lambda: not app.busy)
         assert not app.reviewing
@@ -96,7 +96,7 @@ async def test_project_pins_every_chosen_board_including_two_versions_of_one(tmp
             if record['name'] == 'demo':
                 choice.select(index)
         await fill(app, {'name': 'program', 'version': 'A', 'customer': 'Synthetic Customer',
-                         'compartments': 'alpha', 'spec_set': 'release A'})
+                         'pod': 'alpha', 'spec_set': 'release A'})
         await pilot.click('#next')
         await wait_for(pilot, lambda: app.reviewing and not app.busy)
         review = str(app.query_one('#review').render())

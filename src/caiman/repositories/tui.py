@@ -10,14 +10,15 @@ from caiman.repositories.service import RepoManager
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
-OPERATIONS = {'add': 'Add repository', 'remove': 'Remove repository', 'initialize': 'Initialize repository'}
+OPERATIONS = {'create': 'New local pod', 'add': 'Clone pod', 'initialize': 'Connect Git',
+              'sync': 'Sync pod', 'default': 'Set default pod', 'remove': 'Disconnect Git'}
 
 
 class RepoManagerApp(NavigationApp):
-    TITLE = 'Caiman · Repo Manager'
+    TITLE = 'Caiman · Pods'
     CSS = TERMINAL_CSS + '\n#catalog, #preview { height: auto; margin-top: 1; }\n'
 
-    def __init__(self, *, store_root, action='add'):
+    def __init__(self, *, store_root, action='create'):
         super().__init__()
         self.manager = RepoManager(store_root)
         self.initial_action = action
@@ -27,9 +28,9 @@ class RepoManagerApp(NavigationApp):
         apply_theme(self)
 
     def compose(self):
-        yield Static('caiman  /  Repo Manager', id='brand')
+        yield Static('caiman  /  Pods', id='brand')
         with VerticalScroll(id='body'):
-            yield Static('Manage a repository for each compartment.', id='step-title')
+            yield Static('Local folders, optionally shared through Git.', id='step-title')
             yield Static('', id='catalog', markup=False)
             yield Label('Action')
             yield Select([(label, key) for key, label in OPERATIONS.items()],
@@ -37,14 +38,14 @@ class RepoManagerApp(NavigationApp):
             with VerticalScroll(id='remove-fields', classes='step'):
                 yield Label('Registered repository')
                 yield Select([], prompt='Choose a repository', id='repository')
-                yield Static('Removes the saved entry. Local files and the hosted repository are kept.', classes='hint')
+                yield Static('Local files remain available.', classes='hint')
             with VerticalScroll(id='repository-fields', classes='step'):
-                yield Label('Compartment')
-                yield Input(placeholder='alpha', id='compartment')
-                yield Static('One customer or project group. Use public for public documents.', classes='hint')
+                yield Label('Pod')
+                yield Input(placeholder='alpha', id='pod')
+                yield Static('Choose a pod name, such as alpha.', classes='hint')
                 yield Label('Repository URL', id='remote-label')
                 yield Input(placeholder='git@example.com:team/store-alpha.git', id='remote')
-                yield Checkbox('Push initial metadata to this remote', id='push')
+
                 yield Static('', id='operation-help')
             yield Static('', id='preview', markup=False)
         yield Static('', id='status', markup=False)
@@ -60,26 +61,31 @@ class RepoManagerApp(NavigationApp):
 
     def show_action(self):
         action = self.query_one('#operation', Select).value
-        self.query_one('#remove-fields').display = action == 'remove'
-        self.query_one('#repository-fields').display = action != 'remove'
-        self.query_one('#push').display = action == 'initialize'
+        choose = action in {'remove', 'sync', 'default'}
+        self.query_one('#remove-fields').display = choose
+        self.query_one('#repository-fields').display = not choose
+        self.query_one('#remote').display = action in {'add', 'initialize'}
+        self.query_one('#remote-label').display = action in {'add', 'initialize'}
         self.query_one('#remote-label', Label).update('Repository URL (optional)' if action == 'initialize' else 'Repository URL')
-        self.query_one('#operation-help', Static).update(
-            'Creates locally. Optional push requires an empty remote you already created; it sends only Caiman metadata.'
-            if action == 'initialize' else
-            'Checks the remote caiman-store branch and compartment before saving its SSH or HTTPS address. Use a private repository; Git-host membership controls access.')
+        self.query_one('#operation-help', Static).update({
+            'create': 'Creates a folder. Git is optional.',
+            'add': 'Clone an existing pod using your Git credentials.',
+            'initialize': 'Enable Git in a pod folder. Use Sync to share its contents.',
+        }.get(action, ''))
 
     async def refresh_catalog(self):
         try:
             self.records = await asyncio.to_thread(self.manager.list_repos)
             self.query_one('#repository', Select).set_options([
-                (record['compartment'] + ' · ' + (record['remote'] or 'Local only'), record['compartment'])
+                (record['pod'] + ' · ' + (record['remote'] or 'Local only'), record['pod'])
                 for record in self.records])
             lines = []
             for record in self.records:
-                state = 'Local repo initialized' if record['initialized'] else 'Address registered'
-                lines.append(f"{record['compartment']} · {state}\n{record['remote'] or 'Local only'}")
-            self.query_one('#catalog', Static).update('\n\n'.join(lines) or 'No repositories registered yet.')
+                state = 'Git connected' if record['initialized'] else 'Local folder'
+                if record['default']:
+                    state += ' · Default'
+                lines.append(f"{record['pod']} · {state}\n{record['remote'] or 'Local only'}")
+            self.query_one('#catalog', Static).update('\n\n'.join(lines) or 'No pods yet.')
         except (OSError, ValueError) as error:
             self.query_one('#status', Static).update(str(error))
 
@@ -120,13 +126,13 @@ class RepoManagerApp(NavigationApp):
             if event.button.id == 'review':
                 self.invalidate()
                 action = self.query_one('#operation', Select).value
-                compartment = (self.query_one('#repository', Select).value if action == 'remove'
-                               else self.query_one('#compartment', Input).value.strip())
-                if not isinstance(compartment, str) or not compartment:
-                    raise ValueError('Choose a registered repository' if action == 'remove' else 'Enter a compartment')
+                pod = (self.query_one('#repository', Select).value if action in {'remove', 'sync', 'default'}
+                               else self.query_one('#pod', Input).value.strip())
+                if not isinstance(pod, str) or not pod:
+                    raise ValueError('Choose a registered repository' if action in {'remove', 'sync', 'default'} else 'Enter a pod')
                 remote = self.query_one('#remote', Input).value.strip()
-                push = action == 'initialize' and self.query_one('#push', Checkbox).value
-                self.plan = await asyncio.to_thread(self.manager.prepare, action, compartment, remote, push)
+                push = False
+                self.plan = await asyncio.to_thread(self.manager.prepare, action, pod, remote, push)
                 self.query_one('#preview', Static).update(self.plan.preview)
                 self.query_one('#apply', Button).label = OPERATIONS[action]
                 self.query_one('#status', Static).update('Review the operation above, then apply it.')
@@ -136,9 +142,7 @@ class RepoManagerApp(NavigationApp):
                 await asyncio.to_thread(self.manager.apply, plan)
                 self.invalidate()
                 await self.refresh_catalog()
-                message = {'add': 'Caiman repository verified and saved.',
-                           'remove': 'Registration removed. Repository files were kept.',
-                           'initialize': ('Initial metadata pushed. ' if plan.push else '') + 'Local repository ready: ' + str(plan.local_path)}[plan.action]
+                message = OPERATIONS[plan.action] + ' complete.'
                 self.query_one('#status', Static).update(message)
         except (OSError, ValueError) as error:
             self.invalidate()

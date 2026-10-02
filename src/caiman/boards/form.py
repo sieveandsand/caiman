@@ -64,17 +64,18 @@ def parse_aliases(text: str) -> dict:
 
 
 class DocumentRow(Row):
-    """A document pin. Compartment is not a field: board documents are public."""
+    """A document pin with an optional pod route."""
 
     def compose(self):
         yield from self.text_field('ref', 'Document Ref')
+        yield from self.text_field('pod', 'Pod (optional)')
         yield from self.text_field('digest', 'Manifest Digest (optional)')
         yield from self.text_field('notes', 'Notes (optional)')
         yield from self.actions('Remove document')
 
     def collect(self) -> dict:
-        selector = self.carry('ref', 'digest', 'notes')
-        for key in ('ref', 'digest', 'notes'):
+        selector = self.carry('ref', 'digest', 'notes', 'pod')
+        for key in ('ref', 'digest', 'notes', 'pod'):
             if self.value(key):
                 selector[key] = self.value(key)
         return selector
@@ -88,12 +89,12 @@ class BoardDocumentCard(CardRow, DocumentRow):
         yield from DocumentRow.compose(self)
 
     def summary_data(self):
-        return {key: self.value(key) for key in ('ref', 'digest', 'notes')}
+        return {key: self.value(key) for key in ('ref', 'digest', 'notes', 'pod')}
 
     def summary(self, data):
         label = Text()
         self.heading(label, data.get('ref') or ('Pinned board document' if data.get('digest') else 'New board document'))
-        label.append('\n\nPublic · Board document', style='bold #aab69c')
+        label.append('\n\nBoard document', style='bold #aab69c')
         label.append('\n\n' + self.summary_hint(), style='#aab69c')
         return label
 
@@ -221,6 +222,7 @@ class BoardFormApp(EditorFormApp):
                 yield Static(self.read_only_reason(), classes='hint', markup=False)
                 yield Static(json.dumps(self.draft, indent=2, ensure_ascii=False), markup=False)
             else:
+                yield from self.field('pod', 'Pod')
                 yield from self.field('board', 'Board Name')
                 yield from self.field('version', 'Version')
                 yield from self.field('vendor', 'Board Vendor', suggester=self.vendors)
@@ -262,8 +264,10 @@ class BoardFormApp(EditorFormApp):
         # Lineage is not a form field. `derives_from` and `relation` ride through
         # untouched from the snapshot, like every other value the form does not
         # render, so a board that declares lineage keeps it.
-        for key in ('board', 'version', 'vendor', 'notes'):
+        for key in ('board', 'version', 'vendor', 'notes', 'pod'):
             value = self.query_one(f'#board-{key}', Input).value.strip()
+            if key == 'pod' and not value:
+                continue
             if value or key in {'board', 'version'}:
                 data[key] = value
             else:

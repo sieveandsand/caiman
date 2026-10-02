@@ -108,10 +108,8 @@ class DocumentFormApp(EditorFormApp):
             yield from self.field('name', 'Document Name', document_name(self.draft))
             yield from self.field('version', 'Version', self.draft['version'])
             yield from self.field('description', 'Description', self.draft.get('description', ''))
-            yield Label('Access', classes='field-label')
-            labels = self.original['labels']
-            access = 'Public' if labels['public'] else 'Compartment: ' + labels['compartments'][0]
-            yield Static(access + ' · Read Only', id='document-access', markup=False)
+            yield Label('Pod', classes='field-label')
+            yield Static((self.selection or {}).get('pod_name', (self.selection or {}).get('pod', 'public')), id='document-pod', markup=False)
             with Collapsible(title='Document Details', collapsed=False):
                 with Grid(classes='card-grid'):
                     yield DetailCard('Applicability', {key: self.draft[key] for key in

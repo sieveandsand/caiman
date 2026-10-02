@@ -8,8 +8,9 @@ from urllib.parse import unquote
 
 from caiman.configurations.models import (board_is_legacy, project_boards, validate_board, validate_project,
                                           validate_project_links)
-from caiman.documents.models import AccessLabel, canonical_json, is_schema, valid_identifier
-from caiman.storage.store import AccessDenied, Store, StoreError, _component, _hex
+from caiman.documents.models import canonical_json, is_schema, valid_identifier
+from caiman.storage.legacy import manifest_view
+from caiman.storage.store import Store, StoreError, _component, _hex
 
 
 @dataclass(frozen=True)
@@ -17,7 +18,7 @@ class PreparedConfig:
     kind: str
     manifest: dict
     digest: str
-    compartments: tuple[str, ...]
+    pod: str
 
 
 @dataclass(frozen=True)
@@ -35,17 +36,6 @@ def _kind(kind: str) -> None:
         raise StoreError("Configuration kind must be board or project")
 
 
-def _scope(compartments: set[str] | None) -> set[str]:
-    if compartments is not None and not isinstance(compartments, (set, frozenset, list, tuple)):
-        raise StoreError("Compartments must be an explicit collection of names")
-    if compartments is not None and any(not isinstance(name, str) for name in compartments):
-        raise StoreError("Compartment names must be strings")
-    names = set() if compartments is None else set(compartments)
-    if any(not valid_identifier(name) or name == "public" for name in names):
-        raise StoreError("Declare named compartments; public access is automatic")
-    return names
-
-
 def _ref_path(ref: str) -> Path:
     if not isinstance(ref, str):
         raise StoreError("Document ref must be a relative encoded path")
@@ -59,9 +49,9 @@ class ConfigurationService:
     def __init__(self, store: Store):
         self.store = store
 
-    def _config_path(self, kind: str, name: str, version: str, compartment: str) -> Path:
+    def _config_path(self, kind: str, name: str, version: str, pod: str) -> Path:
         _kind(kind)
-        return self.store.root / _component(compartment) / "refs" / (kind + "s") / _component(name) / _component(version)
+        return self.store.pod_path(pod) / "refs" / (kind + "s") / _component(name) / _component(version)
 
     def _read_ref(self, path: Path) -> str:
         try:
@@ -71,69 +61,72 @@ class ConfigurationService:
         _hex(digest)
         return digest
 
-    def _document(self, selector: dict, allowed: set[str], *, pinned: bool = False) -> tuple[dict, dict]:
+    def _document(self, selector: dict, *, pinned: bool = False) -> tuple[dict, dict]:
         result = deepcopy(selector)
-        if pinned and ("digest" not in result or "compartment" not in result):
-            raise StoreError("Stored document selectors must contain immutable digest and compartment")
+        if pinned and ("digest" not in result or "pod" not in result):
+            raise StoreError("Stored document selectors must contain immutable digest and pod")
         if "ref" in result:
             relative = _ref_path(result["ref"])
         else:
             relative = None
-        candidates = {result["compartment"]} if "compartment" in result else allowed | {"public"}
-        if not candidates <= allowed | {"public"}:
-            raise StoreError("Document belongs to an undeclared compartment")
+        candidates = {self.store.pods.resolve(result["pod"])["id"]} if "pod" in result else self.store.pods.selected()
         matches = []
-        for compartment in sorted(candidates):
+        for pod in sorted(candidates):
             if "digest" in result:
                 digest = result["digest"]
-                path = self.store._path(compartment, "manifests", digest)
+                path = self.store._path(pod, "manifests", digest)
             else:
                 if relative is None:
                     raise StoreError("Document needs a ref or digest")
-                path = self.store.root / _component(compartment) / "refs" / "documents" / relative
+                path = self.store.pod_path(pod) / "refs" / "documents" / relative
                 if not path.exists() and not path.is_symlink():
                     continue
                 digest = self._read_ref(path)
             if not path.exists() and not path.is_symlink():
                 continue
-            try:
-                manifest = self.store.read_manifest(compartment, digest, allowed_compartments=allowed)
-            except AccessDenied:
-                if "compartment" in result:
-                    raise
-                continue
+            manifest = self.store.read_manifest(pod, digest)
             entry = manifest["files"][0]
-            blob = self.store.read_blob(compartment, "sha256:" + entry["sha256"])
+            blob = self.store.read_blob(pod, "sha256:" + entry["sha256"])
             if len(blob) != entry["size"]:
                 raise StoreError("Document blob size does not match its manifest")
-            matches.append((compartment, digest, manifest))
+            matches.append((pod, digest, manifest))
         if not matches:
-            raise StoreError("Document selector does not resolve inside declared compartments")
+            raise StoreError("Document dependency is unavailable locally; add its pod or sync it")
         if len({digest for _, digest, _ in matches}) != 1:
-            raise StoreError("Ambiguous document ref; declare its compartment or digest")
-        compartment, digest, manifest = matches[0]
-        result.update(digest=digest, compartment=compartment)
+            raise StoreError("Ambiguous document ref; declare its pod or digest")
+        pod, digest, manifest = matches[0]
+        result.update(digest=digest, pod=pod)
         return result, manifest
 
-    def _read_config(self, kind: str, compartment: str, digest: str, allowed: set[str]) -> dict:
-        content = self.store._read_object(compartment, "manifests", digest)
+    def _read_config(self, kind: str, pod: str, digest: str, allowed: set[str]) -> dict:
+        content = self.store._read_object(pod, "manifests", digest)
         try:
             manifest = json.loads(content)
         except (UnicodeError, json.JSONDecodeError) as error:
             raise StoreError("Invalid configuration JSON") from error
         if not isinstance(manifest, dict) or not is_schema(kind, manifest.get("schema")):
             raise StoreError("Configuration schema does not match selected kind")
-        validated = validate_board(manifest) if kind == "board" else validate_project(manifest)
-        if canonical_json(validated) != content:
+        if canonical_json(manifest) != content:
             raise StoreError("Configuration manifest is not canonical")
-        if kind == "board":
-            if compartment != "public":
-                raise StoreError("Boards must be stored in public")
-        elif compartment not in manifest["compartments"]:
-            raise StoreError("Project labels do not match containing compartment")
-        elif not AccessLabel(False, frozenset(manifest["compartments"])).permits(allowed):
-            raise AccessDenied("All project compartments must be authorized")
-        self._pin(kind, manifest, pinned=True)
+        manifest = manifest_view(manifest)
+        validated = validate_board(manifest) if kind == "board" else validate_project(manifest)
+        if validated != manifest:
+            raise StoreError("Configuration manifest is not canonical")
+        # Validate immutable pin shape without requiring dependencies to be local.
+        pins = list(manifest.get('documents', []))
+        if kind == 'board':
+            for part in manifest['parts']:
+                pins.extend(part.get('documents', []))
+        else:
+            pins.extend(manifest.get('precedence', []))
+            for feature in manifest['features']:
+                pins.extend(feature.get('governed_by', []))
+            for board in project_boards(manifest):
+                if 'digest' not in board:
+                    raise StoreError('Stored board selector must contain immutable digest')
+        for pin in pins:
+            if 'digest' not in pin or 'pod' not in pin:
+                raise StoreError('Stored document selectors must contain immutable digest and pod')
         return manifest
 
     def _pin(self, kind: str, manifest: dict, *, pinned: bool = False) -> dict:
@@ -146,7 +139,7 @@ class ConfigurationService:
                 # or assembly errata that no part instance can carry.
                 documents = []
                 for selector in result["documents"]:
-                    selected, document = self._document(selector, set(), pinned=pinned)
+                    selected, document = self._document(selector, pinned=pinned)
                     if (document["issuer"], document.get("part")) != (result.get("vendor"), result["board"]):
                         raise StoreError("Board document issuer/part does not match this board assembly")
                     documents.append(selected)
@@ -154,7 +147,7 @@ class ConfigurationService:
             for part in result["parts"]:
                 documents = []
                 for selector in part.get("documents", []):
-                    selected, document = self._document(selector, set(), pinned=pinned)
+                    selected, document = self._document(selector, pinned=pinned)
                     if legacy:
                         matches = part["part"] == document["issuer"] + "/" + document.get("part", "")
                     else:
@@ -170,16 +163,25 @@ class ConfigurationService:
                     documents.append(selected)
                 part["documents"] = documents
             return result
-        allowed = set(result["compartments"])
+        allowed = self.store.pods.selected()
         boards = []
         # Each selector is resolved to its own digest once, here; a later
         # repoint of the version ref never reaches a registered project (I-4).
         for board_selector in project_boards(result):
+            location = board_selector.get("pod")
             if "digest" not in board_selector:
                 if pinned:
                     raise StoreError("Stored board selector must contain immutable digest")
-                board_selector["digest"] = self._read_ref(self._config_path("board", board_selector["name"], board_selector["version"], "public"))
-            board = self._read_config("board", "public", board_selector["digest"], set())
+                matches = [r for r in self.list_configs("board", pods=[location] if location else None)
+                           if (r["name"], r["version"]) == (board_selector["name"], board_selector["version"])]
+                if len(matches) != 1:
+                    raise StoreError("Board dependency is missing or ambiguous; choose its pod")
+                board_selector.update(digest=matches[0]["digest"], pod=matches[0]["pod"])
+            location = board_selector.get("pod", "public")  # Legacy boards lived in public.
+            board = self._read_config("board", location, board_selector["digest"], allowed)
+            if not pinned or "pod" in board_selector:
+                board_selector["pod"] = self.store.pods.resolve(location)["id"]
+            self._pin("board", board, pinned=True)
             if board["board"] != board_selector["name"] or board["version"] != board_selector["version"]:
                 raise StoreError("Pinned board identity does not match project declaration")
             boards.append(board)
@@ -189,7 +191,7 @@ class ConfigurationService:
                 continue
             documents = []
             for selector in result.get(field, []):
-                selected, _ = self._document(selector, allowed, pinned=pinned)
+                selected, _ = self._document(selector, pinned=pinned)
                 documents.append(selected)
                 governing.append(selected)
             result[field] = documents
@@ -201,27 +203,38 @@ class ConfigurationService:
                 matches = [entry for entry in governing
                            if (("digest" in selector and entry["digest"] == selector["digest"])
                                or ("digest" not in selector and entry.get("ref") == selector.get("ref")))
-                           and ("compartment" not in selector or entry["compartment"] == selector["compartment"])]
+                           and ("pod" not in selector or entry["pod"] == selector["pod"])]
                 if not matches:
                     raise StoreError("Feature governing document must belong to the project's documents")
                 if len({entry["digest"] for entry in matches}) != 1:
                     raise StoreError("Ambiguous feature governing ref within pinned project documents")
                 selected = deepcopy(selector)
                 if not pinned:
-                    selected.update(digest=matches[0]["digest"], compartment=matches[0]["compartment"])
-                selected, _ = self._document(selected, allowed, pinned=pinned)
+                    selected.update(digest=matches[0]["digest"], pod=matches[0]["pod"])
+                selected, _ = self._document(selected, pinned=pinned)
                 documents.append(selected)
             if "governed_by" in feature:
                 feature["governed_by"] = documents
         validate_project_links(result, boards)
         return result
 
-    def prepare(self, kind: str, data: dict) -> PreparedConfig:
+    def prepare(self, kind: str, data: dict, *, pod: str | None = None) -> PreparedConfig:
         _kind(kind)
+        data = deepcopy(data)
+        # Pod is draft/registration context, never a document access label.
+        target = pod or data.pop("pod", None) or self.store.pods.default
+        data.pop("pod", None)
+        if "compartments" in data:
+            owners = data["compartments"]
+            if len(owners) != 1 and pod is None:
+                raise StoreError("Choose one owning pod for this legacy project")
+            target = pod or owners[0]
+            data = manifest_view(data)
+        data = manifest_view(data)
+        location = self.store.pods.resolve(target)["id"]
         manifest = validate_board(data) if kind == "board" else validate_project(data)
         manifest = self._pin(kind, manifest)
-        compartments = ("public",) if kind == "board" else tuple(sorted(manifest["compartments"]))
-        return PreparedConfig(kind, manifest, _digest(manifest), compartments)
+        return PreparedConfig(kind, manifest, _digest(manifest), location)
 
     def register(self, prepared: PreparedConfig, *, replaces: dict | None = None,
                  require_new_label: bool = False) -> ConfigRegistration:
@@ -237,25 +250,25 @@ class ConfigurationService:
         manifest = validate_board(prepared.manifest) if prepared.kind == "board" else validate_project(prepared.manifest)
         if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, pinned=True):
             raise StoreError("Configuration changed after review; prepare it again")
-        compartments = ("public",) if prepared.kind == "board" else tuple(sorted(manifest["compartments"]))
-        if prepared.compartments != compartments:
-            raise StoreError("Configuration compartment labels changed after review")
-        refs = tuple(self._config_path(prepared.kind, manifest[prepared.kind], manifest["version"], compartment)
-                     for compartment in compartments)
+        pods = (self.store.pods.resolve(prepared.pod)["id"],)
+        refs = tuple(self._config_path(prepared.kind, manifest[prepared.kind], manifest["version"], pod)
+                     for pod in pods)
         if require_new_label and any(ref.exists() or ref.is_symlink() for ref in refs):
             raise StoreError("Another configuration already uses this name and version")
         stale = ()
         if replaces is not None:
             previous = replaces["manifest"]
-            if previous[prepared.kind] != manifest[prepared.kind] or previous["version"] != manifest["version"]:
+            if (previous[prepared.kind] != manifest[prepared.kind] or previous["version"] != manifest["version"]
+                or prepared.pod != replaces.get("pod", prepared.pod)):
                 if any(ref.exists() or ref.is_symlink() for ref in refs):
                     raise StoreError("Another configuration already uses this name and version")
-            old = (("public",) if prepared.kind == "board" else tuple(sorted(previous["compartments"])))
-            stale = tuple(path for compartment in old
+            old = (replaces.get("pod", prepared.pod),)
+            stale = tuple(path for pod in old
                           if (path := self._config_path(prepared.kind, previous[prepared.kind], previous["version"],
-                                                        compartment)) not in refs)
-        for compartment in compartments:
-            self.store._write_object(compartment, "manifests", prepared.digest, canonical_json(manifest))
+                                                        pod)) not in refs)
+        self.store.pods.ensure(prepared.pod)
+        for pod in pods:
+            self.store._write_object(pod, "manifests", prepared.digest, canonical_json(manifest))
         for ref in refs:
             self.store._atomic_write(ref, (prepared.digest + "\n").encode(), immutable=False)
         for path in stale:
@@ -272,7 +285,7 @@ class ConfigurationService:
         except OSError:
             pass
 
-    def unregister(self, kind: str, manifest: dict, digest: str) -> tuple[Path, ...]:
+    def unregister(self, kind: str, manifest: dict, digest: str, *, pod: str = "public") -> tuple[Path, ...]:
         """Remove a configuration's name/version refs; its manifest object stays.
 
         Objects are never deleted (STORAGE.md §8.5), so anything pinned to the
@@ -281,58 +294,53 @@ class ConfigurationService:
         """
         _kind(kind)
         _hex(digest)
-        compartments = ("public",) if kind == "board" else tuple(sorted(manifest["compartments"]))
-        refs = tuple(path for compartment in compartments
-                     if (path := self._config_path(kind, manifest[kind], manifest["version"], compartment)).exists()
+        pods = (pod,)
+        refs = tuple(path for pod in pods
+                     if (path := self._config_path(kind, manifest[kind], manifest["version"], pod)).exists()
                      or path.is_symlink())
         if not refs:
-            raise StoreError("Configuration version not found in declared compartments")
+            raise StoreError("Configuration version not found in the selected pods")
         if any(self._read_ref(path) != digest for path in refs):
             raise StoreError("Configuration changed since it was opened; reopen it before deleting")
         for path in refs:
             self._remove_ref(path)
         return refs
 
-    def load(self, kind: str, name: str, version: str, *, compartments: set[str] | None = None) -> dict:
+    def load(self, kind: str, name: str, version: str, *, pods: set[str] | None = None) -> dict:
         _kind(kind)
-        allowed = _scope(compartments)
-        locations = {"public"} if kind == "board" else allowed
+        allowed = self.store.pods.selected(pods)
+        locations = allowed
         found = []
-        for compartment in sorted(locations):
-            path = self._config_path(kind, name, version, compartment)
+        for pod in sorted(locations):
+            path = self._config_path(kind, name, version, pod)
             if path.exists() or path.is_symlink():
                 digest = self._read_ref(path)
-                manifest = self._read_config(kind, compartment, digest, allowed)
+                manifest = self._read_config(kind, pod, digest, allowed)
                 if manifest[kind] != name or manifest["version"] != version:
                     raise StoreError("Configuration ref points to a different identity")
                 found.append((digest, manifest))
         if not found:
-            raise StoreError("Configuration version not found in declared compartments")
-        if len({digest for digest, _ in found}) != 1:
-            raise StoreError("Ambiguous configuration version across compartments")
+            raise StoreError("Configuration version not found in the selected pods")
+        if len(found) != 1:
+            raise StoreError("Ambiguous configuration version across pods")
         return found[0][1]
 
-    def load_digest(self, kind: str, digest: str, *, compartment: str = "public",
-                    compartments: set[str] | None = None) -> dict:
+    def load_digest(self, kind: str, digest: str, *, pod: str = "public",
+                    pods: set[str] | None = None) -> dict:
         """Read an explicit immutable selection without resolving mutable refs."""
         _kind(kind)
         _hex(digest)
-        allowed = _scope(compartments)
-        if not valid_identifier(compartment):
-            raise StoreError("Compartment must be a valid name")
-        if kind == "board":
-            if compartment != "public":
-                raise StoreError("Boards must be loaded from public storage")
-        elif compartment == "public" or compartment not in allowed:
-            raise StoreError("Project location must belong to explicitly declared compartments")
-        return self._read_config(kind, compartment, digest, allowed)
+        allowed = self.store.pods.selected(pods)
+        if not valid_identifier(pod):
+            raise StoreError("Pod must be a valid name")
+        return self._read_config(kind, pod, digest, allowed)
 
-    def list_versions(self, kind: str, name: str, *, compartments: set[str] | None = None) -> list[str]:
+    def list_versions(self, kind: str, name: str, *, pods: set[str] | None = None) -> list[str]:
         _kind(kind)
-        allowed = _scope(compartments)
+        allowed = self.store.pods.selected(pods)
         versions = []
-        for compartment in sorted({"public"} if kind == "board" else allowed):
-            directory = self._config_path(kind, name, "placeholder", compartment).parent
+        for pod in sorted(allowed):
+            directory = self._config_path(kind, name, "placeholder", pod).parent
             if not directory.exists() and not directory.is_symlink():
                 continue
             self.store._directory(directory)
@@ -340,27 +348,24 @@ class ConfigurationService:
                 version = unquote(path.name)
                 if _component(version) != path.name:
                     raise StoreError("Noncanonical configuration version ref")
-                try:
-                    self.load(kind, name, version, compartments=allowed)
-                except AccessDenied:
-                    continue
+                self._read_config(kind, pod, self._read_ref(path), allowed)
                 if version not in versions:
                     versions.append(version)
         return versions
 
-    def list_configs(self, kind: str, *, compartments: set[str] | None = None) -> list[dict]:
-        """List visible named snapshots in explicitly selected compartments.
+    def list_configs(self, kind: str, *, pods: set[str] | None = None) -> list[dict]:
+        """List named snapshots in locally available pods.
 
-        Each record contains name, version, digest, compartment, and manifest.
-        Identical copies across compartments appear once. Versions are opaque;
+        Each record contains name, version, digest, pod, and manifest.
+        Each owning pod is a separate catalog location. Versions are opaque;
         discovery order carries no lineage or newest-version meaning.
         """
         _kind(kind)
-        allowed = _scope(compartments)
+        allowed = self.store.pods.selected(pods)
         records = []
         seen = set()
-        for compartment in sorted({"public"} if kind == "board" else allowed):
-            directory = self.store.root / _component(compartment) / "refs" / (kind + "s")
+        for pod in sorted(allowed):
+            directory = self.store.pod_path(pod) / "refs" / (kind + "s")
             if not directory.exists() and not directory.is_symlink():
                 continue
             self.store._directory(directory)
@@ -374,24 +379,21 @@ class ConfigurationService:
                     if _component(version) != path.name:
                         raise StoreError("Noncanonical configuration version ref")
                     digest = self._read_ref(path)
-                    try:
-                        manifest = self._read_config(kind, compartment, digest, allowed)
-                    except AccessDenied:
-                        continue
+                    manifest = self._read_config(kind, pod, digest, allowed)
                     if manifest[kind] != name or manifest["version"] != version:
                         raise StoreError("Configuration ref points to a different identity")
-                    identity = (name, version, digest)
+                    identity = (pod, name, version, digest)
                     if identity not in seen:
                         records.append({"name": name, "version": version, "digest": digest,
-                                        "compartment": compartment, "manifest": manifest})
+                                        "pod": pod, "pod_name": self.store.pod_name(pod), "manifest": manifest})
                         seen.add(identity)
         return records
 
-    def list_documents(self, *, compartments: set[str] | None = None) -> list[dict]:
-        allowed = _scope(compartments)
+    def list_documents(self, *, pods: set[str] | None = None) -> list[dict]:
+        allowed = self.store.pods.selected(pods)
         records = []
-        for compartment in sorted(allowed | {"public"}):
-            directory = self.store.root / _component(compartment) / "refs" / "documents"
+        for pod in sorted(allowed):
+            directory = self.store.pod_path(pod) / "refs" / "documents"
             if not directory.exists() and not directory.is_symlink():
                 continue
             self.store._directory(directory)
@@ -402,9 +404,6 @@ class ConfigurationService:
                     self.store._directory(path)
                     continue
                 ref = path.relative_to(directory).as_posix()
-                try:
-                    selector, manifest = self._document({"ref": ref, "compartment": compartment}, allowed)
-                except AccessDenied:
-                    continue
-                records.append({"compartment": compartment, "digest": selector["digest"], "ref": ref, "manifest": manifest})
+                selector, manifest = self._document({"ref": ref, "pod": pod})
+                records.append({"pod": pod, "digest": selector["digest"], "ref": ref, "pod_name": self.store.pod_name(pod), "manifest": manifest})
         return records

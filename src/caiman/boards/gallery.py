@@ -9,12 +9,13 @@ from pathlib import Path
 from rich.console import Console
 from rich.text import Text
 from textual.containers import Grid, Horizontal, VerticalScroll
-from textual.widgets import Button, Static
+from textual.widgets import Button, Static, Tabs
 from caiman.ui.cards import CARD_CSS, AddTile, CardFrame, OverviewCard, resize_card_grid
 
 from caiman.configurations.service import ConfigurationService
 from caiman.ui.heading import card_heading
 from caiman.ui.navigation import NavigationApp
+from caiman.ui.pod_tabs import POD_BINDINGS, POD_HELP, PodTabsMixin
 from caiman.storage.store import Store
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
@@ -64,9 +65,9 @@ class BoardCardFrame(CardFrame):
         super().__init__(card)
         self.add_class('board-card-frame')
 
-class BoardGalleryApp(NavigationApp):
+class BoardGalleryApp(PodTabsMixin, NavigationApp):
     TITLE = 'Caiman · Boards'
-    BINDINGS = [
+    BINDINGS = POD_BINDINGS + [
         ('e', 'edit_selected', 'Edit board'),
         ('pagedown', 'page_down', 'Scroll down'),
         ('pageup', 'page_up', 'Scroll up'),
@@ -77,18 +78,23 @@ class BoardGalleryApp(NavigationApp):
     #back {{ width: auto; }}
     '''
 
-    def __init__(self, store_root: Path):
+    def __init__(self, store_root: Path, *, pod=None):
         super().__init__()
         apply_theme(self)
         self.store_root = store_root
         self.service = ConfigurationService(Store(store_root))
         self.records = []
+        self.active_pod = pod or self.service.store.pods.default
+        self.tab_pods = {}
+        self.render_lock = asyncio.Lock()
+        self.busy = False
 
     def navigation_help(self):
-        return 'hjkl move · Enter/e edit board · PgUp/PgDn scroll · q back'
+        return f'hjkl move · Enter/e edit board · {POD_HELP} · PgUp/PgDn scroll · q back'
 
     def compose(self):
         yield Static('caiman  /  boards', id='brand')
+        yield Tabs(id='pod-tabs')
         with VerticalScroll(id='body'):
             yield Static('Loading registered boards…', id='gallery-status', markup=False)
             yield Grid(id='gallery')
@@ -97,20 +103,42 @@ class BoardGalleryApp(NavigationApp):
         yield self.navigation_hint()
 
     async def on_mount(self):
-        grid = self.query_one('#gallery', Grid)
-        add = AddTile('Add board', id='add-board')
+        await self.refresh_catalog()
+        cards = self.query('.card-face')
+        if cards:
+            self.call_after_refresh(cards.first().focus)
+
+    async def refresh_catalog(self):
+        if self.busy:
+            return
+        self.busy = True
         try:
             self.records = await asyncio.to_thread(self.service.list_configs, 'board')
-            # Group names for browsing; opaque version labels have no ordering semantics.
             self.records.sort(key=lambda record: (record['manifest']['board'], record['digest']))
-            cards = [BoardCard(record, index=index) for index, record in enumerate(self.records)]
-            await grid.mount(*(BoardCardFrame(card) for card in cards), CardFrame(add))
-            self.resize_cards(self.size.width)
-            self.query_one('#gallery-status', Static).update(
-                f'{len(cards)} Boards · Enter to Edit' if cards else 'No boards registered yet.')
-            self.call_after_refresh((cards[0] if cards else add).focus)
+            available = {r['id']: r['name'] for r in self.service.store.pods.list()}
+            for record in self.records:
+                available.setdefault(record['pod'], record.get('pod_name', record['pod']))
+            if not available:
+                available = {self.service.store.pods.default: self.service.store.pods.default}
+            await self.update_pod_tabs(available)
+            await self.render_pod()
         except (OSError, ValueError) as error:
             self.query_one('#gallery-status', Static).update(f'Cannot load boards: {error}')
+        finally:
+            self.busy = False
+
+    async def render_pod(self):
+        async with self.render_lock:
+            gallery = self.query_one('#gallery', Grid)
+            await gallery.remove_children()
+            records = [record for record in self.records if record['pod'] == self.active_pod]
+            cards = [BoardCard(record, index=index) for index, record in enumerate(records)]
+            add = AddTile('Add board', id='add-board')
+            await gallery.mount(*(BoardCardFrame(card) for card in cards), CardFrame(add))
+            self.resize_cards(self.size.width)
+            self.query_one('#gallery-status', Static).update(
+                f'{len(cards)} Boards · Enter to Edit' if cards else 'No boards in this pod yet.')
+            self.query_one('#body', VerticalScroll).scroll_home(animate=False)
 
     def on_resize(self, event):
         self.resize_cards(event.size.width)
@@ -128,7 +156,7 @@ class BoardGalleryApp(NavigationApp):
         if isinstance(event.button, BoardCard):
             self.exit(deepcopy(event.button.record))
         elif event.button.id == 'add-board':
-            self.exit('add')
+            self.exit({'action': 'add', 'pod': self.active_pod})
         elif event.button.id == 'back':
             self.action_cancel()
 

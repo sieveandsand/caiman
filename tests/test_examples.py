@@ -36,9 +36,9 @@ def test_example_graph_and_repeat_import(tmp_path):
     assert snapshot(root) == before  # No timestamp churn, ref rewrites, or duplicate objects.
 
     service = ConfigurationService(Store(root))
-    projects = service.list_configs('project', compartments={'demo-microbit', 'demo-macropad'})
+    projects = service.list_configs('project', pods={'demo-microbit', 'demo-macropad'})
     assert len(projects) == 4
-    assert service.list_configs('project') == []
+    assert len(service.list_configs('project')) == 4
     documents = service.list_documents()
     assert len(documents) == 11
     assert len(CollectionService(Store(root)).list_collections()) == 2
@@ -52,19 +52,19 @@ def test_example_graph_and_repeat_import(tmp_path):
                 body = store.read_blob('public', 'sha256:' + manifest['files'][0]['sha256']).decode()
                 for requirement in pin['requirements']:
                     assert re.search(r'^' + re.escape(requirement) + ':', body, re.MULTILINE)
-    sound1 = service.load('project', 'microbit-sound', 'R1-v1.3', compartments={'demo-microbit'})
-    sound2 = service.load('project', 'microbit-sound', 'R2-v2', compartments={'demo-microbit'})
+    sound1 = service.load('project', 'microbit-sound', 'R1-v1.3', pods={'demo-microbit'})
+    sound2 = service.load('project', 'microbit-sound', 'R2-v2', pods={'demo-microbit'})
     assert sound1['boards'][0]['digest'] != sound2['boards'][0]['digest']
     assert set(d['digest'] for d in sound1['documents']) < set(d['digest'] for d in sound2['documents'])
-    hid = service.load('project', 'macropad-hid', 'R1', compartments={'demo-macropad'})
-    tone = service.load('project', 'macropad-tone', 'R1', compartments={'demo-macropad'})
+    hid = service.load('project', 'macropad-hid', 'R1', pods={'demo-macropad'})
+    tone = service.load('project', 'macropad-tone', 'R1', pods={'demo-macropad'})
     assert hid['boards'] == tone['boards']
 
 
 def test_preserves_existing_data_and_authoring_state(tmp_path):
     root = tmp_path / 'store'
     store = Store(root)
-    state = {'authorized_compartments': ['existing-customer'], 'context': {'legacy': 'kept'}}
+    state = {'pods': ['existing-customer'], 'context': {'legacy': 'kept'}}
     previous = json.dumps(state).encode()
     store._atomic_write(root / '.authoring-state.json', previous, immutable=False)
     service = ConfigurationService(store)
@@ -77,9 +77,9 @@ def test_preserves_existing_data_and_authoring_state(tmp_path):
     for path, value in before.items():
         if str(path) != '.authoring-state.json':
             assert after[path] == value
-    assert load_state(root)['authorized_compartments'] == ['demo-macropad', 'demo-microbit', 'existing-customer']
+    assert load_state(root)['pods'] == []
     assert json.loads((root / '.authoring-state.json').read_bytes())['context'] == state['context']
-    assert next((root / '.example-import-backups').glob('*.json')).read_bytes() == previous
+    assert (root / '.authoring-state.json').read_bytes() == previous
 
 
 def test_retry_after_partial_import_reuses_completed_document(tmp_path):
@@ -119,8 +119,8 @@ def test_conflicting_ref_aborts_before_any_destination_write(tmp_path, kind):
         record = CollectionService(store).list_collections()[0]
         ref = root / 'public/refs/collections' / record['manifest']['id']
     else:
-        record = service.list_configs(kind, compartments={'demo-microbit', 'demo-macropad'})[0]
-        ref = service._config_path(kind, record['name'], record['version'], record['compartment'])
+        record = service.list_configs(kind)[0]
+        ref = service._config_path(kind, record['name'], record['version'], record['pod'])
     store._atomic_write(ref, ('sha256:' + '0' * 64 + '\n').encode(), immutable=False)
     before = snapshot(root)
     with pytest.raises((StoreError, FileNotFoundError)):

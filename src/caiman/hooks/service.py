@@ -108,9 +108,9 @@ def session_start(root: Path) -> int:
     cli = shlex.join([sys.executable, '-m', 'caiman', '--store', str(root.absolute())])
     context = (
         'Caiman manages versioned firmware documents, boards, and projects. '
-        f'Use `{cli} --help` for commands and `{cli} documents` for the public document catalog. '
+        f'Use `{cli} --help` for commands and `{cli} documents` for the local document catalog. '
         'Ask the engineer which board or project and version is relevant before selecting context. '
-        'Private compartments require explicit authorization. '
+        'Local pods are available directly; Git hosts control repository sharing. '
         'Automatic workspace sync and access logging are not available in this version.'
     )
     print(json.dumps({'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': context}}))

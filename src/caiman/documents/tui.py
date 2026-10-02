@@ -24,7 +24,7 @@ class IngestApp(NavigationApp):
     TITLE = "Caiman · Register document"
     CSS = TERMINAL_CSS
 
-    def __init__(self, store_root: Path, source_path: Path | None = None, *, state: dict | None = None, context: dict | None = None, authorized_compartments=()):
+    def __init__(self, store_root: Path, source_path: Path | None = None, *, state: dict | None = None, context: dict | None = None, pods=(), pod=None):
         super().__init__()
         apply_theme(self)
         self.store_root = store_root
@@ -42,7 +42,8 @@ class IngestApp(NavigationApp):
         self.selected_board = None
         self._restoring = True
         self._identity_mode = "manual"
-        self.authorized_compartments = set(authorized_compartments)
+        self.pods = set(pods)
+        self.pod = pod or self.service.store.pods.default
 
     def field(self, name: str, label: str, value: str = "") -> ComposeResult:
         yield Label(label)
@@ -66,9 +67,6 @@ class IngestApp(NavigationApp):
                     yield Select([], prompt="Select a part", id="board_part")
                     yield Button("Create board", id="create-board")
                 with VerticalScroll(id="project-context", classes="step"):
-                    yield from self.field("project_scope", "Compartments to search (comma separated)")
-                    yield Static("Usually one per customer, such as oem-alpha. Only projects in these compartments are listed.", classes="hint")
-                    yield Button("Find projects", id="find-projects")
                     yield Select([], prompt="Select a project version", id="project_choice")
                     yield Button("Create project", id="create-project")
                 yield Static("", id="context-status", classes="hint", markup=False)
@@ -80,12 +78,10 @@ class IngestApp(NavigationApp):
                 yield from self.field("description", "Description")
                 yield from self.field("version", "Document version")
                 yield from self.field("silicon_revisions", "Silicon revisions (comma separated; optional)")
-                yield Label("Access — choose explicitly")
-                yield Select([("Public", "public"), ("Private — compartment", "compartments")], prompt="Choose access", id="visibility")
-                yield Static("", id="error-labels", classes="error", markup=False)
-                with VerticalScroll(id="compartment-fields", classes="step"):
-                    yield from self.field("compartments", "Compartment (exactly one)")
-                    yield Static("Choose one customer or project compartment, such as oem-alpha. A project must include this compartment to use the document.", classes="hint")
+                yield Label("Pod")
+                yield Select([(r['name'], r['id']) for r in self.service.store.pods.list()],
+                             value=self.pod, allow_blank=False, id="pod")
+                yield Static("", id="error-pod", classes="error", markup=False)
             with VerticalScroll(id="step-2", classes="step"):
                 yield Static("Provenance is optional. Continue to skip; missing information remains unknown.")
                 with Collapsible(title="Original source and converter", collapsed=True):
@@ -107,7 +103,6 @@ class IngestApp(NavigationApp):
         yield self.navigation_hint()
 
     async def on_mount(self) -> None:
-        self.query_one("#project_scope", Input).value = ", ".join(sorted(self.authorized_compartments))
         for key, value in self.saved_state.get("inputs", {}).items():
             matches = self.query(f"#{key}")
             if matches:
@@ -125,8 +120,7 @@ class IngestApp(NavigationApp):
             self.query_one("#identity_source", Select).value = "board"
         self._identity_mode = self.query_one("#identity_source", Select).value
         await self.find_boards()
-        if self.value("project_scope"):
-            await self.find_projects()
+        await self.find_projects()
         if "board" in self.context:
             record = self.context["board"]
             self.select_board(record, clear=False)
@@ -157,11 +151,10 @@ class IngestApp(NavigationApp):
             widget.disabled = self.busy or self.registered
         for index in range(4):
             self.query_one(f"#step-{index}").display = self.step == index
-        self.query_one("#compartment-fields").display = self.query_one("#visibility", Select).value == "compartments"
         source = self.query_one("#identity_source", Select).value
         self.query_one("#board-context").display = source == "board"
         self.query_one("#project-context").display = source == "project"
-        for button in ("create-board", "create-project", "find-projects"):
+        for button in ("create-board", "create-project"):
             self.query_one(f"#{button}", Button).disabled = self.busy or self.registered
         self.query_one("#step-title", Static).update(f"{self.step + 1} / 4 · {('File', 'Document', 'Optional provenance', 'Review and register')[self.step]}")
         self.query_one("#back", Button).disabled = self.step == 0 or self.busy or self.registered
@@ -177,7 +170,7 @@ class IngestApp(NavigationApp):
     async def on_select_changed(self, event: Select.Changed) -> None:
         if self._restoring or event.value != event.select.value:
             return
-        if event.select.id == "visibility":
+        if event.select.id == "pod":
             self.show_step()
         elif event.select.id == "identity_source":
             if self._identity_mode != event.value:
@@ -200,16 +193,13 @@ class IngestApp(NavigationApp):
             self.query_one("#part", Input).value = name
             self.query_one("#program", Input).value = ""
             self.query_one("#silicon_revisions", Input).value = part.get("silicon_revision", "")
-            self.query_one("#visibility", Select).value = Select.NULL
-            self.query_one("#compartments", Input).value = ""
-            self.query_one("#context-status", Static).update(f"Using {part['role']} from {self.selected_board['manifest']['board']}. Confirm this document's access below.")
+            self.query_one("#context-status", Static).update(f"Using {part['role']} from {self.selected_board['manifest']['board']}. Confirm this document's pod below.")
         elif event.select.id == "project_choice" and isinstance(event.value, str):
             await self.apply_project(self.projects[int(event.value)])
 
     def clear_identity(self) -> None:
-        for field in ("issuer", "part", "program", "silicon_revisions", "compartments"):
+        for field in ("issuer", "part", "program", "silicon_revisions"):
             self.query_one(f"#{field}", Input).value = ""
-        self.query_one("#visibility", Select).value = Select.NULL
 
     def select_board(self, record: dict, *, clear: bool = True) -> None:
         if clear:
@@ -218,7 +208,7 @@ class IngestApp(NavigationApp):
         self.context["board"] = record
         parts = record["manifest"]["parts"]
         self.query_one("#board_part", Select).set_options([(f"{part['role']} · {part_identity(part)}", str(index)) for index, part in enumerate(parts)])
-        self.query_one("#context-status", Static).update(f"Board {record['manifest']['board']} @ {record['manifest']['version']}. Choose a part; access remains your explicit choice.")
+        self.query_one("#context-status", Static).update(f"Board {record['manifest']['board']} @ {record['manifest']['version']}. Choose a part; choose its destination pod below.")
 
     async def apply_project(self, record: dict, *, update_board: bool = True) -> None:
         manifest = record["manifest"]
@@ -226,23 +216,20 @@ class IngestApp(NavigationApp):
         # With several pinned boards the part's board stays an explicit choice.
         if update_board and len(pinned) == 1:
             board_digest = pinned[0]["digest"]
-            board = await asyncio.to_thread(self.service.load_digest, "board", board_digest)
-            self.context["board"] = {"manifest": board, "digest": board_digest, "name": board["board"], "version": board["version"], "compartment": "public"}
+            board = await asyncio.to_thread(self.service.load_digest, "board", board_digest, pod=pinned[0].get("pod", "public"))
+            self.context["board"] = {"manifest": board, "digest": board_digest, "name": board["board"], "version": board["version"], "pod": "public"}
         self.context["project"] = record
         self.query_one("#program", Input).value = manifest["project"]
         self.query_one("#part", Input).value = ""
         self.query_one("#issuer", Input).value = ""
         self.query_one("#silicon_revisions", Input).value = ""
-        self.query_one("#compartments", Input).value = manifest["compartments"][0] if len(manifest["compartments"]) == 1 else ""
-        scopes = set(self.csv("project_scope")) | set(manifest["compartments"])
-        self.query_one("#project_scope", Input).value = ", ".join(sorted(scopes))
-        self.query_one("#visibility", Select).value = Select.NULL
+        self.query_one("#pod", Select).value = record.get("pod", self.pod)
         self.project_hint(manifest)
 
     def project_hint(self, manifest: dict) -> None:
         self.query_one("#context-status", Static).update(
             f"Project {manifest['project']} @ {manifest['version']} · Customer: {manifest['customer']}\n"
-            "Enter the document publisher identifier as issuer, then explicitly choose document access below."
+            "Enter the document publisher identifier as issuer, then choose its destination pod below."
         )
 
     async def find_boards(self) -> None:
@@ -250,7 +237,7 @@ class IngestApp(NavigationApp):
             self.boards = await asyncio.to_thread(self.service.list_configs, "board")
             selected = self.context.get("board")
             if selected and not any(record["digest"] == selected["digest"] for record in self.boards):
-                self.boards.append({**selected, "name": selected["manifest"]["board"], "version": selected["manifest"]["version"], "compartment": "public"})
+                self.boards.append({**selected, "name": selected["manifest"]["board"], "version": selected["manifest"]["version"], "pod": "public"})
             self.query_one("#board_choice", Select).set_options([(self.option_label(record), str(index)) for index, record in enumerate(self.boards)])
             if not self.boards:
                 self.query_one("#context-status", Static).update("No registered boards yet. Create a board or enter the identity manually.")
@@ -259,19 +246,19 @@ class IngestApp(NavigationApp):
 
     async def find_projects(self) -> None:
         try:
-            scopes = set(self.csv("project_scope"))
-            self.projects = await asyncio.to_thread(self.service.list_configs, "project", compartments=scopes)
+            scopes = None
+            self.projects = await asyncio.to_thread(self.service.list_configs, "project", pods=scopes)
             selected = self.context.get("project")
-            if selected and set(selected["manifest"]["compartments"]) <= scopes and not any(record["digest"] == selected["digest"] for record in self.projects):
-                self.projects.append({**selected, "name": selected["manifest"]["project"], "version": selected["manifest"]["version"], "compartment": selected["manifest"]["compartments"][0]})
+            if selected and not any(record["digest"] == selected["digest"] for record in self.projects):
+                self.projects.append({**selected, "name": selected["manifest"]["project"], "version": selected["manifest"]["version"], "pod": selected.get("pod", self.pod)})
             self.query_one("#project_choice", Select).set_options([(self.option_label(record), str(index)) for index, record in enumerate(self.projects)])
-            self.query_one("#context-status", Static).update(f"{len(self.projects)} projects in the selected compartments.")
+            self.query_one("#context-status", Static).update(f"{len(self.projects)} projects in the selected pods.")
         except (OSError, ValueError) as error:
             self.query_one("#context-status", Static).update(str(error))
 
     @staticmethod
     def option_label(record: dict) -> str:
-        return f"{record['name']} @ {record['version']} · {record['compartment']} · {record['digest'][7:15]}"
+        return f"{record['name']} @ {record['version']} · {record['pod']} · {record['digest'][7:15]}"
 
     def export_state(self) -> dict:
         return {
@@ -287,9 +274,6 @@ class IngestApp(NavigationApp):
     def metadata(self) -> dict:
         data = {key: self.value(key) for key in ("issuer", "part", "program", "description", "version") if self.value(key)}
         data["name"] = self.value("name")
-        visibility = self.query_one("#visibility", Select).value
-        if visibility in {"public", "compartments"}:
-            data["labels"] = {"public": visibility == "public", "compartments": self.csv("compartments") if visibility == "compartments" else []}
         if self.value("silicon_revisions"):
             data["silicon_revisions"] = self.csv("silicon_revisions")
         if self.value("pattern"):
@@ -318,10 +302,9 @@ class IngestApp(NavigationApp):
     def review_text(self) -> str:
         assert self.prepared is not None
         manifest = self.prepared.manifest
-        labels = manifest["labels"]
         source = manifest.get("source", {})
         converter = manifest.get("converter", {})
-        access = "Public" if labels["public"] else "Compartment: " + labels["compartments"][0]
+        pod = self.service.store.pod_name(self.prepared.pod)
         hosted = {True: "Hosted", False: "Local"}.get(converter.get("hosted"), "Unknown")
         lines = [
             "Review before registering locally",
@@ -332,7 +315,7 @@ class IngestApp(NavigationApp):
             f"Description: {manifest.get('description', '')}",
             f"Version: {manifest['version']}",
             f"Silicon revisions: {', '.join(manifest.get('silicon_revisions', [])) or 'Unknown / not applicable'}",
-            f"Access: {access}",
+            f"Pod: {pod}",
         ]
         if "requirements" in manifest:
             lines.append(f"Requirement ID pattern: {manifest['requirements']['pattern']}")
@@ -351,7 +334,7 @@ class IngestApp(NavigationApp):
         return "\n".join(lines)
 
     def errors(self, errors: dict[str, str]) -> None:
-        aliases = {"headings": "file", "requirements.pattern": "pattern", "source.sha256": "source_sha256", "source.pages": "source_pages", "converter.name": "converter_name", "converter.version": "converter_version", "labels.compartments": "compartments", "labels.public": "labels"}
+        aliases = {"headings": "file", "requirements.pattern": "pattern", "source.sha256": "source_sha256", "source.pages": "source_pages", "converter.name": "converter_name", "converter.version": "converter_version"}
         for field, message in errors.items():
             target = aliases.get(field, field).replace(".", "_")
             matches = self.query(f"#error-{target}")
@@ -408,7 +391,7 @@ class IngestApp(NavigationApp):
                     metadata.pop("source", None)
                     metadata.pop("converter", None)
                     metadata.pop("requirements", None)
-                self.prepared = await asyncio.to_thread(prepare_document, Path(self.value("file")).expanduser(), metadata)
+                self.prepared = await asyncio.to_thread(prepare_document, Path(self.value("file")).expanduser(), metadata, pod=self.query_one("#pod", Select).value)
                 self.step += 1
                 if self.step == 3:
                     self.query_one("#review", Static).update(self.review_text())

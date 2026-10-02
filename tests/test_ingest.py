@@ -11,7 +11,7 @@ from caiman.documents.models import canonical_json, current_schema, is_schema
 @pytest.fixture
 def metadata():
     return dict(issuer='synthetic', part='demo', doc_type='manual', version='Release / A',
-                structure='prose', labels={'public': True, 'compartments': []})
+                structure='prose', pod='public')
 
 
 @pytest.fixture
@@ -22,17 +22,17 @@ def document(tmp_path):
 
 
 @pytest.mark.parametrize('labels', [None, {}, {'public': False}, {'public': 'true'},
-    {'public': True, 'compartments': ['alpha']}, {'compartments': ['../alpha']}])
+    {'public': True, 'pods': ['alpha']}, {'pods': ['../alpha']}])
 def test_invalid_labels_never_admitted(document, metadata, labels):
     metadata['labels'] = labels
     with pytest.raises(ValidationError):
         prepare_document(document, metadata)
 
 
-@pytest.mark.parametrize('compartments', [['alpha', 'falcon'], ['alpha', 'alpha']])
-def test_document_requires_one_compartment_without_silent_deduplication(document, metadata, compartments):
-    metadata['labels'] = {'public': False, 'compartments': compartments}
-    with pytest.raises(ValidationError, match='exactly one compartment'):
+@pytest.mark.parametrize('pods', [['alpha', 'falcon'], ['alpha', 'alpha']])
+def test_document_requires_one_pod_without_silent_deduplication(document, metadata, pods):
+    metadata['labels'] = {'public': False, 'pods': pods}
+    with pytest.raises(ValidationError, match='labels'):
         prepare_document(document, metadata)
 
 
@@ -88,7 +88,7 @@ def test_inline_requirements(document, metadata):
 def test_review_is_invalidated_by_file_or_payload_change(document, metadata):
     prepared = prepare_document(document, metadata)
     changed = copy.deepcopy(prepared.manifest)
-    changed['labels']['public'] = False
+    changed['issuer'] = 'changed'
     with pytest.raises(ValidationError):
         verify_prepared(replace(prepared, manifest=changed))
     document.write_text('# Changed\n')
@@ -118,13 +118,11 @@ def test_requirement_pattern_can_include_brackets(document, metadata):
     prepare_document(document, metadata)
 
 
-def test_lost_compartment_never_becomes_public(document, metadata):
-    metadata['labels'] = {'public': False, 'compartments': ['synthetic-alpha']}
-    prepared = prepare_document(document, metadata)
-    assert not prepared.manifest['labels']['public']
-    metadata['labels'].pop('compartments')
+def test_lost_pod_never_becomes_public(document, metadata):
+    prepared = prepare_document(document, metadata, pod='alpha')
     with pytest.raises(ValidationError):
-        prepare_document(document, metadata)
+        verify_prepared(replace(prepared, pod='../unsafe'))
+    assert 'labels' not in prepared.manifest
 
 
 def test_invalid_utf8_and_unreadable_file(document, metadata):
@@ -148,7 +146,7 @@ def test_invalid_requirement_patterns(document, metadata, pattern):
 
 
 @pytest.mark.parametrize('field,value', [
-    ('labels', {'public': False, 'compartments': []}),
+    ('labels', {'public': False, 'pods': []}),
     ('files', [{'path': '../escape.md', 'sha256': '0' * 64, 'size': 0}]),
     ('schema', 'unknown'), ('original_filename', 'different.md'),
     ('unexpected', 'extra'), ('ingested_at', 'invalid')])
@@ -167,9 +165,9 @@ def test_document_schema_literal_is_current_and_older_spellings_still_read(tmp_p
     path.write_text('# Manual\n\n## Registers\nSynthetic text\n')
     prepared = prepare_document(path, {
         'issuer': 'synthetic', 'part': 'chip', 'doc_type': 'manual', 'version': 'v1',
-        'structure': 'prose', 'labels': {'public': True, 'compartments': []}})
-    assert prepared.manifest['schema'] == current_schema('document') == 'caiman.document.v2'
+        'structure': 'prose', 'pod': 'public'})
+    assert prepared.manifest['schema'] == current_schema('document') == 'caiman.document.v3'
     assert is_schema('document', 'caiman.document/1')
     assert is_schema('document', 'caiman.document.v1')
-    assert not is_schema('document', 'caiman.document.v3')
+    assert not is_schema('document', 'caiman.document.v99')
     assert not is_schema('document', current_schema('board'))

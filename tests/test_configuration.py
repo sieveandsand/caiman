@@ -19,7 +19,7 @@ def board():
 @pytest.fixture
 def project():
     return {'project': 'demo', 'version': '.', 'customer': 'Synthetic Customer',
-            'compartments': ['synthetic-alpha'], 'boards': [{'name': 'synthetic', 'version': '../opaque'}],
+            'pod': 'synthetic-alpha', 'boards': [{'name': 'synthetic', 'version': '../opaque'}],
             'spec_set': 'release / A', 'documents': [{'ref': 'synthetic/spec/v1'}],
             'features': [{'name': 'boot', 'scope': 'required', 'realized_on': [{'board': 'synthetic', 'version': '../opaque', 'role': 'mcu'}],
                           'governed_by': [{'ref': 'synthetic/spec/v1', 'requirements': ['REQ-001..005']}]},
@@ -31,16 +31,16 @@ def test_valid_drafts_are_copies_with_schema_and_public_board(board, project):
     original = deepcopy(board)
     result = validate_board(board)
     assert board == original
-    assert result['schema'] == 'caiman.board.v2'
+    assert result['schema'] == 'caiman.board.v3'
     assert result['version'] == '../opaque'
-    assert result['parts'][0]['documents'][0]['compartment'] == 'public'
+    assert 'pod' not in result['parts'][0]['documents'][0]
     assert validate_project(project)['version'] == '.'
     validate_project_links(project, [board])
 
 
 @pytest.mark.parametrize('mutation', [
     lambda x: x.update(customer='Secret'),
-    lambda x: x['parts'][0]['documents'][0].update(compartment='synthetic-alpha'),
+    lambda x: x['parts'][0]['documents'][0].update(pod='../unsafe'),
     lambda x: x['parts'][0]['documents'][0].update(ref='../escape'),
     lambda x: x['parts'][0]['documents'][0].update(digest='sha256:short'),
     lambda x: x['parts'].append(deepcopy(x['parts'][0])),
@@ -55,9 +55,9 @@ def test_board_rejections(board, mutation):
 
 
 @pytest.mark.parametrize('mutation', [
-    lambda x: x.update(compartments=[]),
-    lambda x: x.update(compartments=['public', 'synthetic-alpha']),
-    lambda x: x['documents'][0].update(compartment='synthetic-beta'),
+    lambda x: x.update(pods=[]),
+    lambda x: x.update(pods=['public', 'synthetic-alpha']),
+    lambda x: x['documents'][0].update(pod='../unsafe'),
     lambda x: x['features'][0].update(scope='implemented'),
     lambda x: x['features'][0].update(status='verified'),
     lambda x: x['features'][1]['related'][0].update(feature='missing'),
@@ -89,7 +89,7 @@ def test_project_pins_several_boards_including_one_board_at_two_versions(project
     # The same role name on two boards is fine; the entry says which board.
     project['features'][0]['realized_on'].append({'board': 'synthetic', 'version': 'B', 'role': 'flash'})
     project['features'][0]['realized_on'].append({'board': 'synthetic', 'version': '../opaque', 'role': 'flash'})
-    assert validate_project(project)['schema'] == 'caiman.project.v2'
+    assert validate_project(project)['schema'] == 'caiman.project.v3'
     validate_project_links(project, [board, second_version(board)])
 
 
@@ -147,7 +147,7 @@ def test_v1_project_stays_valid_and_restates_without_guessing(project, board):
     assert project_boards(legacy) == [legacy['board']]
     assert realized_parts(legacy, legacy['features'][0]) == [('synthetic', '../opaque', 'mcu')]
     restated = restate_project_draft(legacy)
-    assert restated['schema'] == 'caiman.project.v2'
+    assert restated['schema'] == 'caiman.project.v3'
     assert 'board' not in restated
     assert restated['boards'] == [legacy['board']]
     assert restated['features'][0]['realized_on'] == project['features'][0]['realized_on']
@@ -178,7 +178,7 @@ def test_malformed_board_nested_fields(board, field, value):
         validate_board(board)
 
 
-@pytest.mark.parametrize('field,value', [('boards', {}), ('boards', [None]), ('compartments', [None]),
+@pytest.mark.parametrize('field,value', [('boards', {}), ('boards', [None]), ('pods', [None]),
     ('features', [None]), ('documents', [None]), ('documents', [{'requirements': ['REQ-1']}])])
 def test_malformed_project_nested_fields(project, field, value):
     project[field] = value
@@ -213,9 +213,9 @@ def test_v2_carries_vendor_notes_aliases_and_board_documents(board):
     board['parts'][0]['documents'][0]['notes'] = 'Errata 051234 applies at this mask revision.'
     board['links'][0]['notes'] = 'Watchdog handshake.'
     result = validate_board(board)
-    assert result['schema'] == 'caiman.board.v2'
+    assert result['schema'] == 'caiman.board.v3'
     assert result['parts'][0]['aliases'] == {'refdes': 'U1', 'mpn': 'CHIP-0001'}
-    assert result['documents'][0]['compartment'] == 'public'
+    assert 'pod' not in result['documents'][0]
 
 
 def test_legacy_board_validates_unchanged_and_keeps_its_literal():
@@ -254,7 +254,7 @@ def test_v2_fields_are_rejected_on_a_legacy_board(mutation):
     # Board-level documents resolve against <vendor>/<board>, so vendor is required.
     lambda x: x.update(documents=[{'ref': 'synthetic/synthetic/user-guide/v1'}]),
     lambda x: x.update(schema='caiman.board/2'),
-    lambda x: x.update(schema='caiman.board.v3'),
+    lambda x: x.update(schema='caiman.board.v99'),
 ])
 def test_v2_board_rejections(board, mutation):
     mutation(board)
@@ -281,14 +281,14 @@ def test_declared_schema_literal_is_never_rewritten(project, kind, validate):
     current, *older = accepted_schemas(kind)
     assert current == current_schema(kind)
     if kind == 'board':
-        assert validate(deepcopy(LEGACY_BOARD))['schema'] == older[0]
+        assert validate(deepcopy(LEGACY_BOARD))['schema'] == 'caiman.board/1'
         return
     # Every older project literal is the single-board shape.
     legacy = {key: value for key, value in project.items() if key != 'boards'}
     legacy['board'] = project['boards'][0]
     legacy['features'] = [dict(feature, realized_on=['mcu']) if 'realized_on' in feature else feature
                           for feature in project['features']]
-    for literal in older:
+    for literal in ('caiman.project.v1', 'caiman.project/1'):
         assert validate(dict(legacy, schema=literal))['schema'] == literal
 
 
@@ -307,13 +307,13 @@ def test_v1_precedence_stays_valid_and_restates_into_documents(project):
     legacy['schema'] = 'caiman.project.v1'
     legacy['board'] = legacy.pop('boards')[0]
     legacy['features'][0]['realized_on'] = ['mcu']
-    deviation = {'ref': 'synthetic/deviation/v1', 'compartment': 'synthetic-alpha', 'note': 'Amends REQ-003'}
+    deviation = {'ref': 'synthetic/deviation/v1', 'pod': 'synthetic-alpha', 'note': 'Amends REQ-003'}
     # Already in documents by ref: listed once. Only in precedence: kept as a document pin.
     legacy['precedence'] = [deviation, {'ref': 'synthetic/spec/v1'}]
     assert validate_project(legacy)['precedence'] == legacy['precedence']
     restated = restate_project_draft(legacy)
     assert 'precedence' not in restated
     assert restated['documents'] == [{'ref': 'synthetic/spec/v1'},
-                                     {'ref': 'synthetic/deviation/v1', 'compartment': 'synthetic-alpha'}]
+                                     {'ref': 'synthetic/deviation/v1', 'pod': 'synthetic-alpha'}]
     assert legacy['precedence'][0]['note'] == 'Amends REQ-003'
     validate_project(restated)

@@ -1,8 +1,8 @@
 """A guided project form in the board editor's layout.
 
-Identity, customer, compartments, and the specification set sit at the top;
+Identity, customer, pods, and the specification set sit at the top;
 boards, documents, and features are card grids below. The form
-carries every key it does not render — lineage, resolved digests, compartments
+carries every key it does not render — lineage, resolved digests, pods
 on existing pins — so an untouched draft collects to exactly what it was given.
 
 A project pins any number of boards, including one board at several versions,
@@ -36,7 +36,7 @@ from caiman.ui.theme import apply_theme
 
 
 SCOPES = ('required', 'not-used')
-SELECTOR_TEXT = ('ref', 'digest', 'compartment', 'note', 'notes')
+SELECTOR_TEXT = ('ref', 'digest', 'pod', 'note', 'notes')
 
 
 def _strings(value) -> bool:
@@ -62,8 +62,8 @@ def guided_shape_problem(draft: dict) -> str | None:
     for key in ('project', 'version', 'customer', 'spec_set'):
         if key in draft and not isinstance(draft[key], str):
             return f'{key} is not text'
-    if 'compartments' in draft and not _strings(draft['compartments']):
-        return 'compartments is not a list of names'
+    if 'pod' in draft and not isinstance(draft['pod'], str):
+        return 'pod is not a name'
     legacy = project_is_legacy(draft)
     boards = [draft.get('board', {})] if legacy else draft.get('boards', [])
     if not isinstance(boards, list):
@@ -123,9 +123,9 @@ class CatalogSuggester(Suggester):
 class Suggestions:
     """Completion sources shared by every card; none of them constrain a value."""
 
-    def __init__(self, compartments):
-        names = [name for name in compartments if isinstance(name, str)]
-        self.compartments = SuggestFromList([*names, 'public'])
+    def __init__(self, pods):
+        names = [name for name in pods if isinstance(name, str)]
+        self.pods = SuggestFromList([*names, 'public'])
         self.scopes = SuggestFromList(SCOPES)
         self.refs = CatalogSuggester()
         self.boards = CatalogSuggester()
@@ -145,8 +145,8 @@ def _selector_fields(row: Row, suggestions: Suggestions):
     yield from row.text_field('ref', 'Document Ref', suggester=suggestions.refs,
                               placeholder='issuer/part-or-program/doc-type/version')
     yield from row.text_field('digest', 'Manifest Digest (optional)', placeholder='sha256:…')
-    yield from row.text_field('compartment', 'Compartment (optional)', suggester=suggestions.compartments,
-                              placeholder='public or a project compartment')
+    yield from row.text_field('pod', 'Pod (optional)', suggester=suggestions.pods,
+                              placeholder='Pod name or ID')
 
 
 def _selector_title(data, new_label):
@@ -164,6 +164,7 @@ class PinnedBoardCard(CardRow):
         self.suggestions = suggestions
 
     def editor_fields(self):
+        yield from self.text_field('pod', 'Pod (optional)')
         yield from self.text_field('name', 'Board Name', suggester=self.suggestions.boards)
         yield from self.text_field('version', 'Board Version', suggester=self.suggestions.board_versions,
                                    placeholder='exact label')
@@ -188,13 +189,17 @@ class PinnedBoardCard(CardRow):
         board.update(name=self.value('name'), version=self.value('version'))
         if self.value('digest'):
             board['digest'] = self.value('digest')
+        if self.value('pod'):
+            board['pod'] = self.value('pod')
+        else:
+            board.pop('pod', None)
         return board
 
 
 class ProjectDocumentCard(CardRow):
     kind = 'document'
     first_field = 'ref'
-    keys = ('ref', 'digest', 'compartment')
+    keys = ('ref', 'digest', 'pod')
 
     def __init__(self, data, *, suggestions: Suggestions, expanded=False):
         super().__init__(data, expanded=expanded)
@@ -210,7 +215,7 @@ class ProjectDocumentCard(CardRow):
     def summary(self, data):
         label = Text()
         self.heading(label, _selector_title(data, 'New document'))
-        label.append('\n\n' + (data.get('compartment') or 'Compartment resolved at review'), style='#7fdc4f')
+        label.append('\n\n' + (data.get('pod') or 'Pod resolved at review'), style='#7fdc4f')
         label.append('\n\n' + self.summary_hint(), style='#aab69c')
         return label
 
@@ -221,7 +226,7 @@ class ProjectDocumentCard(CardRow):
 class GoverningRow(Row):
     """A governing document inside a feature, with the requirement IDs it names."""
 
-    keys = ('ref', 'digest', 'compartment')
+    keys = ('ref', 'digest', 'pod')
 
     def __init__(self, data, *, suggestions: Suggestions):
         super().__init__(data)
@@ -351,8 +356,8 @@ class ProjectFormApp(EditorFormApp):
             self.draft = restate_project_draft(self.draft)
         self.message = message
         self.root = root
-        compartments = self.draft.get('compartments') if isinstance(self.draft.get('compartments'), list) else []
-        self.suggestions = Suggestions(compartments)
+        pods = [r['id'] for r in Store(root).pods.list()] if root else ['public']
+        self.suggestions = Suggestions(pods)
 
     def field(self, key: str, label: str, value, *, placeholder='', suggester=None):
         yield Label(label, classes='field-label')
@@ -377,13 +382,12 @@ class ProjectFormApp(EditorFormApp):
                     yield Static('This project was registered as caiman.project.v1. The form shows it in the '
                                  'current shape: its board is listed under Boards, and any document that was only '
                                  'in precedence is listed under Documents; precedence order and notes are not kept. '
-                                 'Registering writes caiman.project.v2, and the review shows every changed field.',
+                                 'Registering writes caiman.project.v3, and the review shows every changed field.',
                                  classes='hint', markup=False)
                 yield from self.field('project', 'Program Codename', draft.get('project', ''))
                 yield from self.field('version', 'Version', draft.get('version', ''))
                 yield from self.field('customer', 'Customer', draft.get('customer', ''))
-                yield from self.field('compartments', 'Compartments', ', '.join(draft.get('compartments', [])),
-                                      placeholder='oem-alpha, oem-beta')
+                yield from self.field('pod', 'Pod', draft.get('pod', 'public'), placeholder='public')
                 yield from self.field('spec_set', 'Specification Set', draft.get('spec_set', ''))
                 s = self.suggestions
                 yield from self.section('Boards', 'boards',
@@ -411,10 +415,10 @@ class ProjectFormApp(EditorFormApp):
 
     async def load_catalog(self):
         """Offer registered refs as completions; a failure only loses completion."""
-        compartments = comma_list(self.query_one('#project-compartments', Input).value)
+        pods = None
         try:
             entries = await asyncio.to_thread(ConfigurationService(Store(self.root)).list_documents,
-                                              compartments=compartments)
+                                              pods=pods)
         except (OSError, ValueError):
             return
         self.suggestions.refs.refs = sorted({entry['ref'] for entry in entries if entry.get('ref')})
@@ -436,7 +440,8 @@ class ProjectFormApp(EditorFormApp):
         data = deepcopy(self.draft)
         for key in ('project', 'version', 'customer', 'spec_set'):
             data[key] = self.value(key)
-        data['compartments'] = comma_list(self.value('compartments'))
+        if 'pod' in data or self.value('pod') != 'public':
+            data['pod'] = self.value('pod')
         data['boards'] = [card.collect() for card in self.query_one('#boards').query_children(PinnedBoardCard)]
         data['documents'] = [card.collect() for card in self.query_one('#documents').query_children(ProjectDocumentCard)]
         data['features'] = [card.collect() for card in self.query_one('#features').query_children(FeatureCard)]

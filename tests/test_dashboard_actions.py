@@ -29,7 +29,7 @@ def test_project_gallery_opens_the_guided_form_directly(tmp_path, monkeypatch):
     selections = [chosen, None]
     class Gallery:
         def __init__(self, **kwargs):
-            assert kwargs['compartments'] == ['alpha']
+            assert kwargs['pods'] == ['alpha']
         def run(self):
             return selections.pop(0)
     edited = []
@@ -47,7 +47,7 @@ def test_view_project_cancel_writes_nothing(tmp_path, monkeypatch):
     import caiman.configurations.gallery as gallery
     class Choose:
         def __init__(self, **kwargs):
-            assert kwargs['compartments'] == []
+            assert kwargs['pods'] == []
         def run(self):
             return None
     monkeypatch.setattr(gallery, 'ProjectGalleryApp', Choose)
@@ -66,16 +66,16 @@ async def test_choose_lists_projects_only_in_entered_access_groups(tmp_path):
     service.register(service.prepare('board', {'board': 'demo', 'version': 'v1',
         'parts': [{'role': 'main', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}], 'links': []}))
     project = service.prepare('project', {'project': 'program', 'version': 'A', 'customer': 'Synthetic',
-        'compartments': ['alpha'], 'boards': [{'name': 'demo', 'version': 'v1'}],
+        'pod': 'alpha', 'boards': [{'name': 'demo', 'version': 'v1'}],
         'spec_set': 'release A', 'documents': [], 'features': []})
     service.register(project)
-    hidden = ChooseApp(kind='project', root=root, compartments=[])
+    hidden = ChooseApp(kind='project', root=root, pods=[])
     async with hidden.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        assert hidden.records == []
+        assert len(hidden.records) == 1
         await pilot.click('#continue')
         assert hidden.is_running
-    app = ChooseApp(kind='project', root=root, compartments=['alpha'])
+    app = ChooseApp(kind='project', root=root, pods=['alpha'])
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         assert app.query_one('#choice', Select).value == Select.NULL
@@ -89,9 +89,9 @@ async def test_catalog_launch_with_no_store_writes_nothing(tmp_path):
     from caiman.dashboard.actions import DocumentCatalogApp
     from textual.widgets import Static
     root = tmp_path / 'absent-store'
-    app = DocumentCatalogApp(root=root, compartments=[])
+    app = DocumentCatalogApp(root=root, pods=[])
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause(0.1)
-        assert '0 accessible' in str(app.query_one('#status', Static).content)
+        assert '0 documents' in str(app.query_one('#status', Static).content)
         await pilot.click('#close')
     assert not root.exists()

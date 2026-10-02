@@ -59,9 +59,9 @@ def _config_commands(commands) -> None:
         for action in (configure, validate, show, export, new):
             action.add_argument("--store", type=Path)
         for action in (show, export, new):
-            if kind == "project":
-                action.add_argument("--compartment", action="append", default=[],
-                                    help="Compartment to include (usually a customer); repeat for all required compartments")
+            if kind in {"board", "project"}:
+                action.add_argument("--pod", action="append", default=[],
+                                    help="Filter by pod; repeat to include several")
 
 
 def _run_config(args, root: Path) -> int:
@@ -70,7 +70,7 @@ def _run_config(args, root: Path) -> int:
     from caiman.storage.store import Store
 
     service = ConfigurationService(Store(root))
-    scopes = set(getattr(args, "compartment", []))
+    scopes = set(getattr(args, "pod", []))
     if args.action == "configure":
         draft = read_draft(args.config) if args.config else template(args.command)
     elif args.action == "validate":
@@ -78,23 +78,25 @@ def _run_config(args, root: Path) -> int:
         print(json.dumps(prepared.manifest, ensure_ascii=False, indent=2))
         return 0
     elif args.action == "show" and args.version is None:
-        print(json.dumps(service.list_versions(args.command, args.name, compartments=scopes),
+        print(json.dumps(service.list_versions(args.command, args.name, pods=scopes),
                          ensure_ascii=False, indent=2))
         return 0
     else:
         version = args.from_version if args.action == "new-version" else args.version
-        manifest = service.load(args.command, args.name, version, compartments=scopes)
+        manifest = service.load(args.command, args.name, version, pods=scopes)
         if args.action == "show":
             print(json.dumps(manifest, ensure_ascii=False, indent=2))
             return 0
+        owner = next(r['pod'] for r in service.list_configs(args.command, pods=scopes)
+                     if r['name'] == args.name and r['version'] == version)
         if args.action == "export":
-            write_draft(args.output, manifest)
+            write_draft(args.output, dict(manifest, pod=owner))
             print(f"Exported {args.command} configuration to {args.output}")
             return 0
-        if args.version in service.list_versions(args.command, args.name, compartments=scopes):
+        if args.version in service.list_versions(args.command, args.name, pods=scopes):
             raise ValueError('That version label already exists. Choose a new label, or use configuration editing to explicitly update it.')
         draft = copy.deepcopy(manifest)
-        draft.update(version=args.version, derives_from=args.from_version, relation=args.relation)
+        draft.update(version=args.version, derives_from=args.from_version, relation=args.relation, pod=owner)
 
     from caiman.configurations.tui import ConfigApp
 
@@ -119,8 +121,17 @@ def main(argv: list[str] | None = None) -> int:
     little.add_argument("--store", type=Path, help="Local store path (overrides config.toml)")
     documents = commands.add_parser("documents", help="List registered documents available for pinning")
     documents.add_argument("--store", type=Path)
-    documents.add_argument("--compartment", action="append", default=[],
-                           help="Include this compartment (usually a customer); repeat for all required compartments")
+    documents.add_argument("--pod", action="append", default=[],
+                           help="Filter by pod; defaults to all local pods")
+    pod = commands.add_parser('pod', help='Manage local pods and optional Git sharing')
+    pod_actions = pod.add_subparsers(dest='action', required=True)
+    for name in ('list', 'create', 'clone', 'connect', 'sync', 'disconnect', 'default'):
+        command = pod_actions.add_parser(name)
+        command.add_argument('--store', type=Path)
+        if name != 'list':
+            command.add_argument('name', help='Pod ID or local folder name')
+        if name in {'clone', 'connect'}:
+            command.add_argument('remote', nargs='?' if name == 'connect' else None)
     args = parser.parse_args(argv)
 
     if args.command == 'session':
@@ -149,6 +160,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Wrote editable {args.command} draft to {args.output}")
             return 0
         root = store_path(getattr(args, 'store', None) or args.launcher_store)
+        if args.command == 'pod':
+            from caiman.repositories.service import RepoManager
+            manager = RepoManager(root)
+            if args.action == 'list':
+                print(json.dumps(manager.list_repos(), indent=2))
+            else:
+                action = {'clone': 'add', 'connect': 'initialize', 'disconnect': 'remove'}.get(args.action, args.action)
+                plan = manager.prepare(action, args.name, getattr(args, 'remote', None) or '')
+                manager.apply(plan)
+                print(plan.preview)
+            return 0
         if args.command in {"board", "project"}:
             return _run_config(args, root)
         if args.command == "little":
@@ -159,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             from caiman.configurations.service import ConfigurationService
             from caiman.storage.store import Store
 
-            records = ConfigurationService(Store(root)).list_documents(compartments=set(args.compartment))
+            records = ConfigurationService(Store(root)).list_documents(pods=set(args.pod))
             print(json.dumps(records, ensure_ascii=False, indent=2))
             return 0
         from caiman.dashboard.workflow import run_workflow

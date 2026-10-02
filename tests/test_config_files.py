@@ -26,7 +26,7 @@ def test_export_never_clobbers_existing_file_or_symlink(tmp_path):
     assert target.read_text() == "my work"
 
 
-@pytest.mark.parametrize("text", ['[]', '{"compartments":[],"compartments":["alpha"]}', '{"board":'])
+@pytest.mark.parametrize("text", ['[]', '{"pods":[],"pods":["alpha"]}', '{"board":'])
 def test_invalid_config_is_not_silently_interpreted(tmp_path, text):
     path = tmp_path / "draft.json"
     path.write_text(text)

@@ -1,47 +1,15 @@
-"""Interactive launcher and private, explicitly chosen compartment preferences."""
+"""Interactive launcher; catalogs discover available local pods."""
 
 from copy import deepcopy
-import json
 from pathlib import Path
 
-from caiman.documents.models import canonical_json, valid_identifier
-from caiman.storage.store import Store, StoreError
 
 
 STATE_FILE = '.authoring-state.json'
 
 
 def load_state(root: Path) -> dict:
-    store = Store(root)
-    path = store.root / STATE_FILE
-    if not path.exists() and not path.is_symlink():
-        return {'authorized_compartments': []}
-    state = json.loads(store._read(path))
-    # Older files also held a remembered board/project; there is no default
-    # selection any more, so that key is accepted and dropped.
-    if not isinstance(state, dict) or set(state) - {'context'} != {'authorized_compartments'}:
-        raise StoreError('Invalid local authoring state')
-    scopes = state['authorized_compartments']
-    if not isinstance(scopes, list) or any(not valid_identifier(s) or s == 'public' for s in scopes):
-        raise StoreError('Invalid local authoring explicit compartments')
-    return {'authorized_compartments': scopes}
-
-
-def save_state(root: Path, state: dict) -> None:
-    store = Store(root)
-    store._atomic_write(store.root / STATE_FILE, canonical_json(state), immutable=False)
-
-
-def remember_compartments(root: Path, state: dict, selections) -> None:
-    """Remember compartments of explicitly chosen projects; never which project."""
-    scopes = set(state['authorized_compartments'])
-    for selection in selections:
-        manifest = (selection or {}).get('manifest', {})
-        if 'project' in manifest:
-            scopes.update(manifest['compartments'])
-    if scopes != set(state['authorized_compartments']):
-        state['authorized_compartments'] = sorted(scopes)
-        save_state(root, state)
+    return {'pods': []}
 
 
 def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -> int:
@@ -69,10 +37,10 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
             continue
         if action in {'create-board', 'create-project'}:
             kind = action.split('-')[1]
-            selection = SetupApp(kind=kind, store_root=root, board=ingest_context.get('board')).run()
+            setup_options = {'pod': ingest_context['pod']} if ingest_context.get('pod') else {}
+            selection = SetupApp(kind=kind, store_root=root, board=ingest_context.get('board'), **setup_options).run()
             if selection is not None:
                 ingest_context[kind] = selection
-                remember_compartments(root, state, [selection])
             if ingest_state is not None:
                 action = 'ingest'
             else:
@@ -90,28 +58,27 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
             run_little_caiman(root)
             action = None
             continue
-        if action in {'repo-add', 'repo-remove', 'repo-initialize'}:
+        if action in {'repo-add', 'repo-remove', 'repo-initialize', 'repo-create', 'repo-sync', 'repo-default'}:
             from caiman.repositories.tui import RepoManagerApp
 
             RepoManagerApp(store_root=root, action=action.removeprefix('repo-')).run()
             action, resume = resume, None
             continue
         if action != 'ingest':
-            result = run_dashboard_action(action, root, state['authorized_compartments'])
+            result = run_dashboard_action(action, root, state['pods'])
             if isinstance(result, dict) and 'action' in result:
                 # A gallery's add card: run it, then come back to that gallery.
-                remember_compartments(root, state, [result.get('registered')])
+                if result.get('pod'):
+                    ingest_context['pod'] = result['pod']
                 action, resume = result['action'], action
             else:
-                remember_compartments(root, state, [result])
                 action = None
             continue
         result = IngestApp(store_root=root, source_path=source_path,
                            state=ingest_state, context=ingest_context,
-                           authorized_compartments=state['authorized_compartments']).run()
+                           pods=state['pods'], pod=ingest_context.get('pod')).run()
         ingest_state, ingest_context = None, {}
         if isinstance(result, dict):
-            remember_compartments(root, state, result.get('context', {}).values())
             # Inline creation hands the form's values and choices back afterwards.
             if result.get('action') in {'create-board', 'create-project'}:
                 ingest_state = result['ingest_state']

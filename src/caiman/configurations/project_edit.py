@@ -22,12 +22,13 @@ class ProjectEditReviewApp(NavigationApp):
     TITLE = 'Caiman · Review project changes'
     CSS = TERMINAL_CSS + '\nButton { width: auto; }\n#changes { height: 18; }\n'
 
-    def __init__(self, *, root, original, prepared=None, error=None, original_digest=None):
+    def __init__(self, *, root, original, prepared=None, error=None, original_digest=None, original_pod=None):
         super().__init__()
         apply_theme(self)
         self.root = root
         self.original = original
         self.original_digest = original_digest
+        self.original_pod = original_pod
         self.prepared = prepared
         self.error = error
         self.saving = False
@@ -35,7 +36,7 @@ class ProjectEditReviewApp(NavigationApp):
     def summary(self) -> str:
         manifest = self.prepared.manifest
         lines = [f"Project: {manifest['project']} @ {manifest['version']}",
-                 'Compartments: ' + ', '.join(manifest['compartments'])]
+                 'Pod: ' + self.prepared.pod]
         lines.extend(f"Board: {board['name']} @ {board['version']}  ({board['digest']})"
                      for board in project_boards(manifest))
         lines += [f"Specification set: {manifest['spec_set']}",
@@ -92,10 +93,10 @@ class ProjectEditReviewApp(NavigationApp):
                 button.disabled = True
             try:
                 replaces = None if self.original_digest is None else {'manifest': self.original,
-                                                                      'digest': self.original_digest}
+                                                                      'digest': self.original_digest, 'pod': self.original_pod or self.prepared.pod}
                 registration = await asyncio.to_thread(ConfigurationService(Store(self.root)).register,
                                                        self.prepared, replaces=replaces)
-                self.exit({'manifest': deepcopy(self.prepared.manifest), 'digest': registration.digest})
+                self.exit({'manifest': deepcopy(self.prepared.manifest), 'digest': registration.digest, 'pod': self.prepared.pod})
             except (OSError, ValueError) as error:
                 self.query_one('#status', Static).update(str(error))
             finally:
@@ -122,7 +123,7 @@ class ProjectDeleteApp(NavigationApp):
         yield Static('caiman  /  delete project', id='brand')
         with VerticalScroll(id='body'):
             yield Static(f"Delete {manifest['project']} @ {manifest['version']} from "
-                         + ', '.join(manifest['compartments']) + '?', markup=False)
+                         + self.selection.get('pod', 'public') + '?', markup=False)
             yield Static('The project leaves the project list. Its snapshot stays in the store by digest, so '
                          'anything already pinned to it keeps working. Nothing is pushed.', classes='hint')
             yield Static(f"Manifest: {self.selection['digest']}", markup=False)
@@ -147,7 +148,7 @@ class ProjectDeleteApp(NavigationApp):
                 button.disabled = True
             try:
                 await asyncio.to_thread(ConfigurationService(Store(self.root)).unregister, 'project',
-                                        self.selection['manifest'], self.selection['digest'])
+                                        self.selection['manifest'], self.selection['digest'], pod=self.selection.get('pod', 'public'))
                 self.exit(True)
             except (OSError, ValueError) as error:
                 self.query_one('#status', Static).update(str(error))
@@ -161,7 +162,7 @@ def edit_project(root: Path, service: ConfigurationService, selection: dict, dra
     """Drive one project through the guided form, Vim, and review.
 
     The form opens on the stored snapshot and Register updates that project in
-    place, moving its ref if the name, version, or compartments changed. Returns
+    place, moving its ref if the name, version, or pods changed. Returns
     the registered project, if any. Delete, once confirmed, removes the project
     from the list and returns None.
     """
@@ -170,6 +171,7 @@ def edit_project(root: Path, service: ConfigurationService, selection: dict, dra
 
     original = selection['manifest']
     draft, message = deepcopy(original if draft is None else draft), ''
+    draft.setdefault('pod', selection.get('pod', service.store.pods.default))
     while True:
         outcome = ProjectFormApp(original=original, draft=draft, message=message, root=root).run()
         if outcome is None:
@@ -186,21 +188,21 @@ def edit_project(root: Path, service: ConfigurationService, selection: dict, dra
                 draft = edited
             continue
         try:
-            prepared = service.prepare('project', draft)
+            prepared = service.prepare('project', draft, pod=draft.get('pod', selection.get('pod', service.store.pods.default)))
         except (OSError, ValueError) as invalid:
             message = str(invalid)
             continue
-        if prepared.digest == selection['digest']:
+        if prepared.digest == selection['digest'] and prepared.pod == selection.get('pod', prepared.pod):
             message = 'This draft matches the registered snapshot. There is nothing to register.'
             continue
         reviewed = ProjectEditReviewApp(root=root, original=original, prepared=prepared,
-                                        original_digest=selection['digest']).run()
+                                        original_digest=selection['digest'], original_pod=selection.get('pod')).run()
         if reviewed == 'edit':
             continue
         return reviewed if isinstance(reviewed, dict) else None
 
 
-def run_project_gallery(root: Path, compartments) -> dict | None:
+def run_project_gallery(root: Path, pods) -> dict | None:
     """Gallery → guided form → review, as boards do; no separate viewer page.
 
     Vim runs only after every app releases the terminal; no nested TUIs.
@@ -212,10 +214,15 @@ def run_project_gallery(root: Path, compartments) -> dict | None:
 
     registered = None
     service = ConfigurationService(Store(root))
+    active_pod = None
     while True:
-        selection = ProjectGalleryApp(root=root, compartments=compartments).run()
+        selection = ProjectGalleryApp(root=root, pods=pods, pod=active_pod).run()
         if selection is None:
             return registered
+        if isinstance(selection, dict):
+            active_pod = selection.get('pod', active_pod)
+        if isinstance(selection, dict) and selection.get('action') == 'add':
+            return {'action': 'create-project', 'registered': registered, 'pod': active_pod}
         if selection == 'add':
             return {'action': 'create-project', 'registered': registered}
         try:

@@ -20,7 +20,7 @@ def configured(tmp_path):
     source.write_text("# Synthetic manual\n## Serial port\nFictional register.\n")
     doc = store.register(prepare_document(source, {
         "issuer": "example", "part": "mcu", "doc_type": "manual", "version": "Rev 1",
-        "structure": "prose", "labels": {"public": True, "compartments": []},
+        "structure": "prose", 'pod': 'public',
     }))
     service = ConfigurationService(store)
     board = service.prepare("board", {
@@ -31,7 +31,7 @@ def configured(tmp_path):
     service.register(board)
     project = service.prepare("project", {
         "project": "example-program", "version": "Prototype", "customer": "Synthetic customer",
-        "compartments": ["alpha"], "boards": [{"name": "example-board", "version": "Rev A"}],
+        'pod': 'alpha', "boards": [{"name": "example-board", "version": "Rev A"}],
         "spec_set": "Synthetic release 1", "documents": [], "features": [],
     })
     service.register(project)
@@ -46,19 +46,16 @@ def test_bare_board_lists_versions_and_explicit_show_loads_snapshot(configured, 
     assert json.loads(capsys.readouterr().out) == board.manifest
 
 
-def test_project_export_requires_compartments_and_preserves_pins(configured, tmp_path, capsys):
+def test_project_export_requires_pods_and_preserves_pins(configured, tmp_path, capsys):
     root, _, project = configured
     output = tmp_path / "project.json"
     args = ["project", "export", "example-program", "--version", "Prototype",
             "--store", str(root), "--output", str(output)]
-    assert main(args) == 1
-    assert not output.exists()
-    assert "Synthetic customer" not in capsys.readouterr().err
-    assert main([*args, "--compartment", "alpha"]) == 0
-    assert json.loads(output.read_text()) == project.manifest
+    assert main(args) == 0
+    assert json.loads(output.read_text()) == dict(project.manifest, pod=project.pod)
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
-    assert main([*args, "--compartment", "alpha"]) == 1
-    assert json.loads(output.read_text()) == project.manifest
+    assert main([*args, "--pod", "alpha"]) == 1
+    assert json.loads(output.read_text()) == dict(project.manifest, pod=project.pod)
 
 
 def test_file_validation_is_read_only(configured, tmp_path, capsys):

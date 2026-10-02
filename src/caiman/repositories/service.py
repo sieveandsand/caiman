@@ -1,8 +1,12 @@
-"""Local repository registration and initialization, separate from publication."""
+"""Optional Git transport for independent pod folders.
 
+Saving data never commits or pushes. Sync commits locally, fetches, merges, and
+pushes with Git's fast-forward protection. Conflicts keep both histories.
+"""
 from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,105 +20,279 @@ from urllib.parse import urlsplit
 from caiman.documents.models import canonical_json, valid_identifier
 from caiman.storage.store import Store
 
-
 ATTRIBUTES = b'blobs/** -text -filter -ident -working-tree-encoding -merge\nmanifests/** -text -filter -ident -working-tree-encoding -merge\n'
+BRANCH = 'caiman-store'
 
 
-def _compartment(value):
+def _pod(value):
     if not valid_identifier(value):
-        raise ValueError('Enter one compartment using letters, digits, dots, hyphens or underscores')
+        raise ValueError('Enter a pod ID using letters, digits, dots, hyphens or underscores')
     return value
 
 
 def _remote(value):
     if not isinstance(value, str) or not value or any(c.isspace() or ord(c) < 32 for c in value):
-        raise ValueError('Enter an SSH or HTTPS repository URL')
+        raise ValueError('Enter an SSH or HTTPS repository URL, or an absolute local repository path')
+    if Path(value).is_absolute():
+        return value
     if '://' in value:
         parsed = urlsplit(value)
-        if (parsed.scheme not in {'https', 'ssh'} or not parsed.hostname or
-                not parsed.path.strip('/') or parsed.query or parsed.fragment or
-                parsed.password is not None or (parsed.scheme == 'https' and parsed.username is not None)):
-            raise ValueError('Use an SSH or HTTPS repository URL without passwords, tokens or query parameters')
-        # Accessing port validates malformed/non-numeric port declarations.
+        if (parsed.scheme not in {'https', 'ssh'} or not parsed.hostname or not parsed.path.strip('/') or
+            parsed.query or parsed.fragment or parsed.password is not None or
+            (parsed.scheme == 'https' and parsed.username is not None)):
+            raise ValueError('Use SSH or HTTPS without embedded credentials')
         parsed.port
     elif not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9.-]*:[A-Za-z0-9_./~-]+', value):
-        raise ValueError('Enter an SSH or HTTPS repository URL')
+        raise ValueError('Use SSH, HTTPS, or an absolute local repository path')
     return value
-
-
-def _unique(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError('Duplicate repository configuration key')
-        result[key] = value
-    return result
 
 
 @dataclass(frozen=True)
 class RepoPlan:
     action: str
-    compartment: str
+    pod: str
     remote: str | None
     local_path: Path
-    before: bytes | None
+    before: str
     push: bool = False
 
     @property
     def preview(self):
-        verb = {'add': 'Add repository', 'remove': 'Remove registration', 'initialize': 'Initialize local repository'}[self.action]
-        lines = [verb, f'Compartment: {self.compartment}', f'Remote: {self.remote or "Local only"}',
-                 f'Local repository: {self.local_path}']
-        if self.action == 'remove':
-            lines.append('Removes this entry from Caiman. Local files and the hosted repository are kept.')
-        elif self.action == 'add':
-            lines.append('Verifies the caiman-store branch and compartment before saving the address.')
-        else:
-            lines.append('Creates a local Git repository on branch caiman-store, or reuses its existing initialization.')
-            lines.append('Pushes only the initial Caiman metadata to the supplied empty remote.' if self.push else 'Keeps initialization local; nothing is pushed.')
-            lines.append('Existing documents and configurations are not included.')
+        verbs = {'create': 'Create local pod', 'add': 'Clone pod', 'initialize': 'Connect Git',
+                 'remove': 'Disconnect Git remote', 'sync': 'Sync pod', 'default': 'Set default pod'}
+        lines = [verbs[self.action], f'Pod: {self.pod}', f'Folder: {self.local_path}',
+                 f'Remote: {self.remote or "Local only"}']
+        if self.action == 'sync':
+            lines.append('Commit local changes, fetch team changes, merge, and push. Conflicts preserve both versions.')
+        elif self.action == 'initialize':
+            lines.append('Enable Git in this pod folder. Existing data stays local until Sync.')
+        elif self.action == 'remove':
+            lines.append('Keep local data and Git history; remove the remote connection.')
         return '\n'.join(lines)
 
 
 class RepoManager:
     def __init__(self, root: Path):
         self.store = Store(root)
-        self.path = self.store.root / '.repositories.json'
 
-    def local_path(self, compartment):
-        return self.store.root / '.repositories' / _compartment(compartment)
-
-    def _load(self):
-        if not self.path.exists() and not self.path.is_symlink():
-            return None, {}
-        before = self.store._read(self.path)
-        data = json.loads(before, object_pairs_hook=_unique)
-        if not isinstance(data, dict) or set(data) != {'schema', 'repositories'} or data['schema'] != 'caiman.repositories.v1':
-            raise ValueError('Invalid repository registry')
-        records = data['repositories']
-        if not isinstance(records, dict):
-            raise ValueError('Invalid repository entries')
-        for compartment, record in records.items():
-            _compartment(compartment)
-            if not isinstance(record, dict) or set(record) != {'remote', 'initialized'} or type(record['initialized']) is not bool:
-                raise ValueError('Invalid repository entry')
-            if record['remote'] is not None:
-                _remote(record['remote'])
-            elif not record['initialized']:
-                raise ValueError('Repository requires a remote or local initialization')
-        return before, records
+    def local_path(self, pod):
+        return self.store.pod_path(_pod(pod))
 
     def list_repos(self):
-        _, records = self._load()
-        return [dict(compartment=key, **records[key]) for key in sorted(records)]
+        records = []
+        for r in self.store.pods.list():
+            initialized = (r['path'] / '.git').exists()
+            remote = self._git(r['path'], 'config', '--local', '--get', 'remote.origin.url', allow_missing=True) if initialized else ''
+            records.append(dict(pod=r['id'], name=r['name'], remote=remote or None,
+                                initialized=initialized, default=r['id'] == self.store.pods.default))
+        return records
 
-    def _git(self, path, *args, allow_missing=False):
+    def _state(self, path):
+        if not path.exists():
+            return ''
+        entries = []
+        self.store._directory(path)
+        for p in sorted(path.rglob('*')):
+            if '.git' in p.relative_to(path).parts:
+                continue
+            if p.is_symlink():
+                raise ValueError('Pod files must not be symlinks')
+            if p.is_file():
+                entries.append((str(p.relative_to(path)), hashlib.sha256(self.store._read(p)).hexdigest()))
+        if (path / '.git').exists():
+            entries.append(('git-status', self._git(path, 'status', '--porcelain')))
+            entries.append(('git-head', self._git(path, 'show-ref', '--head', allow_missing=True)))
+            entries.append(('git-remote', self._git(path, 'config', '--local', '--get', 'remote.origin.url', allow_missing=True)))
+        return hashlib.sha256(canonical_json({'files': entries})).hexdigest()
+
+    def prepare(self, action, pod, remote='', push=False):
+        if action not in {'create', 'add', 'initialize', 'remove', 'sync', 'default'}:
+            raise ValueError('Unknown pod operation')
+        path = self.local_path(pod)
+        if push:
+            raise ValueError('Use Sync after connecting Git')
+        remote = _remote(remote) if remote else None
+        if action == 'add' and (remote is None or path.exists()):
+            raise ValueError('Clone needs a remote and a new local pod folder')
+        if action == 'create' and path.exists():
+            raise ValueError('This pod folder already exists')
+        if (path / '.git').exists() or (path / '.git').is_symlink():
+            self.store._directory(path / '.git')
+            existing = self._git(path, 'config', '--local', '--get', 'remote.origin.url', allow_missing=True)
+            if existing and remote and existing != remote:
+                raise ValueError('Disconnect the existing remote before connecting a different one')
+            remote = remote or existing or None
+        elif action in {'sync', 'remove'}:
+            raise ValueError('Connect Git for this pod first')
+        return RepoPlan(action, pod, remote, path, self._state(path))
+
+    @contextmanager
+    def _locked(self):
+        self.store._directory(self.store.root, create=True)
+        fd = os.open(self.store.root / '.pods.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ValueError('Pod lock must be a regular file')
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise ValueError('Another pod operation is running') from error
+            yield
+        finally:
+            os.close(fd)
+
+    def _verify_tree(self, path, revision, expected=None):
+        header = None
+        attributes = None
+        object_paths = set()
+        refs = []
+        for entry in filter(None, self._git(path, 'ls-tree', '-rz', '--full-tree', revision).split('\0')):
+            metadata, name = entry.split('\t', 1)
+            mode, kind, oid = metadata.split()
+            if mode != '100644' or kind != 'blob' or any(p in ('', '.', '..') for p in name.split('/')):
+                raise ValueError('Unsupported file type in pod repository')
+            object_paths.add(name)
+            if name.startswith('refs/'):
+                refs.append(self._git(path, 'cat-file', 'blob', oid))
+            if name.startswith(('blobs/', 'manifests/')):
+                content = self._git(path, 'cat-file', 'blob', oid, raw=True)
+                if (hashlib.sha256(content).hexdigest() != name.split('/')[-1] or
+                    name.split('/')[-2] != name.split('/')[-1][:2]):
+                    raise ValueError('Remote object digest mismatch')
+            if name in {'pod.json', 'store.json'}:
+                if header is not None:
+                    raise ValueError('Repository contains conflicting pod headers')
+                header = json.loads(self._git(path, 'cat-file', 'blob', oid))
+                if name == 'store.json':
+                    if not isinstance(header, dict) or set(header) != {'schema', 'compartment'} or header['schema'] != 'caiman.store.v1':
+                        raise ValueError('Invalid legacy store header')
+                    header = {'schema': 'caiman.pod.v1', 'id': header['compartment'], 'name': header['compartment']}
+
+            elif name == '.gitattributes':
+                attributes = self._git(path, 'cat-file', 'blob', oid)
+            elif not re.fullmatch(r'(blobs|manifests)/sha256/[0-9a-f]{2}/[0-9a-f]{64}|refs/(documents|boards|projects|collections)/[^\s]+', name):
+                raise ValueError(f'Unexpected file in pod repository: {name}')
+        if (not isinstance(header, dict) or set(header) != {'schema', 'id', 'name'} or
+            header['schema'] != 'caiman.pod.v1' or not valid_identifier(header['id']) or
+            not isinstance(header['name'], str) or not header['name'].strip() or
+            (expected is not None and header['id'] != expected)):
+            raise ValueError('Repository pod identity does not match')
+        if attributes != ATTRIBUTES.decode().strip():
+            raise ValueError('Unsupported pod transport attributes')
+        for value in refs:
+            if not re.fullmatch(r'sha256:[0-9a-f]{64}', value):
+                raise ValueError('Invalid remote pod reference')
+            if f'manifests/sha256/{value[7:9]}/{value[7:]}' not in object_paths:
+                raise ValueError('Remote reference points to a missing manifest')
+        return header
+
+    def _verify_files(self, path):
+        # Verify every immutable object's name and bytes before using or publishing it.
+        for kind in ('blobs', 'manifests'):
+            for p in (path / kind).rglob('*') if (path / kind).exists() else []:
+                if p.is_symlink():
+                    raise ValueError('Pod objects must not be symlinks')
+                if not p.is_file():
+                    continue
+                content = p.read_bytes()
+                if hashlib.sha256(content).hexdigest() != p.name or p.parent.name != p.name[:2]:
+                    raise ValueError(f'Object digest mismatch: {p.name}')
+                p.chmod(0o444)
+        for p in (path / 'refs').rglob('*') if (path / 'refs').exists() else []:
+            if p.is_file():
+                value = p.read_text().strip()
+                if not re.fullmatch(r'sha256:[0-9a-f]{64}', value):
+                    raise ValueError('Invalid pod reference')
+                if not (path / 'manifests' / 'sha256' / value[7:9] / value[7:]).is_file():
+                    raise ValueError('Pod reference points to a missing manifest')
+
+    def _initialize(self, plan):
+        self.store.pods.ensure(plan.pod)
+        if not (plan.local_path / '.git').exists():
+            self._git(plan.local_path, 'init', '--quiet', '--template=', '--initial-branch=' + BRANCH)
+        branch = self._git(plan.local_path, 'symbolic-ref', '--short', 'HEAD')
+        if branch != BRANCH:
+            raise ValueError('Switch this pod to the caiman-store branch before syncing')
+        if plan.remote:
+            self._git(plan.local_path, 'config', '--local', 'remote.origin.url', plan.remote)
+        self.store._atomic_write(plan.local_path / '.gitattributes', ATTRIBUTES, immutable=False)
+
+    def _clone(self, plan):
+        self.store._directory(self.store.root, create=True)
+        temporary = Path(tempfile.mkdtemp(prefix='.clone-', dir=self.store.root))
+        try:
+            self._git(temporary, 'init', '--quiet', '--template=', '--initial-branch=' + BRANCH)
+            self._git(temporary, 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', plan.remote, 'refs/heads/' + BRANCH)
+            header = self._verify_tree(temporary, 'FETCH_HEAD')
+            existing = [r for r in self.store.pods.list() if r['id'] == header['id'] and r['path'].exists()]
+            if existing:
+                raise ValueError('This pod is already available locally')
+            self._git(temporary, 'reset', '--hard', 'FETCH_HEAD')
+            if (temporary / 'store.json').exists():
+                self.store._atomic_write(temporary / 'pod.json', canonical_json(header), immutable=False)
+                (temporary / 'store.json').unlink()
+            self._git(temporary, 'remote', 'add', 'origin', plan.remote)
+            self._verify_files(temporary)
+            temporary.rename(plan.local_path)
+        finally:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+
+    def _sync(self, plan):
+        path = plan.local_path
+        if self._git(path, 'symbolic-ref', '--short', 'HEAD') != BRANCH:
+            raise ValueError('Switch this pod to the caiman-store branch before syncing')
+        if (path / '.git' / 'MERGE_HEAD').exists():
+            raise ValueError('Finish or abort the existing Git merge first')
+        self._verify_files(path)
+        self._git(path, 'add', '-A', '--', '.')
+        # Verify the index before committing: no unrelated files get published.
+        tree = self._git(path, 'write-tree')
+        pod_id = self.store.pods.resolve(plan.pod)['id']
+        self._verify_tree(path, tree, pod_id)
+        if self._git(path, 'status', '--porcelain'):
+            self._git(path, '-c', 'commit.gpgSign=false', 'commit', '--quiet', '-m', 'Update Caiman pod')
+        if not plan.remote:
+            return
+        refs = self._git(path, 'ls-remote', '--heads', plan.remote, 'refs/heads/' + BRANCH)
+        if refs:
+            self._git(path, 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', plan.remote, 'refs/heads/' + BRANCH)
+            self._verify_tree(path, 'FETCH_HEAD', pod_id)
+            try:
+                self._git(path, '-c', 'commit.gpgSign=false', 'merge', '--no-edit', 'FETCH_HEAD')
+            except ValueError as error:
+                conflicts = self._git(path, 'diff', '--name-only', '--diff-filter=U')
+                if (path / '.git' / 'MERGE_HEAD').exists():
+                    self._git(path, 'merge', '--abort')
+                raise ValueError('Pod sync needs a merge. Local changes are committed and remote history is fetched. '
+                                 'Resolve with Git, then retry Sync. ' + (conflicts or str(error))) from error
+            self._verify_files(path)
+        self._git(path, 'push', '--porcelain', plan.remote, 'HEAD:refs/heads/' + BRANCH)
+
+    def apply(self, plan):
+        with self._locked():
+            if self.prepare(plan.action, plan.pod, plan.remote, plan.push) != plan:
+                raise ValueError('Pod changed since review; review again')
+            if plan.action == 'create':
+                self.store.pods.ensure(plan.pod)
+            elif plan.action == 'default':
+                self.store.pods.set_default(plan.pod)
+            elif plan.action == 'initialize':
+                self._initialize(plan)
+            elif plan.action == 'add':
+                self._clone(plan)
+            elif plan.action == 'sync':
+                self._sync(plan)
+            elif plan.action == 'remove':
+                self._git(plan.local_path, 'remote', 'remove', 'origin')
+        return self.store.pods.resolve(plan.pod)['id']
+
+    def _git(self, path, *args, allow_missing=False, raw=False):
         env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
         env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT='0',
-                   GIT_SSH_COMMAND='ssh -oBatchMode=yes', GIT_ALLOW_PROTOCOL='ssh:https',
+                   GIT_SSH_COMMAND='ssh -oBatchMode=yes', GIT_ALLOW_PROTOCOL='ssh:https:file',
                    GIT_AUTHOR_NAME='Caiman', GIT_AUTHOR_EMAIL='caiman@localhost',
-                   GIT_COMMITTER_NAME='Caiman', GIT_COMMITTER_EMAIL='caiman@localhost',
-                   GIT_AUTHOR_DATE='2000-01-01T00:00:00Z', GIT_COMMITTER_DATE='2000-01-01T00:00:00Z')
+                   GIT_COMMITTER_NAME='Caiman', GIT_COMMITTER_EMAIL='caiman@localhost')
         try:
             credentials = []
             https_remote = next((arg for arg in args if arg.startswith('https://')), None)
@@ -135,7 +313,7 @@ class RepoManager:
             result = subprocess.run(['git', '-c', 'core.hooksPath=' + os.devnull,
                                      '-c', 'http.followRedirects=false', '-c', 'credential.interactive=false',
                                      *credentials, '-C', str(path), *args],
-                                    env=env, capture_output=True, text=True, timeout=60)
+                                    env=env, capture_output=True, text=not raw, timeout=60)
         except FileNotFoundError as error:
             raise ValueError('Git is not installed or is not on PATH') from error
         except subprocess.TimeoutExpired as error:
@@ -143,158 +321,5 @@ class RepoManager:
         if allow_missing and result.returncode == 1:
             return ''
         if result.returncode:
-            raise ValueError('Git repository operation failed: ' + (result.stderr.strip() or 'unknown error'))
-        return result.stdout.strip()
-
-    def _verify_remote(self, compartment, remote):
-        # Fetch objects into a disposable private directory; never check out remote files.
-        with tempfile.TemporaryDirectory(prefix='caiman-verify-') as directory:
-            path = Path(directory)
-            self._git(path, 'init', '--quiet', '--template=')
-            self._git(path, 'fetch', '--quiet', '--depth=1', '--no-tags', '--no-recurse-submodules',
-                      remote, 'refs/heads/caiman-store')
-            entries = self._git(path, 'ls-tree', '-rz', '--full-tree', 'FETCH_HEAD').split('\0')
-            header = None
-            attributes = None
-            for entry in filter(None, entries):
-                metadata, name = entry.split('\t', 1)
-                mode, kind, oid = metadata.split()
-                if mode != '100644' or kind != 'blob':
-                    raise ValueError('Remote is not a Caiman repository: unsupported file type')
-                if name == 'store.json':
-                    header = json.loads(self._git(path, 'cat-file', 'blob', oid), object_pairs_hook=_unique)
-                elif name == '.gitattributes':
-                    attributes = self._git(path, 'cat-file', 'blob', oid)
-                elif not re.fullmatch(r'(blobs|manifests)/sha256/[0-9a-f]{2}/[0-9a-f]{64}|refs/(documents|boards|projects|contexts)/[^\s]+|withdrawals/[^/]+\.json', name):
-                    raise ValueError('Remote is not a Caiman repository: unexpected tracked path')
-            if header != {'schema': 'caiman.store.v1', 'compartment': compartment}:
-                raise ValueError('Remote is not a Caiman repository for this compartment (store.json mismatch)')
-            if attributes != ATTRIBUTES.decode().strip():
-                raise ValueError('Remote is not a Caiman repository: unsupported transport attributes')
-
-    def _push_initial(self, plan):
-        # Build the commit from fixed metadata, never from the existing working tree.
-        with tempfile.TemporaryDirectory(prefix='caiman-push-') as directory:
-            path = Path(directory)
-            self._git(path, 'init', '--quiet', '--template=', '--initial-branch=caiman-store')
-            (path / 'store.json').write_bytes(canonical_json({'schema': 'caiman.store.v1', 'compartment': plan.compartment}))
-            (path / '.gitattributes').write_bytes(ATTRIBUTES)
-            self._git(path, 'add', '--', 'store.json', '.gitattributes')
-            self._git(path, '-c', 'commit.gpgSign=false', 'commit', '--quiet', '-m', 'Initialize Caiman compartment repository')
-            head = self._git(path, 'rev-parse', 'HEAD')
-            refs = self._git(path, 'ls-remote', '--refs', plan.remote)
-            expected = head + '\trefs/heads/caiman-store'
-            if refs == expected:
-                return  # Retry after a successful push whose response was lost.
-            if refs:
-                raise ValueError('Initialize requires an empty remote. Use Add for an existing Caiman repository.')
-            self._git(path, 'push', '--porcelain', '--force-with-lease=refs/heads/caiman-store:',
-                      plan.remote, 'HEAD:refs/heads/caiman-store')
-
-    def _existing(self, compartment, remote):
-        path = self.local_path(compartment)
-        if not path.exists() and not path.is_symlink():
-            return False
-        try:
-            self.store._directory(path / '.git')
-        except FileNotFoundError as error:
-            raise ValueError('The local directory already exists and is not an initialized Caiman repository') from error
-        expected = {'schema': 'caiman.store.v1', 'compartment': compartment}
-        if json.loads(self.store._read(path / 'store.json'), object_pairs_hook=_unique) != expected:
-            raise ValueError('Existing repository belongs to a different compartment or format')
-        actual = self._git(path, 'config', '--local', '--get-all', 'remote.origin.url', allow_missing=True)
-        if actual and actual != (remote or ''):
-            raise ValueError('Existing local repository has a different remote; its configuration was preserved')
-        return True
-
-    def prepare(self, action, compartment, remote='', push=False):
-        if action not in {'add', 'remove', 'initialize'}:
-            raise ValueError('Choose Add, Remove or Initialize')
-        _compartment(compartment)
-        if type(push) is not bool or (push and action != 'initialize'):
-            raise ValueError('Push is available only for initialization')
-        before, records = self._load()
-        record = records.get(compartment)
-        if action == 'remove':
-            if record is None:
-                raise ValueError('Choose a registered repository to remove')
-            remote = record['remote']
-        else:
-            remote = _remote(remote) if remote else None
-            if action == 'add' and record is not None:
-                raise ValueError('A repository is already registered for this compartment')
-            if action == 'add' and remote is None:
-                raise ValueError('Enter an SSH or HTTPS repository URL')
-            if record is not None:
-                if record['remote'] is not None and remote is not None and remote != record['remote']:
-                    raise ValueError('This compartment already has a different remote registered')
-                remote = remote or record['remote']
-            self._existing(compartment, record['remote'] if record else remote)
-        if push and not remote:
-            raise ValueError('Enter a remote URL to push initialization')
-        return RepoPlan(action, compartment, remote, self.local_path(compartment), before, push)
-
-    @contextmanager
-    def _locked(self):
-        self.store._directory(self.store.root, create=True)
-        path = self.store.root / '.repositories.lock'
-        fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise ValueError('Repository lock must be a regular file')
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as error:
-                raise ValueError('Another repository operation is running; try again') from error
-            yield
-        finally:
-            os.close(fd)
-
-    def _initialize(self, plan):
-        if self._existing(plan.compartment, plan.remote):
-            return
-        parent = plan.local_path.parent
-        self.store._directory(parent, create=True)
-        temporary = Path(tempfile.mkdtemp(prefix='.initialize-', dir=parent))
-        try:
-            self._git(temporary, 'init', '--quiet', '--template=', '--initial-branch=caiman-store')
-            if plan.remote:
-                self._git(temporary, 'remote', 'add', 'origin', plan.remote)
-            for name in ('blobs/sha256', 'manifests/sha256', 'refs/documents', 'refs/boards', 'refs/projects', 'refs/contexts'):
-                self.store._directory(temporary / name, create=True)
-            header = {'schema': 'caiman.store.v1', 'compartment': plan.compartment}
-            self.store._atomic_write(temporary / 'store.json', canonical_json(header), immutable=False)
-            self.store._atomic_write(temporary / '.gitattributes', ATTRIBUTES, immutable=False)
-            if plan.local_path.exists() or plan.local_path.is_symlink():
-                raise ValueError('Repository directory appeared during initialization; review again')
-            temporary.rename(plan.local_path)
-            self.store._fsync_directory(parent)
-        finally:
-            if temporary.exists():
-                shutil.rmtree(temporary)
-
-    def apply(self, plan: RepoPlan):
-        with self._locked():
-            before, records = self._load()
-            if before != plan.before:
-                raise ValueError('Repository configuration changed since review; review again')
-            checked = self.prepare(plan.action, plan.compartment, plan.remote, plan.push)
-            if checked != plan:
-                raise ValueError('Repository operation changed since review; review again')
-            if plan.action == 'remove':
-                del records[plan.compartment]
-            else:
-                if plan.action == 'add':
-                    self._verify_remote(plan.compartment, plan.remote)
-                if plan.action == 'initialize':
-                    self._initialize(plan)
-                records[plan.compartment] = {'remote': plan.remote,
-                                             'initialized': self._existing(plan.compartment, plan.remote)}
-            data = {'schema': 'caiman.repositories.v1', 'repositories': records}
-            self.store._atomic_write(self.path, canonical_json(data), immutable=False)
-            if plan.push:
-                try:
-                    self._push_initial(plan)
-                except (OSError, ValueError) as error:
-                    raise ValueError('Local repository saved; remote push did not complete. Retry Initialize with push. ' + str(error)) from error
-        return plan.compartment
+            raise ValueError('Git repository operation failed: ' + ((result.stderr.decode() if raw else result.stderr).strip() or 'unknown error'))
+        return result.stdout if raw else result.stdout.strip()

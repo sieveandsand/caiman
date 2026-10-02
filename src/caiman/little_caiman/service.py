@@ -157,7 +157,7 @@ class DocumentRef:
     name: str
     version: str | None
     location: str  # 'workspace' or 'store'
-    compartment: str | None = None
+    pod: str | None = None
 
     @property
     def title(self) -> str:
@@ -492,8 +492,8 @@ class UsageTracker:
         elif self.store_root is None or not self.store_root.is_dir():
             state = 'unverified'
         else:
-            held = any((compartment / 'blobs' / 'sha256' / digest[:2] / digest).is_file()
-                       for compartment in self.store_root.iterdir() if compartment.is_dir())
+            held = any((pod / 'blobs' / 'sha256' / digest[:2] / digest).is_file()
+                       for pod in self.store_root.iterdir() if pod.is_dir())
             state = 'intact' if held else 'modified'
         result = Integrity(state, writable)
         self._integrity[ref.path] = (key, result)

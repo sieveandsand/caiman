@@ -1,5 +1,10 @@
 # Caiman Architecture
 
+**Current pod model:** [PODS.md](PODS.md) supersedes the access-label,
+compartment, catalog-authorization, and separate-repository-mirror rules below.
+Pods are local folders with optional Git sharing; the Git host owns remote
+permissions. Older sections are retained as design history.
+
 **Status:** Design reference; local ingestion and authoring are implemented.
 Session materialization, hooks, and Git transport remain planned. Provisioning
 local and Docker worktrees (§6.11) is proposed and awaits a `DECISIONS.md` entry.

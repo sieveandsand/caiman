@@ -132,7 +132,7 @@ def test_direct_store_blob_reads_are_observed(tmp_path, workspace):
     tracker = UsageTracker(session, store)
     tracker.poll()
     [usage] = tracker.ranked()
-    assert usage.ref.location == 'store' and usage.ref.compartment == 'oem-alpha' and usage.ref.version is None
+    assert usage.ref.location == 'store' and usage.ref.pod == 'oem-alpha' and usage.ref.version is None
     assert usage.sections == {'Flash Controller': 1}
     assert tracker.integrity(usage.ref).state == 'intact'
 

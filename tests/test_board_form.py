@@ -23,12 +23,12 @@ def manifest():
         'schema': 'caiman.board.v2', 'board': 'falcon-mainboard', 'version': '2.1',
         'vendor': 'acme', 'notes': 'Dual-MCU safety mainboard.',
         'derives_from': '2.0', 'relation': 'Adds the secure element.',
-        'documents': [{'ref': 'acme/falcon-mainboard/board-user-guide/2.1', 'compartment': 'public',
+        'documents': [{'ref': 'acme/falcon-mainboard/board-user-guide/2.1', 'pod': 'public',
                        'notes': 'Connector pinout and jumper defaults.'}],
         'parts': [
             {'role': 'application-mcu', 'vendor': 'nxp', 'part': 's32k344', 'silicon_revision': '1.1',
              'aliases': {'refdes': 'U1', 'mpn': 'S32K344EHTAR'}, 'notes': 'Runs the safety-rated image.',
-             'documents': [{'ref': 'nxp/s32k344/reference-manual/Rev%204', 'compartment': 'public',
+             'documents': [{'ref': 'nxp/s32k344/reference-manual/Rev%204', 'pod': 'public',
                             'notes': 'Errata 051234 applies at this mask revision.'}]},
             {'role': 'safety-companion', 'vendor': 'ti', 'part': 'tps65313', 'documents': []},
         ],
@@ -114,7 +114,7 @@ async def test_rows_are_added_and_removed_without_touching_their_neighbours(mani
 
 
 @pytest.mark.asyncio
-async def test_document_pins_are_fields_and_the_compartment_stays_public(manifest):
+async def test_document_pins_are_fields_and_the_pod_stays_public(manifest):
     app = BoardFormApp(original=manifest)
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.pause()
@@ -127,8 +127,8 @@ async def test_document_pins_are_fields_and_the_compartment_stays_public(manifes
         draft = app.collect()
     assert draft['parts'][1]['documents'] == [
         {'ref': 'ti/tps65313/datasheet/A', 'notes': 'Watchdog timing.'}]
-    # The existing pin keeps the compartment it was stored with.
-    assert draft['parts'][0]['documents'][0]['compartment'] == 'public'
+    # The existing pin keeps the pod it was stored with.
+    assert draft['parts'][0]['documents'][0]['pod'] == 'public'
 
 
 @pytest.mark.asyncio

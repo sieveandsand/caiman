@@ -9,8 +9,8 @@ gets out of the way.
 
 Pre-MVP. Local Markdown ingestion and board/project authoring are implemented,
 with TUIs, JSON drafts, validation, and immutable digest pins. Session
-materialization, brief generation, access-log hooks, and document Git transport are planned.
-Repo Manager supports repository validation and initialization with an optional metadata push.
+materialization, brief generation, and access-log hooks are planned.
+Pods support local folders and optional Git clone/sync.
 Startup guidance hooks can be installed for Claude Code and Codex from the home menu.
 
 Caiman models hardware as boards and customer programs as projects. Each project
@@ -46,21 +46,20 @@ For a populated example workspace, import the [public example dataset](fixtures/
 This adds micro:bit v1/v2 hardware, Zephyr's sound application, and two Adafruit
 MacroPad applications with their hardware context, pinned upstream source, and
 Caiman-authored acceptance examples. It registers 11 public documents, 3 board
-snapshots, 4 project snapshots, and 2 document collections. It also remembers
-`demo-microbit` and `demo-macropad` so their projects appear in the gallery.
+snapshots, 4 project snapshots, and 2 document collections. Their `demo-microbit` and `demo-macropad` pods appear automatically.
 Existing entries are preserved; identical imports are a no-op, and conflicting
 names/versions stop the import. Close other Caiman writers during installation.
 Use `--store /absolute/path` to try a separate store. This does not install or
 run firmware on a device.
 
-A compartment keeps one customer's private documents separate from another's;
-usually use one per customer. Each document is explicitly public or belongs to
-exactly one compartment. Projects may reference documents from several
-compartments. The demo projects need named compartments under the current schema,
-but all their documents are explicitly public, including the example requirements.
+A **pod** is a folder of documents and configurations, optionally shared through
+its own Git repository. The Git host handles sharing permissions. `public` is
+the initial default pod name; it has no special access behavior. Documents,
+collections, boards, and projects each belong to one pod and can reference
+artifacts in other pods. See [Pods](docs/PODS.md) for the current backend design.
 
 The home screen shows one card per category: Documents, Boards, Projects,
-Hooks, and Repo Manager. Opening Documents, Boards, or Projects shows that
+Hooks, and Pods. Opening Documents, Boards, or Projects shows that
 category's cards with add cards at the end; press Enter or `e` on a board
 or project to edit it. After adding, you return to the same category. Use
 `hjkl` to move between cards and Enter to open one. In a form, Enter or `i`
@@ -81,41 +80,43 @@ remain readable.
 Open a document card to edit its name, version, description, applicability,
 requirement-ID pattern, and optional provenance. The guided page follows the
 board/project editor: expandable detail cards, **Review changes**, then
-**Register changes**. Stored file bytes, access, and registration details are
+**Register changes**. Stored file bytes, pod location, and registration details are
 read-only. Edits reuse the stored file, so the original import path is not
 needed. Existing digest pins retain their old snapshots; a changed name/version
 creates a separate catalog label, and an existing label cannot be overwritten
 by renaming another document onto it.
 
 A collection appears as a stack of cards. Name it, describe it, choose its
-access, and select documents already in the catalog. Review and save; opening
+pod, and select documents already in the catalog. Review and save; opening
 the stack lets you edit its membership. Collections have no version field:
 each save retains an immutable snapshot of the exact selected document revisions.
 Re-registering a document does not update collection membership automatically.
-Collections contain documents directly, without nested collections. Public
-collections contain public documents; a private collection may also contain
-documents in its own compartment. Collection access is fixed after creation.
+Collections contain documents directly, without nested collections, and may
+reference documents from any available pod. Their owning pod is fixed after
+creation. References do not copy document contents between pods.
 
-Open **Repo Manager** on the home screen to manage one repository per compartment:
+Documents, Projects, and Boards have **pod tabs** at the top. Press `/` for the next pod, or use
+`[` and `]` for the previous and next pods, or Left/Right and `h` / `l` when the tabs have focus. Press `j`
+from the tabs to enter the cards. The active tab selects which
+items are shown and the destination for new documents, collections, projects, or boards.
 
-- **Add repo**: enter the compartment and an existing SSH or HTTPS URL. Caiman
-  fetches the `caiman-store` branch into a temporary private directory and checks
-  its format, compartment, file layout, and transport attributes before saving it.
-- **Remove repo**: unregister the repository. Local files and the hosted
-  repository are preserved.
-- **Initialize repo**: create a local compartment repository. Optionally select
-  **Push initial metadata to this remote** and supply an empty private remote
-  that you have created on your Git host. Only the initial Caiman metadata is
-  pushed. You can also initialize locally and return later to push.
+Open **Pods** on the home screen to create a local pod, clone a team's pod,
+connect Git, sync, set the default, or disconnect a remote. Git is optional:
+local pods are ordinary folders. Each connected pod folder is its own repository.
+Connect never publishes data; **Sync** commits, fetches, merges, and pushes.
+Conflicts preserve local and remote history for resolution with Git.
 
-Each action has a review before applying. Git and working SSH or HTTPS
-authentication are required for remote operations. Remote privacy and teammate
-permissions are managed on the Git host; a format check does not verify them.
-Use `public` for the separate repository of public documents.
-The registry lives at `<store>/.repositories.json`, with local repositories at
-`<store>/.repositories/<compartment>/`. Registration grants no document access.
-Document/configuration publication and retrieval remain planned. If an initial
-push fails, the local setup is retained and Initialize can retry the push.
+```bash
+caiman pod create alpha
+caiman pod default alpha
+caiman pod connect alpha git@example.com:team/alpha.git
+caiman pod sync alpha
+caiman pod list
+```
+
+Teammates use `caiman pod clone alpha URL`. Git host permissions control fetching
+and pushing; local copies remain usable offline. Each command accepts `--store`.
+[Pods](docs/PODS.md) documents references, migration, and conflict behavior.
 
 Use **Hooks → Claude Code** or **Hooks → Codex** to add a startup hook to a
 project directory. Choose **Preview** to review the exact settings diff, then
@@ -148,7 +149,7 @@ Git repository, commit, or push. No original PDF or converter information is
 required, and document contents are never sent to a service.
 
 The store currently supports a single writer. Each ref update is atomic, but
-updates across multiple compartments are not one transaction; a failed operation
+updates across multiple pods are not one transaction; a failed operation
 can leave complete objects or some refs written. It never publishes a ref before
 that ref's objects are complete. Store readers verify digests; local file modes
 are not an isolation boundary against another process running as the same user.
@@ -175,15 +176,13 @@ stores a complete snapshot. Going back to edit invalidates the previous review.
 Cancelling before registration writes no version; loading a JSON file never
 modifies that file.
 
-**Refresh catalog** lists registered documents. Boards can select public
-documents; projects can also select documents within their explicitly entered
-compartments. Selecting a board or project during ingestion reuses metadata but
+**Refresh catalog** lists documents from every local pod. Boards and projects
+can both pin documents across pods. Selecting a board or project during ingestion reuses metadata but
 does not add the document to its existing pins. Adopt it through a configuration
 edit. A customer's name is not automatically a document's publisher.
 
-Caiman remembers compartments from projects you explicitly choose, but never a
-default board or project. It does not scan undeclared compartments for private
-projects. These preferences do not select a session mode.
+Caiman discovers local pods automatically. The default pod is a local preference;
+there is no remembered default board or project and no application membership list.
 
 ### Keyboard navigation
 
@@ -252,11 +251,10 @@ and invalid relationships are errors. Template and export files use mode `0600`
 and never overwrite an existing file. Keep private drafts in `.caiman/` or
 outside the firmware repository.
 
-List document selectors with `caiman documents`, adding `--compartment NAME`
-for private documents. For the imported micro:bit v2 integration notes:
+List all local document selectors with `caiman documents`, or filter with `--pod NAME`. For the imported micro:bit v2 integration notes:
 
 ```json
-{"ref": "microbit/bbc-microbit/micro%3Abit%20v2%20integration%20notes/v2-zephyr-4.2.0", "compartment": "public"}
+{"ref": "microbit/bbc-microbit/micro%3Abit%20v2%20integration%20notes/v2-zephyr-4.2.0", "pod": "public"}
 ```
 
 Use the catalog's encoded ref, or a full `sha256:…` manifest digest. A supplied
@@ -272,16 +270,15 @@ caiman board show bbc-microbit --version v2-zephyr-lsm303agr
 caiman board export bbc-microbit --version v2-zephyr-lsm303agr --output .caiman/exported-board.json
 caiman board new-version bbc-microbit --from-version v2-zephyr-lsm303agr --version Lab-A \
   --relation 'Local experiment based on the imported v2 model'
-caiman project show microbit-sound --version R2-v2 --compartment demo-microbit
+caiman project show microbit-sound --version R2-v2 --pod demo-microbit
 caiman project export microbit-sound --version R2-v2 \
-  --compartment demo-microbit --output .caiman/exported-project.json
+  --pod demo-microbit --output .caiman/exported-project.json
 ```
 
 Omitting the version on `show` lists labels; it never chooses the latest.
 `new-version` works for boards and projects: it opens a complete copy in the TUI,
 with the supplied lineage and existing pins. Pins change only when explicitly
-edited. Project reads require every declared compartment; repeat `--compartment`
-when needed. Store-backed commands accept `--store /absolute/path/to/store`.
+edited. Use `--pod` to filter a catalog or disambiguate a name. Store-backed commands accept `--store /absolute/path/to/store`.
 These operations register locally and never commit or push.
 
 ## Development
@@ -315,7 +312,7 @@ Start with the guide for the task; there is no need to read the whole folder.
 | Evaluate MVP success | [Roadmap criteria](docs/ROADMAP.md#success-criteria-for-the-mvp) |
 | Change components, resolution, or session interfaces | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Change stored objects or workspace layout | [STORAGE.md](docs/STORAGE.md) |
-| Understand the shared Git backend and Merkle session identity | [Storage §6.6–§6.7](docs/STORAGE.md#66-team-storage-one-git-repository-per-compartment) |
+| Understand pods and Git sharing | [Pods](docs/PODS.md) |
 | Review labels, visibility, audit, or revocation | [SECURITY-MODEL.md](docs/SECURITY-MODEL.md) |
 | Understand a choice or resolve an open decision | [DECISIONS.md](docs/DECISIONS.md) |
 | Find outstanding validation and review tasks | [GAPS.md](docs/GAPS.md) |
