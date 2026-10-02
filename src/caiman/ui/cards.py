@@ -1,11 +1,11 @@
-"""Shared fullwidth headings and dotted focus shadows for Caiman cards."""
+"""Shared card headings and dotted focus shadows for Caiman cards."""
 
 from rich.console import Console
 from rich.text import Text
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from caiman.ui.heading import fullwidth_title
+from caiman.ui.heading import card_heading
 
 CARD_CSS = """
     .card-frame { width: 100%; height: auto; layers: shadow face; }
@@ -21,10 +21,8 @@ def card_label(title, summary, width):
     # Borders, face padding, and Textual Button's one-cell line padding.
     available = max(1, width - 6)
     label = Text(no_wrap=True, overflow='crop')
-    rows = fullwidth_title(title, available)
-    for line in rows or Text(title).wrap(Console(), available, overflow='fold'):
-        label.append(str(line) + '\n', style='bold #eef3e6')
-    label.append('\n')
+    label.append(card_heading(title, available))
+    label.append('\n\n')
     for line in Text(summary).wrap(Console(), available, overflow='fold'):
         label.append(line.plain + '\n', style='bold #aab69c')
     label.rstrip()

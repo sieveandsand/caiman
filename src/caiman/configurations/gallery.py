@@ -14,7 +14,7 @@ from caiman.ui.cards import CARD_CSS, AddTile, CardFrame, OverviewCard, resize_c
 
 from caiman.configurations.models import project_boards
 from caiman.configurations.service import ConfigurationService
-from caiman.ui.heading import fullwidth_title
+from caiman.ui.heading import card_heading
 from caiman.ui.navigation import NavigationApp
 from caiman.storage.store import Store
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
@@ -39,12 +39,8 @@ class ProjectCard(OverviewCard):
                 label.append(wrapped.plain + '\n', style=style)
 
         def heading(value, caption, color):
-            rows = fullwidth_title(value, available)
-            if rows:
-                for row in rows:
-                    label.append(row + '\n', style=f'bold {color}')
-            else:
-                line(caption, f'bold {color}')
+            label.append(card_heading(value, available, secondary=color == '#7fdc4f'))
+            label.append('\n')
 
         heading(manifest['project'], manifest['project'], '#eef3e6')
         line('')

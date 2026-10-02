@@ -211,7 +211,7 @@ class SetupApp(NavigationApp):
 
 
 class DashboardTile(OverviewCard):
-    """A keyboard-focusable action with a fullwidth heading."""
+    """A keyboard-focusable action with an equipment label heading."""
 
     def __init__(self, title, description, *, action, disabled=False):
         super().__init__('', id=action, classes='dashboard-tile card-face', disabled=disabled)

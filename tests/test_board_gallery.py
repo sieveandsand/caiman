@@ -53,8 +53,7 @@ async def test_gallery_two_columns_complete_parts_and_keyboard_edit(tmp_path):
                 assert f'refdes U{index + 1}' not in text
             assert 'Silicon mask-A' not in text
             assert f'{count} Parts · 0 Links · 0 Docs' in text
-            from caiman.ui.heading import fullwidth_title
-            assert '\n'.join(fullwidth_title('A', 48)) in text
+            assert '  [ A ]' in text
             assert 'Version A' not in text
         await pilot.press('l', 'e')
     assert app.return_value['digest'] == beta['digest']
@@ -176,25 +175,19 @@ def test_card_counts_board_and_part_docs_and_omits_details():
     card = BoardCard(record, index=0)
     height = card.format_card(48)
     text = card.label.plain
-    from caiman.ui.heading import fullwidth_title
-    assert '\n'.join(fullwidth_title('falcon', 44)) in text
-    assert '\n'.join(fullwidth_title('Rev B', 44)) in text
+    assert 'FALCON' in text
+    assert '[ Rev B ]' in text
     assert 'falcon' not in text and 'Version Rev B' not in text
     assert '1 Parts · 1 Links · 3 Docs' in text
     assert 'mcu-1' in text
     assert 'hidden' not in text.lower() and 'sha256' not in text and 'Public' not in text
-    assert 'ＦＡＬＣＯＮ' in text and 'ＲＥＶ　Ｂ' in text
-    assert not any('\u2801' <= char <= '\u28ff' or '\u2580' <= char <= '\u259f' for char in text)
+    assert text.startswith('▌ FALCON\n\n  [ Rev B ]')
+    assert not any('\u2801' <= char <= '\u28ff' for char in text)
     assert height == len(text.splitlines()) + 2
     assert max(map(len, text.splitlines())) <= 44
 
 
-def test_fullwidth_titles_fall_back_for_long_or_unicode_identifiers():
-    from caiman.ui.heading import fullwidth_title
-
-    assert len(fullwidth_title('Falcon-2', 32)) == 1
-    assert fullwidth_title('long-board-name', 12) == []
-    assert fullwidth_title('板-α', 40) == []
+def test_equipment_labels_wrap_long_and_unicode_identifiers():
     record = {'manifest': {'board': '板-α', 'version': 'Revision B / prototype build', 'parts': [], 'links': []}}
     card = BoardCard(record, index=0)
     card.format_card(20)

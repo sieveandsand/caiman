@@ -9,12 +9,12 @@ from caiman.boards.form import (BoardFormApp, BoardDocumentCard, DocumentRow, Li
                               parse_aliases)
 from caiman.configurations.files import COMMON_VENDORS, vendor_suggestions
 from caiman.configurations.models import validate_board
-from caiman.ui.heading import fullwidth_title
+from caiman.ui.heading import card_heading
 
 
 def wide(value):
-    """A card title as the editor shows it: fullwidth uppercase."""
-    return fullwidth_title(value, 200)[0]
+    """A card title as the editor shows it."""
+    return card_heading(value, 200).plain
 
 
 @pytest.fixture
@@ -401,8 +401,8 @@ async def test_document_and_link_cards_preserve_edits_and_neighbours(
         card.query_one('.collapse-card', Button).press()
         await pilot.pause()
         assert not card.query_one('.card-editor').display
-        # Fullwidth when the title fits the card, else the exact stored value.
-        shown = (fullwidth_title(new_value, card.summary_width) or [new_value])[0]
+        # Keep the selected typography when the title wraps.
+        shown = card_heading(new_value, card.summary_width).plain
         assert summary.label.plain.startswith(shown + '\n')
         assert app.focused is summary
         expected = deepcopy(manifest)
@@ -481,7 +481,7 @@ async def test_editor_and_add_card_shadows_follow_focus_and_preserve_geometry(ma
 
 
 @pytest.mark.asyncio
-async def test_editor_card_titles_match_gallery_headings_or_fall_back_exactly(manifest):
+async def test_editor_card_titles_match_gallery_and_preserve_unicode(manifest):
     from rich.cells import cell_len
 
     short, long, unsupported = 'S32K358-rev2', 'S32K358-long-part-number-rev2', 'TJA1145ß'
@@ -496,10 +496,10 @@ async def test_editor_card_titles_match_gallery_headings_or_fall_back_exactly(ma
         # Same heading style as the gallery cards, sized to the card.
         assert first_lines[0] == wide(short)
         assert cell_len(first_lines[0]) <= titles[0].content_region.width
-        # Too wide or unsupported: the exact stored value, never truncated or transliterated.
-        assert first_lines[1:] == [long, unsupported]
+        # Long ASCII titles keep their case treatment; Unicode is not transliterated.
+        assert first_lines[1:] == [wide(long), wide(unsupported)]
         assert [part['part'] for part in app.collect()['parts']] == [short, long, unsupported]
         # Narrowing the terminal re-renders the title rather than overflowing the card.
         await pilot.resize_terminal(34, 50)
         await pilot.pause()
-        assert titles[0].label.plain.split('\n')[0] == short
+        assert titles[0].label.plain.split('\n')[0] == wide(short)

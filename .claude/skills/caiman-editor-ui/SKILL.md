@@ -29,10 +29,12 @@ and explanations for unsupported or read-only records.
 
 ## Editor cards
 
-Title each editor card with the same bold fullwidth heading as gallery cards,
-falling back to the exact value in bold ordinary text when it does not fit the
-card's width or has an unsupported character; keep the rest of the summary in
-compact ordinary text. Use a black
+Title each editor card with the same equipment label treatment as gallery cards:
+a green `▌ ` marker followed by a bold pale, normal-width uppercase ASCII title.
+Preserve non-ASCII titles exactly. Wrap long titles with continuation lines
+indented two cells; keep the same treatment at every width. Where a meaningful
+secondary identity exists, use regular-weight green `  [ value ]` text with its
+original casing. Keep the rest of the summary in compact ordinary text. Use a black
 face, solid muted-green outline, pale identity, subdued summary facts, green
 accents, and a discrete dotted focus shadow. Left-align summaries. Center a large
 `+` and short action label on add cards.

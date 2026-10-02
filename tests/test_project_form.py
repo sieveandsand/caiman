@@ -12,12 +12,12 @@ from caiman.configurations.project_form import (FeatureCard, GoverningRow, Pinne
 A = 'sha256:' + 'a' * 64
 B = 'sha256:' + 'b' * 64
 C = 'sha256:' + 'c' * 64
-from caiman.ui.heading import fullwidth_title
+from caiman.ui.heading import card_heading
 
 
 def wide(value):
-    """A card title as the editor shows it: fullwidth uppercase."""
-    return fullwidth_title(value, 200)[0]
+    """A card title as the editor shows it."""
+    return card_heading(value, 200).plain
 
 
 @pytest.fixture

@@ -20,7 +20,7 @@ from caiman.little_caiman.service import (ABSENCE_NOTICE, HARNESS_NAMES, Session
                                           list_sessions)
 from caiman.ui.cards import CARD_CSS, CardFrame, OverviewCard
 from caiman.ui.navigation import NavigationApp
-from caiman.ui.heading import fullwidth_title
+from caiman.ui.heading import card_heading
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 POLL_SECONDS = 2
@@ -49,7 +49,7 @@ def parse_stamp(value: str) -> float | None:
 
 
 class CardText:
-    """The card hierarchy: fullwidth headings, then summary, then items, blank-line separated."""
+    """The card hierarchy: styled headings, then summary, then items, blank-line separated."""
 
     def __init__(self, width):
         self.available = max(1, width - 6)
@@ -72,12 +72,8 @@ class CardText:
             self.line(row, style)
 
     def heading(self, value, fallback, color):
-        rows = fullwidth_title(value, self.available)
-        if rows:
-            for row in rows:
-                self.text.append(row + '\n', style=f'bold {color}')
-        else:
-            self.line(fallback, f'bold {color}')
+        self.text.append(card_heading(value, self.available, secondary=color == '#7fdc4f'))
+        self.text.append('\n')
 
     def gap(self):
         self.text.append('\n')

@@ -13,7 +13,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Label
 
 from caiman.ui.cards import AddCardFrame, DotShadow, EditorFrame
-from caiman.ui.heading import fullwidth_title
+from caiman.ui.heading import card_heading
 from caiman.ui.navigation import NavigationApp
 from caiman.ui.theme import TERMINAL_CSS
 
@@ -105,9 +105,8 @@ class CardRow(Row, EditorFrame):
         self.query_one('.card-summary', Button).label = self.summary(self.summary_data())
 
     def heading(self, label, value):
-        """The card's identity in the gallery heading style, or plain when it cannot fit."""
-        rows = fullwidth_title(value, self.summary_width)
-        label.append(rows[0] if rows else value, style='bold #dfe6d3')
+        """Use the same wrapping identity treatment as gallery cards."""
+        label.append(card_heading(value, self.summary_width))
 
     def on_resize(self, event):
         # Shadow margin, face border and padding, and Button line padding.

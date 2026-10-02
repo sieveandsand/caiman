@@ -79,7 +79,7 @@ def test_project_card_preserves_fallback_identity():
     card = ProjectCard(record, index=0)
     card.format_card(30)
     assert 'Mixed ß project' in card.label.plain
-    assert 'Version opaque / label' in card.label.plain
+    assert '  [ opaque / label ]' in card.label.plain
     assert '2 Docs · 1 Features' in card.label.plain
     assert record == before
 

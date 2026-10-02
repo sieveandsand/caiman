@@ -28,7 +28,8 @@ these are reusable examples, not a requirement to inherit board domain classes.
   `summary_data` reads draft fields for summaries without discarding partial
   input. Do not rebuild widgets from the last valid collected manifest on Done.
 - A summary starts with `CardRow.heading(label, title)`, which renders the title
-  with `fullwidth_title` at `summary_width`. `CardRow.on_resize` recomputes that
+  with `card_heading` at `summary_width`, using the equipment label marker
+  and indented wrapping. `CardRow.on_resize` recomputes that
   width (card width minus shadow margin, face border and padding, and Button line
   padding) and refreshes the summary, so the title never overflows the card.
 - Repeated field widgets use classes scoped to their own row, not duplicate IDs.

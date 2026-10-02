@@ -8,8 +8,8 @@ create a different entity's cards.
 
 Paths are relative to the checkout root, not to this skill:
 
-- `src/caiman/ui/heading.py`: `fullwidth_title` renders an uppercase fullwidth
-  heading in one terminal row and returns an empty list for fallback.
+- `src/caiman/ui/heading.py`: `card_heading` renders equipment labels with
+  cell-aware wrapping, a title marker, and bracketed secondary identities.
 - `src/caiman/ui/cards.py`: shared `card_label`, `OverviewCard`, `CardFrame`,
   `EditorFrame`, and `AddCardFrame` presentation and focus behavior.
 - `src/caiman/boards/gallery.py`: `BoardCard.format_card` shows the information
@@ -26,27 +26,21 @@ assume the user's checkout lives at any particular absolute path.
 
 ## Heading renderer
 
-Map each character of a validated heading to its fullwidth form after
-uppercasing it for display:
+Use `card_heading(value, available, secondary=False)` from
+`src/caiman/ui/heading.py`. It returns Rich `Text` with a green `▌ ` marker and
+bold pale normal-width title. Set `secondary=True` for a regular-weight green
+`  [ value ]` subtitle with its original casing. Append this Rich text directly
+so its separate marker and text styles survive.
 
-```python
-def fullwidth_title(value, width):
-    if not value or any(not ' ' <= c <= '~' for c in value) or len(value) * 2 > width:
-        return []
-    return [''.join('\u3000' if c == ' ' else chr(ord(c) + 0xFEE0)
-                    for c in value.upper())]
-```
+Wrap using Rich's cell-aware `Text.wrap(..., overflow='fold')`, reserving two
+cells for the prefix. Subsequent lines start with two spaces. Uppercase ASCII
+titles for display only; preserve non-ASCII titles exactly. Long identities keep
+the same treatment and all their characters. Count the resulting lines when
+sizing the card and its shadow; do not assume a single title row.
 
-Every fullwidth character occupies two cells, so the width check is twice the
-character count against the available content width. Return an empty list for
-the complete heading if any character is not printable ASCII or it does not
-fit; the caller then shows bold ordinary text with the original value and
-casing, using Rich/Textual cell-aware wrapping. Do not append a plain-text
-duplicate after a successful render. Measure rendered widths in cells, never
-in characters.
-
-Do not stack rows or add a font-size/negative-line-height workaround. The
-permanent style is a single fullwidth row, not a style preview selector.
+The available width excludes borders, padding, Button line padding, and shadow
+space. In unusually narrow editors, leave at least one cell for text by reducing
+the prefix. Do not add a typography switcher to the permanent presentation.
 
 ## Frame and shadow
 

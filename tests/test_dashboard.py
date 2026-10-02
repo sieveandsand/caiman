@@ -152,8 +152,7 @@ async def test_dashboard_cards_resize_and_move_shadow_without_layout_changes():
         await pilot.pause()
         first = app.query_one('#documents', DashboardTile)
         second = app.query_one('#show-board', DashboardTile)
-        from caiman.ui.heading import fullwidth_title
-        assert fullwidth_title('Documents', 100)[0] in first.label.plain
+        assert 'DOCUMENTS' in first.label.plain
         assert 'Documents' not in first.label.plain
         assert 'Ingest · browse registered' in app.export_screenshot().replace('&#160;', ' ')
         before = [card.region for card in (first, second)]
@@ -179,37 +178,23 @@ def test_dashboard_card_fallback_keeps_exact_unicode_identity():
 
 
 @pytest.mark.asyncio
-async def test_menu_uses_permanent_uppercase_fullwidth_headings():
+async def test_menu_defaults_to_normal_width_uppercase_headings():
     from caiman.dashboard.onboarding import DashboardTile
 
     app = LauncherApp()
     async with app.run_test(size=(110, 40)) as pilot:
         first = app.query_one('#documents', DashboardTile)
         await pilot.pause()
-        assert first.label.plain.startswith('ＤＯＣＵＭＥＮＴＳ\n')
-        # There is no font switcher: t and T leave the screen as it was.
+        assert first.label.plain.startswith('▌ DOCUMENTS\n')
+        # Unbound letters leave the screen as it was.
         await pilot.press('t', 'T')
         assert app.focused is first
-        assert first.label.plain.startswith('ＤＯＣＵＭＥＮＴＳ\n')
+        assert first.label.plain.startswith('▌ DOCUMENTS\n')
         assert 'font' not in str(app.query_one('.key-hint', Static).render())
         await pilot.press('enter')
     assert app.return_value == 'documents'
 
 
-def test_fullwidth_titles_are_uppercase_single_row_with_exact_fallback():
-    from caiman.ui.heading import fullwidth_title
-
-    assert fullwidth_title('Create board', 40) == ['ＣＲＥＡＴＥ\u3000ＢＯＡＲＤ']
-    assert fullwidth_title('Board', 40) == fullwidth_title('BOARD', 40)
-    # H, M, and N are ordinary letterforms, so they cannot be confused.
-    assert fullwidth_title('hmn', 6) == ['ＨＭＮ'] and fullwidth_title('hmn', 5) == []
-    assert fullwidth_title('Rev (B)-2.1/x_y+z', 40) == ['ＲＥＶ\u3000（Ｂ）－２．１／Ｘ＿Ｙ＋Ｚ']
-    assert fullwidth_title('Board', 9) == []
-    assert fullwidth_title('', 40) == []
-    # No transliteration or partial rendering: the caller shows the exact value.
-    assert fullwidth_title('板-α', 40) == []
-    assert fullwidth_title('Straße', 40) == []
-    assert fullwidth_title('tab\there', 40) == []
 
 
 @pytest.mark.asyncio

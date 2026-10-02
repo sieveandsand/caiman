@@ -5,7 +5,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from caiman.ui.cards import CardFrame, OverviewCard, card_label
-from caiman.ui.heading import fullwidth_title
+from caiman.ui.heading import card_heading
 
 
 def document_name(manifest):
@@ -27,13 +27,9 @@ class DocumentCard(OverviewCard):
             for wrapped in Text(value).wrap(console, available, overflow='fold'):
                 label.append(wrapped.plain + '\n', style=style)
 
-        def heading(value, fallback, color):
-            rows = fullwidth_title(value, available)
-            if rows:
-                for row in rows:
-                    label.append(row + '\n', style=f'bold {color}')
-            else:
-                line(fallback, f'bold {color}')
+        def heading(value, caption, color):
+            label.append(card_heading(value, available, secondary=color == '#7fdc4f'))
+            label.append('\n')
 
         identity = document_name(manifest)
         heading(identity, identity, '#eef3e6')

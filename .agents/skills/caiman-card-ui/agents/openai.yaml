@@ -1,3 +1,3 @@
 interface:
   display_name: "Caiman Card UI"
-  short_description: "Build reusable cards with fullwidth headings and shadows"
+  short_description: "Build equipment label cards with dotted focus shadows"
