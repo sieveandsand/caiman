@@ -8,49 +8,45 @@ create a different entity's cards.
 
 Paths are relative to the checkout root, not to this skill:
 
-- `src/caiman/pixel_title.py`: despite its historical name, `pixel_title` currently
-  returns **Braille dots**, not solid pixels. It supports separate uppercase and
-  lowercase five-by-seven glyphs and returns an empty list for fallback.
-- `src/caiman/board_gallery.py`: `BoardCard.format_card` shows the information
-  hierarchy; `BoardCardFrame` provides the decorative shadow. Adapt the data
-  mapping and names for the new entity.
-- `src/caiman/board_form.py`: `CardRow`, the card grids, and add-card handling show
-  inline editing and draft retention. Fields use `.field-label` styling.
-- `src/caiman/theme.py`: shared colors and terminal controls.
+- `src/caiman/ui/heading.py`: `fullwidth_title` renders an uppercase fullwidth
+  heading in one terminal row and returns an empty list for fallback.
+- `src/caiman/ui/cards.py`: shared `card_label`, `OverviewCard`, `CardFrame`,
+  `EditorFrame`, and `AddCardFrame` presentation and focus behavior.
+- `src/caiman/boards/gallery.py`: `BoardCard.format_card` shows the information
+  hierarchy and pin counts; adapt the data mapping for other entities.
+- `src/caiman/dashboard/onboarding.py`: menu cards use the shared heading style.
+- `src/caiman/boards/form.py`: `CardRow`, grids, and add-card handling retain
+  inline editor drafts. Fields use `.field-label` styling.
+- `src/caiman/ui/theme.py`: shared colors and terminal controls.
 - `tests/test_board_gallery.py` and `tests/test_board_form.py`: examples of focus,
   layout, fallback, and draft-preservation checks.
 
 If these paths are unavailable, implement equivalent behavior locally. Do not
 assume the user's checkout lives at any particular absolute path.
 
-## Dot renderer
+## Heading renderer
 
-A five-column glyph plus a blank separator column occupies three Braille cells.
-Seven dot rows plus one empty padding row occupy two terminal rows. Preserve
-case by looking up the original character rather than uppercasing the value.
-
-For each two-column/four-row cell, pack bits using these row/column positions:
+Map each character of a validated heading to its fullwidth form after
+uppercasing it for display:
 
 ```python
-DOT_BITS = ((0, 3), (1, 4), (2, 5), (6, 7))
-mask = sum(
-    1 << DOT_BITS[dy][dx]
-    for dy in range(4)
-    for dx in range(2)
-    if pixels[y + dy][x + dx]
-)
-character = chr(0x2800 + mask) if mask else ' '
+def fullwidth_title(value, width):
+    if not value or any(not ' ' <= c <= '~' for c in value) or len(value) * 2 > width:
+        return []
+    return [''.join('\u3000' if c == ' ' else chr(ord(c) + 0xFEE0)
+                    for c in value.upper())]
 ```
 
-Here `pixels` contains booleans or integers; convert string `0`/`1` entries
-before using this example. Never render an unknown glyph as a blank. Fall back
-for the complete heading if unsupported or if `3 * len(value)` exceeds the
-available content width. Do not append a plain-text duplicate after a successful
-render. Use Rich/Textual cell-aware wrapping for the plain-text fallback.
+Every fullwidth character occupies two cells, so the width check is twice the
+character count against the available content width. Return an empty list for
+the complete heading if any character is not printable ASCII or it does not
+fit; the caller then shows bold ordinary text with the original value and
+casing, using Rich/Textual cell-aware wrapping. Do not append a plain-text
+duplicate after a successful render. Measure rendered widths in cells, never
+in characters.
 
-Font ascent, descent, and line spacing can make a seam between Braille rows.
-There is no portable Textual font-size or negative line-height fix. Keep real
-dots unless the user explicitly chooses another appearance.
+Do not stack rows or add a font-size/negative-line-height workaround. The
+permanent style is a single fullwidth row, not a style preview selector.
 
 ## Frame and shadow
 
@@ -82,7 +78,10 @@ reserve frame height `H + 1`. Size the shadow to the face's dimensions and fill
 it with repeated `⠢⠔` rows. The opaque face covers the pattern except along the
 offset right and bottom edges. Focus only changes visibility, never geometry.
 
-Compute text width after subtracting face borders and padding. Compute each grid
+Compute text width after subtracting face borders, padding, and Textual Button's
+line padding. Current overview cards reserve six columns: two for borders, two
+for face padding, and two for Button line padding. Omitting the last two can
+wrap the heading and hide the summary. Compute each grid
 row height as the maximum **frame** height in that row. Include gutters and the
 scrollbar in the grid's width/height budget. In the current Caiman layout, body
 padding consumes four columns and the vertical scrollbar consumes two. Do not
@@ -92,6 +91,13 @@ Keep the normal button background, tint, and alignment rules from overriding
 the black face or left-aligned text. Prevent the decorative layer from taking
 focus or intercepting activation. Verify the last row and rightmost shadow are
 not clipped after resizing or scrolling.
+
+For auto-height editor cards, `EditorFrame` uses a percentage-sized underlay and
+reserves the exposed right column and bottom row with face margins. Draw the
+one-cell offset inside that layer. A fixed shadow height can prevent the parent
+from shrinking after collapse; outer padding can clip the exposed shadow.
+Refresh the dot content when the layer resizes, and verify actual rendered dots
+as well as geometry. Descendant focus/blur must update selection as fields change.
 
 ## Navigation and inline editing
 

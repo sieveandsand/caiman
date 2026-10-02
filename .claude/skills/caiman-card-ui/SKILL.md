@@ -1,6 +1,6 @@
 ---
 name: caiman-card-ui
-description: Design, implement, or review Caiman-style cards with a black-and-green palette, individual-dot headings, concise information hierarchy, inline editors, and dotted selection shadows. Apply to cards for any entity, including projects, documents, devices, tasks, and configurations; use for requests to reuse this card aesthetic, not unrelated UI work.
+description: Design, implement, or review Caiman-style cards with a black-and-green palette, uppercase fullwidth headings, concise information hierarchy, inline editors, and dotted selection shadows. Apply to cards for any entity, including projects, documents, devices, tasks, and configurations; use for requests to reuse this card aesthetic, not unrelated UI work.
 ---
 
 # Caiman Card UI
@@ -42,7 +42,7 @@ Retain underlying data and selection identity when simplifying the display.
 ## Appearance
 
 Use a black canvas, solid rectangular outlines, green accents, and pale text.
-The border itself is **solid**, never dotted. Dots belong to the heading and
+The border itself is **solid**, never dotted. Dots belong only to the
 selection shadow.
 
 | Element | Color | Treatment |
@@ -50,8 +50,8 @@ selection shadow.
 | Canvas and card face | `#000000` | Flat, opaque background |
 | Default border | `#33422e` | Thin solid line |
 | Focused or hovered border | `#7fdc4f` | Same border geometry |
-| Primary heading | `#eef3e6` | Prominent individual-dot lettering |
-| Secondary heading | `#7fdc4f` | Individual-dot lettering |
+| Primary heading | `#eef3e6` | Bold uppercase fullwidth lettering |
+| Secondary heading | `#7fdc4f` | Bold uppercase fullwidth lettering |
 | Summary line | `#aab69c` | Bold ordinary text |
 | Item names | `#dfe6d3` | Ordinary text |
 | Selected-card shadow | `#466d36` | Discrete dots |
@@ -62,26 +62,35 @@ with aligned row tops and space between cards. Start with two columns when the
 viewport supports them and one on narrow screens. Do not force equal card heights
 that create large blank interiors. Reserve shadow space in the layout at all times.
 
-## Typography: individual dots, not solid pixels
+## Typography: fullwidth uppercase headings
 
-Use enlarged dot-matrix lettering for the main identity and secondary identity
-on overview cards. Each letter consists of **individual dots**. Do not substitute
-solid block, quadrant, or half-block lettering to fix a dot-spacing issue.
+Use **bold uppercase fullwidth lettering** for the main and secondary identities
+on overview cards, including dashboard actions and gallery records: `ＤＯＣＵＭＥＮＴＳ`,
+`ＲＥＶ　Ｂ`. Each printable ASCII character maps to its Unicode fullwidth form
+(U+FF01–U+FF5E), and a space becomes the ideographic space U+3000, so every
+character is two cells wide and the heading stays in **one terminal row**.
+Ordinary letterforms keep similar letters such as H, M, and N distinct; that
+legibility is why this style replaced the Braille dot-matrix alphabet. Do not
+restore dot-matrix, solid block, quadrant, half-block, or math-alphanumeric
+lettering.
 
-Render each identity **once**. When the dot heading fits, do not repeat the same
-name or version as an ordinary-text caption beneath it. Preserve original casing,
-punctuation, and opaque version labels. If the value contains unsupported glyphs
-or cannot fit, use bold ordinary text for that entire heading instead of the dot
-heading. Wrap the fallback; do not truncate an identifier or replace characters.
-A short prefix such as `Version` may identify a plain-text secondary heading.
+Uppercase is a display treatment only. Keep stored names, opaque version labels,
+selection identities, and editor values unchanged. Validate that every source
+character is printable ASCII before uppercasing; do not transliterate other
+characters (for example, turning `ß` into `SS`).
 
-Terminal cards use the terminal's monospace font. The dot heading is a glyph
-renderer, not a different installed font or a per-widget font-size setting.
-Unicode Braille packs a five-by-seven dot alphabet into two terminal rows.
-Spacing at the row seam depends on the terminal font; do not claim CSS can remove
-that gap, or silently trade away the requested dot aesthetic. For graphical UIs,
-render actual separated circles on an evenly spaced grid to preserve the look
-without the terminal's font metrics.
+Render each identity **once**. When the fullwidth heading fits, do not repeat it
+as an ordinary-text caption. If any character is unsupported or the heading
+cannot fit, use bold ordinary text for that entire heading, preserving its
+**original casing and exact punctuation**. Wrap this fallback without truncating
+or replacing characters. A short prefix such as `Version` may identify a
+plain-text secondary heading. Keep summaries and item names in ordinary text.
+
+Terminal cards use the terminal's monospace font; fullwidth characters are a
+glyph substitution, not a per-widget font-size setting. Do not claim CSS can
+change the terminal's font metrics. For graphical UIs, use a wide, uppercase,
+letterspaced heading of the same weight. Use this style directly; add a style
+comparison switcher only when the user asks to explore alternatives.
 
 Keep ordinary field labels bold, bright, and in Title Case: `Document Ref`,
 `Project Name`, `Board Vendor`. Capitalize display labels, not stored values.
@@ -106,9 +115,13 @@ offset. A smooth blurred box shadow is not the same style.
 
 ## Editable and add-card variants
 
-Use compact, ordinary-text summaries for repeated cards inside an editor; do not
-force oversized headings onto every nested form. Keep the same palette, solid
-outline, clear identity, and spacing. Board-level or entity-level fields can
+Repeated cards inside an editor use the **same heading style** as gallery cards:
+their title (the record's name, or a placeholder such as `New part`) is a bold
+fullwidth heading, measured against the card's current width and re-rendered
+when the card resizes. When it does not fit, or contains an unsupported
+character, show the exact value in bold ordinary text. The rest of the summary
+stays compact ordinary text. Keep the same palette, solid outline, clear
+identity, and spacing. Board-level or entity-level fields can
 remain above the grids in the existing form layout.
 
 Click or Enter opens the card's editor **in place**. Keep fields mounted or
@@ -133,12 +146,12 @@ renderer, layering, geometry, and keyboard details. The reference includes
 existing Caiman code locations; they are examples, not required dependencies in
 another project.
 
-Check the observable behavior relevant to the change: dotted rather than solid
-headings, no duplicate identity text, correct counts, whitespace before item
+Check the observable behavior relevant to the change: single-row uppercase
+fullwidth headings, unchanged stored values, no duplicate identity text, correct counts, whitespace before item
 lists, exact fallback values, focus/blur shadow transitions, and stable geometry.
 For editable cards, check collapse/reopen draft retention, add/remove focus,
 and preservation of fields omitted from the summary. Exercise narrow and wide
 layouts, long names, mixed case, unsupported glyphs, unequal card heights, and
 scrolling when those paths change. Inspect a screenshot in the target renderer
 when font appearance is material; headless geometry tests cannot prove how a
-user's terminal draws the dots.
+user's terminal draws fullwidth glyphs.
