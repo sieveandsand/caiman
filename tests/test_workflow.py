@@ -194,7 +194,8 @@ def test_home_routes_hooks_and_returns_to_home(tmp_path, monkeypatch, harness):
     assert calls == [{'harness': harness, 'store_root': tmp_path}]
 
 
-@pytest.mark.parametrize('category, chosen', [('hooks', 'hooks-codex'), ('repos', 'repo-add')])
+@pytest.mark.parametrize('category, chosen', [('hooks', 'hooks-codex'), ('repos', 'repo-add'),
+    ('repos', {'action': 'repo-sync', 'pod': 'alpha'})])
 def test_category_page_runs_its_action_then_returns_to_the_category(tmp_path, monkeypatch, category, chosen):
     import caiman.dashboard.onboarding as onboarding
     import caiman.hooks.tui as hooks_tui
@@ -208,8 +209,11 @@ def test_category_page_runs_its_action_then_returns_to_the_category(tmp_path, mo
             return homes.pop(0)
 
     class Category:
-        def __init__(self, name):
+        def __init__(self, name, *, store_root, selected_pod=None):
             assert name == category
+            assert store_root == tmp_path
+            if isinstance(chosen, dict) and len(menus) == 1:
+                assert selected_pod == 'alpha'
         def run(self):
             return menus.pop(0)
 
@@ -225,6 +229,8 @@ def test_category_page_runs_its_action_then_returns_to_the_category(tmp_path, mo
     monkeypatch.setattr(repo_tui, 'RepoManagerApp', Tool)
     assert run_workflow(tmp_path) == 0
     assert len(ran) == 1 and menus == [] and homes == []
+    if isinstance(chosen, dict):
+        assert ran[0]['pod'] == 'alpha' and ran[0]['action'] == 'sync'
 
 
 def test_gallery_add_card_creates_then_returns_to_the_gallery(tmp_path, monkeypatch):

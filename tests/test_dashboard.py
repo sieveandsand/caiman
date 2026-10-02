@@ -1,12 +1,175 @@
 """The dashboard exposes implemented workflows as a navigable action grid."""
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, ListView, Static
 
 from caiman.dashboard.onboarding import LauncherApp
 
 
 ACTIONS = ['documents', 'show-board', 'show-project', 'hooks', 'repos']
+
+
+async def test_q_returns_from_pod_actions_before_leaving_page(tmp_path):
+    from caiman.dashboard.onboarding import CategoryApp
+
+    app = CategoryApp('repos', store_root=tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press('enter')
+        assert app.focused.id == 'repo-initialize'
+        assert 'q back to pods' in str(app.query_one('.key-hint', Static).render())
+        await pilot.press('q')
+        assert app.is_running and app.focused.id == 'pod-list'
+        assert 'Enter select pod' in str(app.query_one('.key-hint', Static).render())
+        await pilot.press('q')
+    assert app.return_value is None
+
+
+@pytest.mark.parametrize('width', [45, 100])
+@pytest.mark.parametrize('up, down, left, right', [('k', 'j', 'h', 'l'), ('up', 'down', 'left', 'right')])
+async def test_pod_keyboard_navigation_reaches_all_controls(tmp_path, width, up, down, left, right):
+    from caiman.dashboard.onboarding import CategoryApp
+    from caiman.repositories.service import RepoManager
+
+    manager = RepoManager(tmp_path)
+    manager.apply(manager.prepare('initialize', 'alpha'))
+    app = CategoryApp('repos', store_root=tmp_path)
+    async with app.run_test(size=(width, 32)) as pilot:
+        await pilot.pause()
+        assert app.focused.id == 'pod-list'
+        await pilot.press(up)
+        assert app.focused.id == 'repo-add'
+        await pilot.press(left)
+        assert app.focused.id == 'repo-create'
+        await pilot.press(right, down)
+        assert app.focused.id == 'pod-list'
+        # Enter selects the pod and skips its unavailable actions.
+        await pilot.press('enter')
+        assert app.focused.id == 'repo-initialize'
+        await pilot.press(left, right)
+        assert app.focused.id == 'repo-initialize'
+        await pilot.press('q')
+        assert app.is_running and app.focused.id == 'pod-list'
+        await pilot.press(down)
+        assert app.selected_pod == 'alpha'
+        await pilot.press(down)
+        assert app.focused.id == 'pod-list'
+        await pilot.press('enter')
+        assert app.focused.id == 'repo-sync'
+        await pilot.press(right)
+        assert app.focused.id == 'repo-default'
+        await pilot.press(right)
+        assert app.focused.id == 'repo-initialize'
+        await pilot.press(right)
+        assert app.focused.id == 'repo-sync'
+        await pilot.press(left)
+        assert app.focused.id == 'repo-initialize'
+        await pilot.press('q')
+        assert app.is_running and app.focused.id == 'pod-list'
+        assert app.selected_pod == 'alpha'
+        await pilot.press('enter', 'enter')
+    assert app.return_value == {'action': 'repo-sync', 'pod': 'alpha'}
+
+
+@pytest.mark.parametrize('width', [45, 100])
+@pytest.mark.parametrize('action', ['sync', 'default', 'initialize', 'remove', 'create', 'add'])
+async def test_pod_buttons_target_selection(tmp_path, width, action):
+    from caiman.dashboard.onboarding import CategoryApp
+    from caiman.repositories.service import RepoManager
+
+    manager = RepoManager(tmp_path)
+    remote = 'git@example.com:team/alpha.git' if action == 'remove' else ''
+    manager.apply(manager.prepare('initialize', 'alpha', remote))
+    app = CategoryApp('repos', store_root=tmp_path)
+    async with app.run_test(size=(width, 32)) as pilot:
+        await pilot.pause()
+        assert not app.query('.card-face')
+        assert app.query_one('#repo-create').region.y < app.query_one('#pod-list').region.y
+        assert app.query_one('#repo-sync').disabled
+        assert app.query_one('#repo-default').disabled
+        await pilot.press('j')
+        await pilot.pause()
+        assert 'alpha' in str(app.query_one('#selected-pod', Static).render())
+        assert not app.query_one('#repo-sync').disabled
+        assert app.query_one('#repo-initialize').display is (action != 'remove')
+        assert app.query_one('#repo-remove').display is (action == 'remove')
+        button = app.query_one('#repo-' + action, Button)
+        button.focus()
+        await pilot.pause()
+        assert button.region.right <= width
+        await pilot.press('enter')
+    assert app.return_value == ('repo-' + action if action in {'create', 'add'} else
+                                {'action': 'repo-' + action, 'pod': 'alpha'})
+
+
+async def test_pod_list_navigation_scrolls_only_for_offscreen_rows(tmp_path):
+    from caiman.dashboard.onboarding import CategoryApp
+    from caiman.storage.store import Store
+
+    for index in range(12):
+        Store(tmp_path).pods.ensure(f'pod-{index:02}')
+    app = CategoryApp('repos', store_root=tmp_path)
+    async with app.run_test(size=(70, 28)) as pilot:
+        await pilot.pause()
+        body = app.query_one('#body')
+        listing = app.query_one('#pod-list', ListView)
+        assert body.scroll_y == 0
+        await pilot.press('j')
+        await pilot.pause()
+        assert body.scroll_y == 0
+        for _ in range(10):
+            await pilot.press('j')
+            await pilot.pause()
+            if body.scroll_y:
+                break
+        assert body.scroll_y > 0
+        row = listing.highlighted_child.region
+        assert body.content_region.y < row.y
+        assert row.bottom <= body.content_region.bottom
+        await pilot.press(*(['k'] * listing.index))
+        await pilot.pause()
+        assert listing.index == 0
+        assert listing.highlighted_child.region.y >= body.content_region.y
+
+
+@pytest.mark.parametrize('width', [60, 110])
+async def test_pods_status_precedes_actions_and_refreshes(tmp_path, width):
+    from caiman.dashboard.onboarding import CategoryApp
+    from caiman.repositories.service import RepoManager
+    from caiman.repositories.status import PodStatusRow
+
+    manager = RepoManager(tmp_path)
+    manager.apply(manager.prepare('initialize', 'alpha'))
+    manager.apply(manager.prepare('sync', 'alpha'))
+    app = CategoryApp('repos', store_root=tmp_path)
+    async with app.run_test(size=(width, 35)) as pilot:
+        await pilot.pause()
+        rows = list(app.query(PodStatusRow))
+        listing = app.query_one('#pod-list', ListView)
+        text = lambda row: str(row.query_one(Static).render())
+        assert 'alpha' in text(rows[1])
+        assert 'Clean  ·  caiman-store' in text(rows[1])
+        assert '[default]' in text(rows[0])
+        assert listing.region.bottom < app.query_one('#pod-actions').region.y
+        assert rows[1].region.y >= rows[0].region.bottom
+        assert app.query_one('#body').scroll_y == 0
+        assert app.focused is listing
+        assert listing.index == 0
+        await pilot.press('j')
+        await pilot.pause()
+        assert listing.index == 1
+        assert app.query_one('#body').scroll_y == 0
+        await pilot.press('up', 'down')
+        assert listing.index == 1
+        assert app.is_running
+        await pilot.press('tab')
+        assert app.focused.id == 'repo-sync'
+        (manager.local_path('alpha') / 'new file').write_text('new\n')
+        app.query_one('#refresh-status', Button).press()
+        await pilot.pause()
+        assert '1 untracked' in text(list(app.query(PodStatusRow))[1])
+        assert listing.highlighted_child.record['pod'] == 'alpha'
+        assert app.is_running
 
 
 @pytest.mark.asyncio
@@ -51,8 +214,7 @@ async def test_dashboard_actions_are_reachable_by_keyboard(action):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('category, actions', [
-    ('hooks', ['hooks-claude', 'hooks-codex']),
-    ('repos', ['repo-create', 'repo-sync', 'repo-default', 'repo-remove', 'repo-initialize', 'repo-add'])])
+    ('hooks', ['hooks-claude', 'hooks-codex'])])
 async def test_category_pages_offer_their_actions_as_cards(category, actions):
     from caiman.dashboard.onboarding import CategoryApp
     from caiman.ui.cards import AddTile
@@ -62,7 +224,7 @@ async def test_category_pages_offer_their_actions_as_cards(category, actions):
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
             assert [card.id for card in app.query('.card-face')] == actions
-            assert app.focused.id == actions[0]
+            assert app.focused.id == ('refresh-status' if category == 'repos' else actions[0])
             app.query_one('#' + action, Button).focus()
             await pilot.press('enter')
         assert app.return_value == action

@@ -26,13 +26,20 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
     resume = None
     ingest_state = None
     ingest_context = {}
+    selected_pod = None
+    action_pod = None
     while True:
         if action is None:
             action = LauncherApp().run()
         if action is None or action == 'quit':
             return 0
         if action in CATEGORY_MENUS:
-            chosen = CategoryApp(action).run()
+            options = {'selected_pod': selected_pod} if action == 'repos' and selected_pod else {}
+            chosen = CategoryApp(action, store_root=root, **options).run()
+            action_pod = None
+            if isinstance(chosen, dict):
+                action_pod = selected_pod = chosen['pod']
+                chosen = chosen['action']
             action, resume = (chosen, action) if chosen else (None, None)
             continue
         if action in {'create-board', 'create-project'}:
@@ -61,7 +68,9 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
         if action in {'repo-add', 'repo-remove', 'repo-initialize', 'repo-create', 'repo-sync', 'repo-default'}:
             from caiman.repositories.tui import RepoManagerApp
 
-            RepoManagerApp(store_root=root, action=action.removeprefix('repo-')).run()
+            options = {'pod': action_pod} if action_pod else {}
+            RepoManagerApp(store_root=root, action=action.removeprefix('repo-'), **options).run()
+            action_pod = None
             action, resume = resume, None
             continue
         if action != 'ingest':

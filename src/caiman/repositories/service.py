@@ -87,6 +87,51 @@ class RepoManager:
                                 initialized=initialized, default=r['id'] == self.store.pods.default))
         return records
 
+    def list_status(self):
+        """Read local Git state without fetching or changing pod contents."""
+        records = []
+        for pod in self.store.pods.list():
+            path = pod['path']
+            record = dict(pod=pod['id'], name=pod['name'], path=path,
+                          default=pod['id'] == self.store.pods.default,
+                          branch=None, git_state='local',
+                          remote=None, status='Local folder' if path.exists() else 'Not created yet')
+            try:
+                if (path / '.git').exists():
+                    record['remote'] = self._git(path, 'config', '--local', '--get',
+                                                 'remote.origin.url', allow_missing=True) or None
+                    branch = self._git(path, 'symbolic-ref', '--quiet', '--short', 'HEAD', allow_missing=True)
+                    if not branch:
+                        branch = 'Detached HEAD ' + self._git(path, 'rev-parse', '--short', 'HEAD')
+                    entries = iter(self._git(path, 'status', '--porcelain=v1', '-z',
+                                             '--untracked-files=all', raw=True).decode().split('\0'))
+                    staged = modified = untracked = conflicts = 0
+                    for entry in entries:
+                        if not entry:
+                            continue
+                        code = entry[:2]
+                        if code in {'DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'}:
+                            conflicts += 1
+                        elif code == '??':
+                            untracked += 1
+                        else:
+                            staged += code[0] != ' '
+                            modified += code[1] != ' '
+                        if 'R' in code or 'C' in code:
+                            next(entries, None)  # Renames include the original path.
+                    changes = [f'{count} {label}' for count, label in (
+                        (conflicts, 'conflicts'), (staged, 'staged'),
+                        (modified, 'modified'), (untracked, 'untracked')) if count]
+                    record['branch'] = branch
+                    record['working_tree'] = ' · '.join(changes) or 'Clean'
+                    record['git_state'] = 'conflict' if conflicts else ('changed' if changes else 'clean')
+                    record['status'] = branch + ' · ' + record['working_tree']
+            except (OSError, ValueError) as error:
+                record['git_state'] = 'error'
+                record['status'] = 'Git status unavailable: ' + str(error)
+            records.append(record)
+        return records
+
     def _state(self, path):
         if not path.exists():
             return ''

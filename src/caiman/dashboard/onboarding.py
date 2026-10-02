@@ -3,12 +3,13 @@
 import asyncio
 from pathlib import Path
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from caiman.ui.navigation import NavigationApp
 from caiman.ui.cards import CARD_CSS, AddTile, CardFrame, OverviewCard, card_label, resize_card_grid
 from textual.containers import Grid, Horizontal, VerticalScroll
-from textual.widgets import Button, Input, Label, SelectionList, Static
+from textual.widgets import Button, Input, Label, ListView, SelectionList, Static
 from textual.widgets.selection_list import Selection
 
 from caiman.boards.form import vendor_suggester
@@ -17,6 +18,7 @@ from caiman.configurations.models import part_aliases, part_identity, project_bo
 from caiman.ui.mascot import HEIGHT as MASCOT_HEIGHT, WIDTH as MASCOT_WIDTH, render_mascot
 from caiman.documents.models import ValidationError
 from caiman.storage.store import Store
+from caiman.repositories.status import PodStatusRow
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
@@ -250,9 +252,10 @@ CATEGORY_MENUS = {
                         ('Codex', 'Add Caiman hook', 'hooks-codex')]),
     'repos': ('Pods', [('New pod', 'Create a local folder', 'repo-create'),
                                ('Sync pod', 'Fetch and publish changes', 'repo-sync'),
-                               ('Default pod', 'Choose where new items go', 'repo-default'),('Remove repo', 'Remove registration', 'repo-remove'),
-                               ('Initialize repo', 'Create; optional push', 'repo-initialize'),
-                               ('Add repo', None, 'repo-add')]),
+                               ('Default pod', 'Choose where new items go', 'repo-default'),
+                               ('Disconnect Git', 'Keep local files and history', 'repo-remove'),
+                               ('Connect Git', 'Enable Git; optional remote', 'repo-initialize'),
+                               ('Clone pod', None, 'repo-add')]),
 }
 
 
@@ -330,35 +333,195 @@ class LauncherApp(NavigationApp):
 class CategoryApp(NavigationApp):
     """One home category's actions as cards; returns the chosen action."""
 
-    CSS = LauncherApp.CSS
+    CSS = LauncherApp.CSS + '''
+    #pod-status { height: auto; margin-bottom: 1; }
+    .pod-create-actions { height: 3; margin: 1 0; }
+    #pod-actions { height: auto; grid-size: 3; grid-columns: 1fr; grid-rows: 3; }
+    .pod-create-actions Button, #pod-actions Button { width: auto; min-width: 0; padding: 0 1; }
+    #selected-pod { height: auto; margin: 1 0; color: #aab69c; }
+    #pod-list { height: auto; background: #000000; padding: 0; }
+    #pod-list > ListItem { height: auto; padding: 0 1; border-bottom: solid #33422e; background: #000000; }
+    #pod-list > ListItem > Static { height: auto; }
+    #pod-list > ListItem.-highlight { background: #102210; }
+    #pod-list:focus > ListItem.-highlight { background: #102210; }
+    .section-heading { height: auto; color: #7fdc4f; text-style: bold; margin-top: 1; }
+    '''
 
-    def __init__(self, category):
+    def __init__(self, category, *, store_root=None, selected_pod=None):
         super().__init__()
         apply_theme(self)
         self.heading, self.actions = CATEGORY_MENUS[category]
+        self.category = category
+        self.store_root = store_root
+        self.refreshing = False
+        self.selected_pod = selected_pod
         self.title = 'Caiman · ' + self.heading
 
     def navigation_help(self):
+        if self.category == 'repos':
+            if self.in_pod_actions():
+                return '←→/hl actions · Enter open action · q back to pods'
+            return '↑↓/jk move · Enter select pod · Tab controls · q back'
         return 'hjkl move · Enter open · q back'
+
+    def in_pod_actions(self):
+        return self.focused is not None and self.focused.parent.id == 'pod-actions'
+
+    def on_descendant_focus(self, event):
+        super().on_descendant_focus(event)
+        for hint in self.query('.key-hint'):
+            hint.update(self.navigation_help())
+
+    def on_list_view_selected(self, event):
+        if event.item is not None:
+            actions = self.available_pod_actions()
+            if actions:
+                actions[0].focus()
+
+    def available_pod_actions(self):
+        return [button for button in self.query('#pod-actions Button')
+                if button.display and not button.disabled]
+
+    def action_cancel(self):
+        if self.category == 'repos' and self.in_pod_actions():
+            listing = self.query_one('#pod-list', ListView)
+            listing.focus()
+            if listing.highlighted_child is not None:
+                self.call_after_refresh(listing.highlighted_child.scroll_visible, animate=False)
+            return
+        super().action_cancel()
 
     def compose(self):
         yield Static('caiman  /  ' + self.heading.lower(), id='brand')
         with VerticalScroll(id='body'):
-            with Grid(id='category-grid', classes='dashboard-grid'):
-                for title, description, action in self.actions:
-                    card = (AddTile(title, id=action) if description is None else
-                            DashboardTile(title, description, action=action))
-                    yield CardFrame(card)
+            if self.category == 'repos':
+                with Horizontal(classes='pod-create-actions'):
+                    yield Button('New pod', id='repo-create')
+                    yield Button('Clone pod', id='repo-add')
+                yield Static('PODS', classes='section-heading')
+                yield Static('Loading pod status…', id='pod-status', markup=False)
+                yield ListView(id='pod-list')
+                yield Static('Choose a pod', id='selected-pod', markup=False)
+                with Grid(id='pod-actions'):
+                    yield Button('Sync', id='repo-sync', variant='primary', disabled=True)
+                    yield Button('Set default', id='repo-default', disabled=True)
+                    yield Button('Connect Git', id='repo-initialize', disabled=True)
+                    yield Button('Disconnect Git', id='repo-remove', disabled=True)
+            else:
+                with Grid(id='category-grid', classes='dashboard-grid'):
+                    for title, description, action in self.actions:
+                        card = (AddTile(title, id=action) if description is None else
+                                DashboardTile(title, description, action=action))
+                        yield CardFrame(card)
         with Horizontal(id='navigation'):
             yield Button('Back', id='quit')
+            if self.category == 'repos':
+                yield Button('Refresh status', id='refresh-status')
         yield self.navigation_hint()
 
-    def on_mount(self):
-        resize_tile_grid(self.query_one('#category-grid', Grid), self.size.width)
-        self.query('.card-face').first().focus()
+    async def on_mount(self):
+        self.resize_actions(self.size.width)
+        if self.category == 'repos':
+            self.query_one('#refresh-status').focus()
+            await self.refresh_status()
+            if self.query_one('#pod-list', ListView).children:
+                self.query_one('#pod-list').focus()
+        else:
+            self.query('.card-face').first().focus()
+
+    async def refresh_status(self):
+        from caiman.repositories.service import RepoManager
+
+        if self.refreshing:
+            return
+        self.refreshing = True
+        try:
+            records = await asyncio.to_thread(RepoManager(self.store_root).list_status) if self.store_root is not None else []
+            rows = self.query_one('#pod-list', ListView)
+            selected = rows.highlighted_child
+            selected_pod = selected.record['pod'] if isinstance(selected, PodStatusRow) else self.selected_pod
+            await rows.clear()
+            await rows.extend(PodStatusRow(record, index=index) for index, record in enumerate(records))
+            rows.index = next((i for i, record in enumerate(records) if record['pod'] == selected_pod),
+                              0 if records else None)
+            status = self.query_one('#pod-status', Static)
+            status.update('' if records else 'No pods yet.')
+            status.display = not records
+            self.update_pod_actions()
+        except (OSError, ValueError) as error:
+            self.query_one('#pod-status').display = True
+            self.query_one('#pod-status', Static).update('Pod status unavailable: ' + str(error))
+        finally:
+            self.refreshing = False
 
     def on_resize(self, event):
-        resize_tile_grid(self.query_one('#category-grid', Grid), event.size.width)
+        self.resize_actions(event.size.width)
 
-    def on_button_pressed(self, event):
+    def resize_actions(self, width):
+        if self.category == 'repos':
+            self.query_one('#pod-actions', Grid).styles.grid_size_columns = 1 if width < 60 else 3
+        else:
+            resize_tile_grid(self.query_one('#category-grid', Grid), width)
+
+    def update_pod_actions(self):
+        row = self.query_one('#pod-list', ListView).highlighted_child
+        record = row.record if isinstance(row, PodStatusRow) else None
+        self.selected_pod = record['pod'] if record else None
+        self.query_one('#selected-pod', Static).update('Actions for ' + record['name'] if record else 'Choose a pod')
+        self.query_one('#repo-sync', Button).disabled = not record or not record['branch']
+        self.query_one('#repo-default', Button).disabled = not record or record['default']
+        remote = bool(record and record['remote'])
+        self.query_one('#repo-initialize', Button).display = not remote
+        self.query_one('#repo-initialize', Button).disabled = not record
+        self.query_one('#repo-remove', Button).display = remote
+        self.query_one('#repo-remove', Button).disabled = not remote
+
+    async def on_event(self, event):
+        # ListView consumes arrows itself, so route them before forwarding to
+        # the widget. Use the same boundary behavior as the Vim keys.
+        if (self.category == 'repos' and len(self.screen_stack) == 1
+                and isinstance(event, events.Key) and not event.is_forwarded
+                and event.key in {'up', 'down', 'left', 'right'}):
+            self.action_vim_move({'up': 'k', 'down': 'j', 'left': 'h', 'right': 'l'}[event.key])
+            return
+        await super().on_event(event)
+
+    def action_vim_move(self, direction):
+        if self.category == 'repos' and self.in_pod_actions():
+            if direction in {'h', 'l'}:
+                actions = self.available_pod_actions()
+                index = actions.index(self.focused)
+                actions[(index + (1 if direction == 'l' else -1)) % len(actions)].focus()
+            return
+        if isinstance(self.focused, ListView) and direction in {'h', 'l'}:
+            return
+        if isinstance(self.focused, ListView) and direction in {'j', 'k'}:
+            listing = self.focused
+            index = listing.index
+            if direction == 'j' and index is not None and index < len(listing.children) - 1:
+                listing.action_cursor_down()
+                return
+            if direction == 'k' and index is not None and index > 0:
+                listing.action_cursor_up()
+                return
+            if direction == 'j':
+                return  # Enter selects a pod; down never enters its actions.
+            # Up from the first pod reaches New / Clone.
+        super().action_vim_move(direction)
+        if isinstance(self.focused, ListView) and self.focused.highlighted_child is not None:
+            self.call_after_refresh(self.focused.highlighted_child.scroll_visible, animate=False)
+
+    def on_list_view_highlighted(self, event):
+        self.update_pod_actions()
+        if event.list_view.has_focus and event.item is not None:
+            self.call_after_refresh(event.item.scroll_visible, animate=False)
+
+    async def on_button_pressed(self, event):
+        if event.button.id == 'refresh-status':
+            await self.refresh_status()
+            return
+        if event.button.id in {'repo-sync', 'repo-default', 'repo-initialize', 'repo-remove'}:
+            if self.selected_pod and not event.button.disabled:
+                self.exit({'action': event.button.id, 'pod': self.selected_pod})
+            return
         self.exit(None if event.button.id == 'quit' else event.button.id)

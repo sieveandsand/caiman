@@ -16,12 +16,16 @@ OPERATIONS = {'create': 'New local pod', 'add': 'Clone pod', 'initialize': 'Conn
 
 class RepoManagerApp(NavigationApp):
     TITLE = 'Caiman · Pods'
-    CSS = TERMINAL_CSS + '\n#catalog, #preview { height: auto; margin-top: 1; }\n'
+    CSS = TERMINAL_CSS + '''
+    #preview { height: auto; margin-top: 1; }
+    #operation-title { height: auto; color: #7fdc4f; text-style: bold; }
+    '''
 
-    def __init__(self, *, store_root, action='create'):
+    def __init__(self, *, store_root, action='create', pod=None):
         super().__init__()
         self.manager = RepoManager(store_root)
-        self.initial_action = action
+        self.operation = action
+        self.selected_pod = pod
         self.plan = None
         self.busy = False
         self.records = []
@@ -31,17 +35,14 @@ class RepoManagerApp(NavigationApp):
         yield Static('caiman  /  Pods', id='brand')
         with VerticalScroll(id='body'):
             yield Static('Local folders, optionally shared through Git.', id='step-title')
-            yield Static('', id='catalog', markup=False)
-            yield Label('Action')
-            yield Select([(label, key) for key, label in OPERATIONS.items()],
-                         value=self.initial_action, allow_blank=False, id='operation')
+            yield Static(OPERATIONS[self.operation], id='operation-title')
             with VerticalScroll(id='remove-fields', classes='step'):
-                yield Label('Registered repository')
-                yield Select([], prompt='Choose a repository', id='repository')
+                yield Label('Pod')
+                yield Select([], prompt='Choose a pod', id='repository')
                 yield Static('Local files remain available.', classes='hint')
             with VerticalScroll(id='repository-fields', classes='step'):
                 yield Label('Pod')
-                yield Input(placeholder='alpha', id='pod')
+                yield Input(value=self.selected_pod or '', placeholder='alpha', id='pod', disabled=bool(self.selected_pod))
                 yield Static('Choose a pod name, such as alpha.', classes='hint')
                 yield Label('Repository URL', id='remote-label')
                 yield Input(placeholder='git@example.com:team/store-alpha.git', id='remote')
@@ -60,7 +61,7 @@ class RepoManagerApp(NavigationApp):
         await self.refresh_catalog()
 
     def show_action(self):
-        action = self.query_one('#operation', Select).value
+        action = self.operation
         choose = action in {'remove', 'sync', 'default'}
         self.query_one('#remove-fields').display = choose
         self.query_one('#repository-fields').display = not choose
@@ -79,13 +80,9 @@ class RepoManagerApp(NavigationApp):
             self.query_one('#repository', Select).set_options([
                 (record['pod'] + ' · ' + (record['remote'] or 'Local only'), record['pod'])
                 for record in self.records])
-            lines = []
-            for record in self.records:
-                state = 'Git connected' if record['initialized'] else 'Local folder'
-                if record['default']:
-                    state += ' · Default'
-                lines.append(f"{record['pod']} · {state}\n{record['remote'] or 'Local only'}")
-            self.query_one('#catalog', Static).update('\n\n'.join(lines) or 'No pods yet.')
+            if self.selected_pod:
+                self.query_one('#repository', Select).value = self.selected_pod
+                self.query_one('#repository', Select).disabled = True
         except (OSError, ValueError) as error:
             self.query_one('#status', Static).update(str(error))
 
@@ -102,13 +99,14 @@ class RepoManagerApp(NavigationApp):
 
     def on_select_changed(self, event):
         self.invalidate()
-        if event.select.id == 'operation':
-            self.show_action()
 
     def set_busy(self, value):
         self.busy = value
         for widget in self.query('Input, Select, Checkbox, Button'):
             widget.disabled = value
+        if self.selected_pod:
+            self.query_one('#repository', Select).disabled = True
+            self.query_one('#pod', Input).disabled = True
         self.query_one('#apply', Button).disabled = value or self.plan is None
 
     def action_cancel(self):
@@ -125,11 +123,11 @@ class RepoManagerApp(NavigationApp):
         try:
             if event.button.id == 'review':
                 self.invalidate()
-                action = self.query_one('#operation', Select).value
+                action = self.operation
                 pod = (self.query_one('#repository', Select).value if action in {'remove', 'sync', 'default'}
                                else self.query_one('#pod', Input).value.strip())
                 if not isinstance(pod, str) or not pod:
-                    raise ValueError('Choose a registered repository' if action in {'remove', 'sync', 'default'} else 'Enter a pod')
+                    raise ValueError('Choose a pod' if action in {'remove', 'sync', 'default'} else 'Enter a pod')
                 remote = self.query_one('#remote', Input).value.strip()
                 push = False
                 self.plan = await asyncio.to_thread(self.manager.prepare, action, pod, remote, push)

@@ -4,6 +4,39 @@ import pytest
 from caiman.repositories.service import RepoManager
 
 
+def test_pod_status_tracks_local_changes_and_detached_head(tmp_path):
+    manager = RepoManager(tmp_path / 'store')
+    assert manager.list_status()[0]['status'] == 'Not created yet'
+    manager.apply(manager.prepare('initialize', 'alpha'))
+    path = manager.local_path('alpha')
+    status = lambda: next(r for r in manager.list_status() if r['pod'] == 'alpha')
+    assert status()['status'] == 'caiman-store · 2 untracked'
+    manager.apply(manager.prepare('sync', 'alpha'))
+    assert status()['status'] == 'caiman-store · Clean'
+    (path / '.gitattributes').write_text('changed\n')
+    (path / 'new file').write_text('new\n')
+    assert status()['status'] == 'caiman-store · 1 modified · 1 untracked'
+    manager._git(path, 'add', '.gitattributes')
+    assert status()['status'] == 'caiman-store · 1 staged · 1 untracked'
+    manager._git(path, 'mv', 'pod.json', 'renamed.json')
+    # Restore the pod header so discovery still recognizes it; the rename's
+    # extra filename must not be counted as another changed file.
+    (path / 'pod.json').write_text((path / 'renamed.json').read_text())
+    assert status()['status'] == 'caiman-store · 2 staged · 2 untracked'
+    manager._git(path, 'checkout', '--detach')
+    assert status()['status'].startswith('Detached HEAD ')
+
+
+def test_one_broken_git_repository_does_not_hide_other_pods(tmp_path):
+    manager = RepoManager(tmp_path)
+    manager.store.pods.ensure('broken')
+    (manager.local_path('broken') / '.git').mkdir()
+    manager.store.pods.ensure('healthy')
+    records = {r['pod']: r for r in manager.list_status()}
+    assert records['broken']['status'].startswith('Git status unavailable:')
+    assert records['healthy']['status'] == 'Local folder'
+
+
 def test_review_and_empty_catalog_write_nothing(tmp_path):
     manager = RepoManager(tmp_path / 'store')
     assert manager.list_repos()[0]['pod'] == 'public'
