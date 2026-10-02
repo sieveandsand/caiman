@@ -1,11 +1,11 @@
-"""Shared dot headings and focus shadows for Caiman cards."""
+"""Shared fullwidth headings and dotted focus shadows for Caiman cards."""
 
 from rich.console import Console
 from rich.text import Text
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from caiman.ui.pixel_title import pixel_title
+from caiman.ui.heading import fullwidth_title
 
 CARD_CSS = """
     .card-frame { width: 100%; height: auto; layers: shadow face; }
@@ -21,8 +21,8 @@ def card_label(title, summary, width):
     # Borders, face padding, and Textual Button's one-cell line padding.
     available = max(1, width - 6)
     label = Text(no_wrap=True, overflow='crop')
-    dots = pixel_title(title, available)
-    for line in dots or Text(title).wrap(Console(), available, overflow='fold'):
+    rows = fullwidth_title(title, available)
+    for line in rows or Text(title).wrap(Console(), available, overflow='fold'):
         label.append(str(line) + '\n', style='bold #eef3e6')
     label.append('\n')
     for line in Text(summary).wrap(Console(), available, overflow='fold'):
@@ -39,6 +39,34 @@ class OverviewCard(Button):
 
     def on_blur(self):
         self.parent.remove_class('selected')
+
+
+class AddTile(OverviewCard):
+    """The last card of a gallery grid: a centred plus that starts an addition."""
+
+    def __init__(self, label, *, id):
+        super().__init__('', id=id, classes='dashboard-tile add-tile card-face')
+        self.action_label = label
+
+    def format_card(self, width):
+        # Centre within the text area left after borders and padding.
+        available = max(1, width - 6)
+        # Centre the plus as one block so its bars stay aligned at any width.
+        plus = ' ' * max(0, (available - 5) // 2)
+        rows = [plus + '  ┃', plus + '━━╋━━', plus + '  ┃', '', self.action_label.center(available).rstrip()]
+        self.label = Text('\n'.join(rows), style='bold #7fdc4f')
+        height = len(rows) + 2
+        self.styles.height = height
+        return height
+
+
+def resize_card_grid(grid, width, columns):
+    """Size every card frame in a gallery grid; rows take their tallest frame."""
+    heights = [frame.resize_card(width) for frame in grid.children]
+    rows = [max(heights[index:index + columns]) for index in range(0, len(heights), columns)]
+    grid.styles.grid_size_columns = columns
+    grid.styles.grid_rows = rows or [0]
+    grid.styles.height = sum(rows) + max(0, len(rows) - 1)
 
 
 class CardFrame(Widget):

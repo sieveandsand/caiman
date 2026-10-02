@@ -86,3 +86,20 @@ class VimDraft:
         self._check_file()
         self.path.chmod(0o600)
         return result.returncode == 0
+
+
+def vim_excursion(root, original, draft, *, review):
+    """Hand the whole draft to Vim; return what came back, or None if abandoned.
+
+    One file stays alive across retries, so a draft that fails to parse is not
+    lost between the error and the next edit. ``review`` is the entity's review
+    app, shown with the parse error; only its ``'edit'`` answer retries.
+    """
+    with VimDraft(draft) as vim:
+        while vim.edit():
+            try:
+                return vim.read()
+            except (OSError, ValueError) as invalid:
+                if review(root=root, original=original, error=str(invalid)).run() != 'edit':
+                    return None
+    return None

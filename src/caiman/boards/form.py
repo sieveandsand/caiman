@@ -24,31 +24,12 @@ from textual.widgets import Button, Collapsible, Input, Label, Static
 
 from caiman.configurations.files import vendor_suggestions
 from caiman.configurations.models import board_is_legacy
-from caiman.ui.navigation import NavigationApp
-from caiman.ui.cards import AddCardFrame, DotShadow, EditorFrame
-from caiman.ui.theme import TERMINAL_CSS, apply_theme
+from caiman.ui.editor import EDITOR_CSS, CardRow, EditorFormApp, Row, add_card, comma_list
+from caiman.ui.theme import apply_theme
 
 
-BOARD_FORM_CSS = TERMINAL_CSS + EditorFrame.DEFAULT_CSS + '''
-/* Every repeated container sizes to its rows; the default 1fr would leave one
-   section holding all the leftover height and the rest crammed under it. */
-#board-documents, #parts, #links, .documents { height: auto; }
-.row { height: auto; border-left: outer #33422e; padding: 0 0 0 1; margin: 1 0 0 0; }
-.card-grid { grid-size: 2; grid-columns: 1fr; grid-rows: auto; grid-gutter: 1 2; }
-.record-card { height: auto; min-width: 0; margin: 0; }
-.record-card > .editor-face { padding: 0 1; border: solid #33422e; }
-.record-card.selected > .editor-face { border: solid #7fdc4f; }
-.card-summary { width: 100%; height: auto; min-height: 0; margin: 0; padding: 0; text-align: left; content-align: left top; }
-.card-summary:hover, .card-summary:focus { background: #000000; color: #dfe6d3; text-style: none; }
-.card-editor { height: auto; display: none; }
-.record-card.expanded .card-editor { display: block; }
-.add-card { width: 100%; min-width: 0; height: 9; margin: 0; border: solid #33422e; color: #7fdc4f; content-align: center middle; text-align: center; }
-.add-card:hover, .add-card:focus { border: solid #7fdc4f; background: #000000; }
-.row-actions, .section-actions { height: 3; margin: 0; }
-.section-actions { margin: 1 0 0 0; }
-Button { width: auto; }
-.field-label { height: auto; min-height: 2; margin: 1 0 0 0; content-align: left bottom; text-style: bold; color: #eef3e6; }
-#form-error { height: auto; padding: 0 2; color: #e69a89; }
+BOARD_FORM_CSS = EDITOR_CSS + '''
+.documents { height: auto; }
 '''
 
 
@@ -82,64 +63,6 @@ def parse_aliases(text: str) -> dict:
     return aliases
 
 
-class Row(Vertical):
-    """One repeated record. Fields carry classes, not ids, so rows can repeat."""
-
-    def __init__(self, data: dict):
-        super().__init__(classes='row')
-        self.data = deepcopy(data) if isinstance(data, dict) else {}
-
-    def text_field(self, key: str, label: str, *, suggester=None):
-        yield Label(label, classes='field-label')
-        value = self.data.get(key, '')
-        yield Input(value='' if value is None else str(value), suggester=suggester,
-                    classes=f'field field-{key}')
-
-    def value(self, key: str) -> str:
-        return self.query_one(f'.field-{key}', Input).value.strip()
-
-    def actions(self, label: str):
-        with Horizontal(classes='row-actions'):
-            yield Button(label, classes='remove-row')
-
-    def carry(self, *keys) -> dict:
-        """Start from what was stored so unrendered fields survive an edit."""
-        return {key: value for key, value in self.data.items() if key not in keys}
-
-
-def add_card(label, *, id):
-    return AddCardFrame(label, id=id)
-
-
-class CardRow(Row, EditorFrame):
-    """Keep editors mounted while a summary card is collapsed."""
-
-    kind = ''
-    first_field = ''
-
-    def __init__(self, data, *, expanded=False):
-        super().__init__(data)
-        self.remove_class('row')
-        self.add_class('editor-frame', 'record-card', f'{self.kind}-card')
-        self.set_class(expanded, 'expanded')
-
-    def compose(self):
-        yield DotShadow('', classes='card-shadow', markup=False)
-        with Vertical(classes='editor-face'):
-            yield Button(self.summary(self.data), classes=f'card-summary {self.kind}-summary dashboard-tile')
-            with Vertical(classes=f'card-editor {self.kind}-editor'):
-                yield from self.editor_fields()
-                with Horizontal(classes='row-actions'):
-                    yield Button('Done', classes=f'collapse-card collapse-{self.kind}', variant='primary')
-
-    def set_expanded(self, expanded):
-        self.set_class(expanded, 'expanded')
-        self.query_one('.card-summary', Button).label = self.summary(self.summary_data())
-
-    def summary_hint(self):
-        return 'Collapse' if self.has_class('expanded') else 'Enter to edit'
-
-
 class DocumentRow(Row):
     """A document pin. Compartment is not a field: board documents are public."""
 
@@ -169,7 +92,7 @@ class BoardDocumentCard(CardRow, DocumentRow):
 
     def summary(self, data):
         label = Text()
-        label.append(data.get('ref') or ('Pinned board document' if data.get('digest') else 'New board document'), style='bold #dfe6d3')
+        self.heading(label, data.get('ref') or ('Pinned board document' if data.get('digest') else 'New board document'))
         label.append('\n\nPublic · Board document', style='bold #aab69c')
         label.append('\n\n' + self.summary_hint(), style='#aab69c')
         return label
@@ -187,7 +110,7 @@ class PartRow(CardRow):
 
     def summary(self, data):
         label = Text()
-        label.append(data.get('part') or 'New part', style='bold #dfe6d3')
+        self.heading(label, data.get('part') or 'New part')
         label.append('\n\n' + (data.get('vendor') or 'Vendor not set'), style='#aab69c')
         label.append('\n' + (data.get('role') or 'Role not set'), style='#7fdc4f')
         details = []
@@ -244,7 +167,7 @@ class LinkRow(CardRow):
 
     def summary(self, data):
         label = Text()
-        label.append(data.get('name') or 'New link', style='bold #dfe6d3')
+        self.heading(label, data.get('name') or 'New link')
         label.append('\n\n' + (', '.join(data.get('between') or []) or 'Endpoints not set'), style='#7fdc4f')
         label.append('\n\n' + self.summary_hint(), style='#aab69c')
         return label
@@ -261,13 +184,13 @@ class LinkRow(CardRow):
     def collect(self) -> dict:
         link = self.carry('name', 'between', 'notes')
         link['name'] = self.value('name')
-        link['between'] = [item.strip() for item in self.value('between').split(',') if item.strip()]
+        link['between'] = comma_list(self.value('between'))
         if self.value('notes'):
             link['notes'] = self.value('notes')
         return link
 
 
-class BoardFormApp(NavigationApp):
+class BoardFormApp(EditorFormApp):
     """Edit a board field by field. Exits with ('review'|'raw', draft), or None."""
 
     TITLE = 'Caiman · Edit board'
@@ -286,45 +209,6 @@ class BoardFormApp(NavigationApp):
         self.read_only = self.legacy or self.directed
         self.message = message
         self.vendors = vendor_suggester(self.draft)
-
-    def navigation_help(self):
-        return 'NAVIGATE · hjkl move · Enter open card · Enter/i edit field · Tab next · q back'
-
-    def action_vim_move(self, direction):
-        focused = self.focused
-        super().action_vim_move(direction)
-        # At the grid edge, continue into the surrounding board form.
-        if focused is not None and focused.has_class('dashboard-tile') and self.focused is focused:
-            if direction in {'h', 'k'}:
-                self.screen.focus_previous()
-            else:
-                self.screen.focus_next()
-
-    def _move_tile(self, focused, direction):
-        # Summary buttons sit inside card borders; compare the outer cards so
-        # an add card and its neighbours are treated as the same grid row.
-        def region(button):
-            return next((node.region for node in button.ancestors if isinstance(node, EditorFrame)), button.region)
-
-        origin = region(focused)
-        candidates = []
-        for button in self.query('.dashboard-tile'):
-            if button is focused or not all(node.display for node in (button, *button.ancestors)):
-                continue
-            target = region(button)
-            dx = target.center[0] - origin.center[0]
-            dy = target.y - origin.y
-            if direction in {'h', 'l'}:
-                if dy or (dx <= 0 if direction == 'l' else dx >= 0):
-                    continue
-                score = (abs(dx), 0)
-            else:
-                if (dy <= 0 if direction == 'j' else dy >= 0):
-                    continue
-                score = (abs(dx), abs(dy))
-            candidates.append((score, button))
-        if candidates:
-            min(candidates, key=lambda item: item[0])[1].focus()
 
     def field(self, key: str, label: str, *, suggester=None):
         yield Label(label, classes='field-label')
@@ -364,16 +248,6 @@ class BoardFormApp(NavigationApp):
             yield Button('Back to boards', id='cancel')
         yield self.navigation_hint()
 
-    def on_mount(self):
-        self.resize_grids(self.size.width)
-
-    def on_resize(self, event):
-        self.resize_grids(event.size.width)
-
-    def resize_grids(self, width):
-        for grid in self.query('.card-grid'):
-            grid.styles.grid_size_columns = 2 if width >= 100 else 1
-
     def read_only_reason(self) -> str:
         if self.legacy:
             return ('This board is a caiman.board/1 snapshot. Its part identity is packed into one field, '
@@ -403,10 +277,6 @@ class BoardFormApp(NavigationApp):
         data['links'] = [row.collect() for row in self.query_one('#links').query(LinkRow)]
         return data
 
-    async def add_card(self, button, row: CardRow) -> None:
-        await button.parent.parent.mount(row, before=button.parent)
-        self.call_after_refresh(row.query_one(f'.field-{row.first_field}', Input).focus)
-
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button = event.button
         event.stop()
@@ -419,11 +289,7 @@ class BoardFormApp(NavigationApp):
             except ValueError as error:
                 self.query_one('#form-error', Static).update(str(error))
         elif button.has_class('card-summary') or button.has_class('collapse-card'):
-            card = next(node for node in button.ancestors if isinstance(node, CardRow))
-            card.set_expanded(not card.has_class('expanded'))
-            target = (card.query_one(f'.field-{card.first_field}', Input) if card.has_class('expanded')
-                      else card.query_one('.card-summary', Button))
-            self.call_after_refresh(target.focus)
+            self.toggle_card(button)
         elif button.id == 'add-part':
             part = PartRow({'part': '', 'role': '', 'vendor': '', 'documents': []},
                            vendors=self.vendors, expanded=True)
@@ -434,21 +300,9 @@ class BoardFormApp(NavigationApp):
             await self.add_card(button, BoardDocumentCard({}, expanded=True))
         elif button.has_class('add-document'):
             row = next(node for node in button.ancestors if isinstance(node, PartRow))
-            await self.add_row_within(row, DocumentRow({}))
+            await self.add_row_within(row.query_one('.documents'), DocumentRow({}))
         elif button.has_class('remove-row'):
-            row = next(node for node in button.ancestors if isinstance(node, Row))
-            container = row.parent
-            await row.remove()
-            # Focus never disappears with the row it was standing on.
-            remaining = container.query(Input) if container is not None else []
-            target = (container.query_one('.add-card', Button) if isinstance(row, CardRow) else
-                      next((field for field in remaining if all(node.display for node in (field, *field.ancestors))), None)
-                      or self.query_one('#review-changes', Button))
-            self.call_after_refresh(target.focus)
-
-    async def add_row_within(self, part: PartRow, row: DocumentRow) -> None:
-        await part.query_one('.documents').mount(row)
-        self.call_after_refresh(row.scroll_visible, animate=False)
+            await self.remove_row(button)
 
     def action_cancel(self) -> None:
         self.exit(None)

@@ -9,6 +9,12 @@ from caiman.boards.form import (BoardFormApp, BoardDocumentCard, DocumentRow, Li
                               parse_aliases)
 from caiman.configurations.files import COMMON_VENDORS, vendor_suggestions
 from caiman.configurations.models import validate_board
+from caiman.ui.heading import fullwidth_title
+
+
+def wide(value):
+    """A card title as the editor shows it: fullwidth uppercase."""
+    return fullwidth_title(value, 200)[0]
 
 
 @pytest.fixture
@@ -296,7 +302,7 @@ async def test_part_cards_expand_in_place_and_keep_edits_when_collapsed(manifest
         await pilot.pause()
         assert not first.query_one('.part-editor').display
         assert first.size.height == closed_height
-        assert 's32k358' in summary.label.plain
+        assert wide('s32k358') in summary.label.plain
         assert app.focused is summary
         await pilot.press('enter')
         await pilot.pause()
@@ -320,7 +326,11 @@ async def test_plus_card_adds_expanded_part_and_removal_restores_focus(manifest)
         assert app.focused is added.query_one('.field-part', Input)
         assert list(add.parent.parent.children)[-1] is add.parent
         added.query_one('.remove-row', Button).press()
-        await pilot.pause()
+        # Removal and its post-layout focus callback finish on separate cycles.
+        for _ in range(20):
+            await pilot.pause()
+            if added not in app.query(PartRow) and app.focused is add:
+                break
         assert app.focused is add
         assert app.collect() == manifest
 
@@ -391,7 +401,9 @@ async def test_document_and_link_cards_preserve_edits_and_neighbours(
         card.query_one('.collapse-card', Button).press()
         await pilot.pause()
         assert not card.query_one('.card-editor').display
-        assert new_value in summary.label.plain
+        # Fullwidth when the title fits the card, else the exact stored value.
+        shown = (fullwidth_title(new_value, card.summary_width) or [new_value])[0]
+        assert summary.label.plain.startswith(shown + '\n')
         assert app.focused is summary
         expected = deepcopy(manifest)
         expected[kind][0][field] = new_value
@@ -466,3 +478,28 @@ async def test_editor_and_add_card_shadows_follow_focus_and_preserve_geometry(ma
         app.query_one('#review-changes').focus()
         await pilot.pause()
         assert not add.parent.query_one('.card-shadow').visible
+
+
+@pytest.mark.asyncio
+async def test_editor_card_titles_match_gallery_headings_or_fall_back_exactly(manifest):
+    from rich.cells import cell_len
+
+    short, long, unsupported = 'S32K358-rev2', 'S32K358-long-part-number-rev2', 'TJA1145ß'
+    manifest['parts'][0]['part'] = short
+    manifest['parts'][1]['part'] = long
+    manifest['parts'].append(deepcopy(manifest['parts'][1]) | {'part': unsupported})
+    app = BoardFormApp(original=manifest, draft=deepcopy(manifest))
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.pause()
+        titles = [row.query_one('.part-summary', Button) for row in app.query(PartRow)]
+        first_lines = [summary.label.plain.split('\n')[0] for summary in titles]
+        # Same heading style as the gallery cards, sized to the card.
+        assert first_lines[0] == wide(short)
+        assert cell_len(first_lines[0]) <= titles[0].content_region.width
+        # Too wide or unsupported: the exact stored value, never truncated or transliterated.
+        assert first_lines[1:] == [long, unsupported]
+        assert [part['part'] for part in app.collect()['parts']] == [short, long, unsupported]
+        # Narrowing the terminal re-renders the title rather than overflowing the card.
+        await pilot.resize_terminal(34, 50)
+        await pilot.pause()
+        assert titles[0].label.plain.split('\n')[0] == short
