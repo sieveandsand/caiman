@@ -4,6 +4,57 @@ import pytest
 from caiman.repositories.service import RepoManager
 
 
+def test_publication_status_survives_failure_and_clears_after_retry(tmp_path, monkeypatch):
+    from test_pods import bare, apply
+    manager = RepoManager(tmp_path / 'store')
+    remote = bare(tmp_path)
+    apply(manager, 'initialize', 'alpha', remote)
+    status = lambda: next(r for r in RepoManager(manager.store.root).list_status() if r['pod'] == 'alpha')
+    assert status()['publication'] == 'Not published yet'
+    apply(manager, 'sync', 'alpha')
+    assert status()['publication'] == 'Published at last check'
+    path = manager.local_path('alpha')
+    header = path / 'pod.json'
+    header.write_text(header.read_text().replace('"name":"alpha"', '"name":"Updated"'))
+    original = manager._git
+    def fail_push(path, *args, **kwargs):
+        if args[0] == 'push':
+            raise ValueError('Simulated network failure')
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(manager, '_git', fail_push)
+    with pytest.raises(ValueError, match='Simulated network failure'):
+        apply(manager, 'sync', 'alpha')
+    assert status()['working_tree'] == 'Clean'
+    assert status()['publication'] == 'Last sync failed · 1 unpushed commit'
+    monkeypatch.setattr(manager, '_git', original)
+    apply(manager, 'sync', 'alpha')
+    assert status()['publication'] == 'Published at last check'
+    reader = RepoManager(tmp_path / 'reader')
+    apply(reader, 'add', 'alpha', remote)
+    assert next(r for r in reader.list_status() if r['pod'] == 'alpha')['publication'] == 'Published at last check'
+    apply(manager, 'remove', 'alpha')
+    assert status()['publication'] == 'Local only'
+    apply(manager, 'initialize', 'alpha', str(tmp_path / 'different.git'))
+    assert status()['publication'] == 'Publication unconfirmed'
+
+
+async def test_first_sync_failure_is_visible_even_with_clean_working_tree(tmp_path):
+    from test_pods import apply
+    from caiman.dashboard.onboarding import CategoryApp
+    from textual.widgets import Static
+    manager = RepoManager(tmp_path / 'store')
+    apply(manager, 'initialize', 'alpha', str(tmp_path / 'missing.git'))
+    with pytest.raises(ValueError):
+        apply(manager, 'sync', 'alpha')
+    record = next(r for r in manager.list_status() if r['pod'] == 'alpha')
+    assert record['working_tree'] == 'Clean'
+    assert record['publication'] == 'Last sync failed · Publication unconfirmed'
+    app = CategoryApp('repos', store_root=manager.store.root)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert 'Last sync failed' in str(app.query_one('#pod-status-1 Static', Static).render())
+
+
 def test_pod_status_tracks_local_changes_and_detached_head(tmp_path):
     manager = RepoManager(tmp_path / 'store')
     assert manager.list_status()[0]['status'] == 'Not created yet'

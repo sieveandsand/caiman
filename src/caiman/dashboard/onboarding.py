@@ -445,8 +445,10 @@ class CategoryApp(NavigationApp):
             rows.index = next((i for i, record in enumerate(records) if record['pod'] == selected_pod),
                               0 if records else None)
             status = self.query_one('#pod-status', Static)
-            status.update('' if records else 'No pods yet.')
-            status.display = not records
+            missing_default = records[0].get('missing_default') if records else None
+            status.update(f'Default pod {missing_default} is unavailable. Select a pod and choose Set default.'
+                          if missing_default else '' if records else 'No pods yet.')
+            status.display = bool(missing_default) or not records
             self.update_pod_actions()
         except (OSError, ValueError) as error:
             self.query_one('#pod-status').display = True

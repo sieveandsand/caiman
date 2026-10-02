@@ -80,20 +80,29 @@ class RepoManager:
 
     def list_repos(self):
         records = []
+        default = self.store.pods.configured_default
         for r in self.store.pods.list():
             initialized = (r['path'] / '.git').exists()
-            remote = self._git(r['path'], 'config', '--local', '--get', 'remote.origin.url', allow_missing=True) if initialized else ''
+            remote, error = '', None
+            try:
+                if initialized:
+                    remote = self._git(r['path'], 'config', '--local', '--get', 'remote.origin.url', allow_missing=True)
+            except (OSError, ValueError) as failure:
+                error = str(failure)
             records.append(dict(pod=r['id'], name=r['name'], remote=remote or None,
-                                initialized=initialized, default=r['id'] == self.store.pods.default))
+                                initialized=initialized, default=r['id'] == default, error=error))
         return records
 
     def list_status(self):
         """Read local Git state without fetching or changing pod contents."""
         records = []
-        for pod in self.store.pods.list():
+        pods = self.store.pods.list()
+        default = self.store.pods.configured_default
+        missing_default = default if default not in {pod['id'] for pod in pods} else None
+        for pod in pods:
             path = pod['path']
             record = dict(pod=pod['id'], name=pod['name'], path=path,
-                          default=pod['id'] == self.store.pods.default,
+                          default=pod['id'] == default, missing_default=missing_default,
                           branch=None, git_state='local',
                           remote=None, status='Local folder' if path.exists() else 'Not created yet')
             try:
@@ -126,11 +135,38 @@ class RepoManager:
                     record['working_tree'] = ' · '.join(changes) or 'Clean'
                     record['git_state'] = 'conflict' if conflicts else ('changed' if changes else 'clean')
                     record['status'] = branch + ' · ' + record['working_tree']
+                    record['publication'] = self._publication_status(path, record['remote'])
             except (OSError, ValueError) as error:
                 record['git_state'] = 'error'
                 record['status'] = 'Git status unavailable: ' + str(error)
             records.append(record)
         return records
+
+    def _publication_status(self, path, remote):
+        """Compare with the last verified remote state, without network access."""
+        config = lambda key: self._git(path, 'config', '--local', '--get', key, allow_missing=True)
+        failed = config('caiman.syncFailed') == 'true'
+        if not remote:
+            return ('Last sync failed · ' if failed else '') + 'Local only'
+        head = self._git(path, 'show-ref', '--head', allow_missing=True)
+        if not head:
+            status = 'Not published yet'
+        elif config('caiman.publicationRemote') != remote or not config('caiman.publicationHead'):
+            status = 'Publication unconfirmed'
+        else:
+            published = config('caiman.publicationHead')
+            behind, ahead = map(int, self._git(path, 'rev-list', '--left-right', '--count', published + '...HEAD').split())
+            parts = []
+            if ahead:
+                parts.append(f'{ahead} unpushed commit' + ('s' if ahead != 1 else ''))
+            if behind:
+                parts.append(f'{behind} remote commit' + ('s' if behind != 1 else '') + ' to merge')
+            status = ' · '.join(parts) if parts else 'Published at last check'
+        return ('Last sync failed · ' if failed else '') + status
+
+    def _record_publication(self, path, remote, revision):
+        self._git(path, 'config', '--local', 'caiman.publicationHead', self._git(path, 'rev-parse', revision))
+        self._git(path, 'config', '--local', 'caiman.publicationRemote', remote)
 
     def _state(self, path):
         if not path.exists():
@@ -277,6 +313,7 @@ class RepoManager:
                 self.store._atomic_write(temporary / 'pod.json', canonical_json(header), immutable=False)
                 (temporary / 'store.json').unlink()
             self._git(temporary, 'remote', 'add', 'origin', plan.remote)
+            self._record_publication(temporary, plan.remote, 'HEAD')
             self._verify_files(temporary)
             temporary.rename(plan.local_path)
         finally:
@@ -303,6 +340,7 @@ class RepoManager:
         if refs:
             self._git(path, 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', plan.remote, 'refs/heads/' + BRANCH)
             self._verify_tree(path, 'FETCH_HEAD', pod_id)
+            self._record_publication(path, plan.remote, 'FETCH_HEAD')
             try:
                 self._git(path, '-c', 'commit.gpgSign=false', 'merge', '--no-edit', 'FETCH_HEAD')
             except ValueError as error:
@@ -312,7 +350,11 @@ class RepoManager:
                 raise ValueError('Pod sync needs a merge. Local changes are committed and remote history is fetched. '
                                  'Resolve with Git, then retry Sync. ' + (conflicts or str(error))) from error
             self._verify_files(path)
+        else:
+            # A previously published branch may have been deleted remotely.
+            self._git(path, 'config', '--local', 'caiman.publicationHead', '')
         self._git(path, 'push', '--porcelain', plan.remote, 'HEAD:refs/heads/' + BRANCH)
+        self._record_publication(path, plan.remote, 'HEAD')
 
     def apply(self, plan):
         with self._locked():
@@ -327,7 +369,15 @@ class RepoManager:
             elif plan.action == 'add':
                 self._clone(plan)
             elif plan.action == 'sync':
-                self._sync(plan)
+                try:
+                    self._sync(plan)
+                except (OSError, ValueError):
+                    try:
+                        self._git(plan.local_path, 'config', '--local', 'caiman.syncFailed', 'true')
+                    except (OSError, ValueError):
+                        pass  # Preserve the original failure if Git itself is broken.
+                    raise
+                self._git(plan.local_path, 'config', '--local', 'caiman.syncFailed', 'false')
             elif plan.action == 'remove':
                 self._git(plan.local_path, 'remote', 'remove', 'origin')
         return self.store.pods.resolve(plan.pod)['id']

@@ -73,6 +73,18 @@ cards. Tab and Shift+Tab move between controls. Forms show a single Pod field. T
 creation, cloning, Git connection, sync, default selection, and disconnection.
 All local pods are available without entering authorization names.
 
+The Pods page isolates Git errors to the affected pod. If the configured default
+pod is missing, it still lists available pods and lets you select a replacement
+with **Set default**; browsing does not rewrite the preference.
+
+Git working-tree status and publication status are separate. A clean working
+tree can still have unpushed commits. The list reports the last sync failure,
+unpushed commits relative to the last verified remote commit, and **Published at
+last check** after a successful clone or sync. **Publication unconfirmed** means
+there is no recorded state for that remote yet. Status refresh is local-only;
+use Sync to check for newer remote changes. Publication metadata stays in the
+pod's local Git configuration and is not shared with teammates.
+
 ```bash
 caiman pod create alpha
 caiman pod default alpha

@@ -78,7 +78,7 @@ class RepoManagerApp(NavigationApp):
         try:
             self.records = await asyncio.to_thread(self.manager.list_repos)
             self.query_one('#repository', Select).set_options([
-                (record['pod'] + ' · ' + (record['remote'] or 'Local only'), record['pod'])
+                (record['pod'] + ' · ' + ('Git unavailable' if record.get('error') else record['remote'] or 'Local only'), record['pod'])
                 for record in self.records])
             if self.selected_pod:
                 self.query_one('#repository', Select).value = self.selected_pod

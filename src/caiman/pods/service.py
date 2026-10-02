@@ -55,17 +55,22 @@ class PodRegistry:
         return {'id': value, 'name': value, 'path': self.store.root / value}
 
     @property
-    def default(self):
+    def configured_default(self):
+        """Read the preference even when its pod is no longer available."""
         path = self.store.root / '.pods.json'
         if not path.exists():
             return 'public'
         data = json.loads(self.store._read(path))
         if not isinstance(data, dict) or set(data) != {'default'}:
             raise ValueError('Invalid pod preferences')
-        record = self.resolve(data['default'])
-        if record['id'] not in {r['id'] for r in self.list()}:
+        return self.resolve(data['default'])['id']
+
+    @property
+    def default(self):
+        pod = self.configured_default
+        if pod not in {r['id'] for r in self.list()}:
             raise ValueError('Default pod is unavailable')
-        return record['id']
+        return pod
 
     def set_default(self, pod):
         record = self.ensure(pod)
