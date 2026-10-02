@@ -8,6 +8,9 @@ permissions. Older sections are retained as design history.
 **Status:** Design reference; local ingestion and authoring are implemented.
 Session materialization, hooks, and Git transport remain planned. Provisioning
 local and Docker worktrees (§6.11) is proposed and awaits a `DECISIONS.md` entry.
+The newer [session context proposal](CONTAINER-CONTEXT.md) describes host-side
+provisioning, per-session folders, and automatic context-switch requests from
+agents inside containers; it proposes revisions to the worktree-wide flow below.
 **Scope:** Product rationale, scope, and the design that turns supplied documents
 and declared structure into a session workspace a coding agent can use.
 **Related:** [ROADMAP.md](ROADMAP.md) (success criteria and delivery),
