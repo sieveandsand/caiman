@@ -16,14 +16,15 @@ def canonical_json(value: dict) -> bytes:
                       ensure_ascii=False, allow_nan=False).encode('utf-8')
 
 
-# Schema literals are a table, not an f-string over kind and number: the board
-# spells its version `caiman.board.v2` while documents and projects still carry a
-# slash, and nothing should be able to derive one spelling from the other. The
+# Schema literals are a table, not an f-string over kind and number: current
+# kinds do not share one derivable spelling, and legacy slash forms remain valid.
+# Nothing should be able to derive one spelling from another. The
 # first literal of each kind is what authoring emits; the rest stay readable so
 # snapshots registered under an older spelling are never rewritten (S-11).
 SCHEMA_LITERALS = {
     'board': ('caiman.board.v2', 'caiman.board/1'),
-    'document': ('caiman.document.v1', 'caiman.document/1'),
+    'document': ('caiman.document.v2', 'caiman.document.v1', 'caiman.document/1'),
+    'collection': ('caiman.collection.v1',),
     'project': ('caiman.project.v1', 'caiman.project/1'),
 }
 

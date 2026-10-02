@@ -17,7 +17,7 @@ async def advance(pilot):
 
 
 def fill_document(app):
-    for field, value in {"issuer": "synthetic", "part": "chip", "doc_type": "manual", "version": "rev-1"}.items():
+    for field, value in {"issuer": "synthetic", "part": "chip", "name": "Manual", "version": "rev-1"}.items():
         app.query_one(f"#{field}", Input).value = value
 
 
@@ -122,7 +122,31 @@ async def test_optional_errors_can_be_corrected_after_going_back(tmp_path):
         assert app.prepared.manifest["converter"] == {"version": "1.2"}
         assert "Compartment: synthetic-program" in app.review_text()
         assert "Conversion location: Unknown" in app.review_text()
-        assert not (tmp_path / "store").exists()
+    assert not (tmp_path / "store").exists()
+
+
+@pytest.mark.asyncio
+async def test_optional_requirement_pattern_can_be_corrected_after_back(tmp_path):
+    source = tmp_path / 'spec.md'
+    source.write_text('# Specification\nREQ-123: Start correctly.\n')
+    app = IngestApp(tmp_path / 'store', source)
+    async with app.run_test(size=(100, 45)) as pilot:
+        await advance(pilot)
+        fill_document(app)
+        app.query_one('#visibility', Select).value = 'public'
+        await advance(pilot)
+        app.query_one('#pattern', Input).value = '['
+        await advance(pilot)
+        assert app.step == 2
+        await pilot.click('#back')
+        await pilot.pause(0.25)
+        await advance(pilot)
+        assert app.step == 2
+        app.query_one('#pattern', Input).value = r'^REQ-\d+$'
+        await advance(pilot)
+        assert app.step == 3
+        assert app.prepared.manifest['requirements'] == {'pattern': r'^REQ-\d+$'}
+    assert not (tmp_path / 'store').exists()
 
 
 def registered_contexts(root):
@@ -137,7 +161,7 @@ def registered_contexts(root):
         project = service.prepare("project", {
             "project": scope + "-program", "version": "1", "customer": "Synthetic Customer",
             "compartments": [scope], "board": {"name": "synthetic-board", "version": "A"},
-            "spec_set": "release-1", "documents": [], "precedence": [], "features": [],
+            "spec_set": "release-1", "documents": [], "features": [],
         })
         service.register(project)
     return service, board
@@ -167,7 +191,7 @@ async def test_multi_compartment_project_does_not_choose_document_compartment(tm
         "spec_set": "release-1",
         "compartments": ["synthetic-alpha", "synthetic-beta"],
         "board": {"name": "synthetic-board", "version": "A"},
-        "documents": [], "precedence": [], "features": [],
+        "documents": [], "features": [],
     })
     service.register(project)
     source = tmp_path / "manual.md"
@@ -252,7 +276,7 @@ async def test_inline_create_cancel_resume_retains_ingestion_form(tmp_path):
     async with app.run_test(size=(100, 45)) as pilot:
         await advance(pilot)
         app.query_one("#issuer", Input).value = "synthetic-publisher"
-        app.query_one("#doc_type", Input).value = "spec"
+        app.query_one("#name", Input).value = "Specification"
         app.query_one("#version", Input).value = "release-A"
         app.query_one("#visibility", Select).value = "compartments"
         app.query_one("#create-project", Button).press()
@@ -266,7 +290,7 @@ async def test_inline_create_cancel_resume_retains_ingestion_form(tmp_path):
         assert resumed.step == 1
         assert resumed.value("file") == str(source)
         assert resumed.value("issuer") == "synthetic-publisher"
-        assert resumed.value("doc_type") == "spec"
+        assert resumed.value("name") == "Specification"
         assert resumed.value("version") == "release-A"
         assert resumed.query_one("#visibility", Select).value == "compartments"
         await advance(pilot)

@@ -76,12 +76,9 @@ class IngestApp(NavigationApp):
                 yield from self.field("issuer", "Issuer")
                 yield from self.field("part", "Part (fill either part or program)")
                 yield from self.field("program", "Program")
-                yield from self.field("doc_type", "Document type")
+                yield from self.field("name", "Document Name")
+                yield from self.field("description", "Description")
                 yield from self.field("version", "Document version")
-                yield Label("Structure")
-                yield Select([("Prose", "prose"), ("Requirements", "requirement")], value="prose", allow_blank=False, id="structure")
-                with VerticalScroll(id="requirements-fields", classes="step"):
-                    yield from self.field("pattern", "Requirement ID pattern")
                 yield from self.field("silicon_revisions", "Silicon revisions (comma separated; optional)")
                 yield Label("Access — choose explicitly")
                 yield Select([("Public", "public"), ("Private — compartment", "compartments")], prompt="Choose access", id="visibility")
@@ -98,6 +95,8 @@ class IngestApp(NavigationApp):
                     yield from self.field("converter_version", "Converter version (optional)")
                     yield Label("Conversion location (optional)")
                     yield Select([("Unknown", "unknown"), ("Local", "local"), ("Hosted", "hosted")], value="unknown", allow_blank=False, id="hosted")
+                with Collapsible(title="Requirement IDs (optional)", collapsed=True):
+                    yield from self.field("pattern", "Requirement ID Pattern")
             with VerticalScroll(id="step-3", classes="step"):
                 yield Static("", id="review", markup=False)
         yield Static("", id="status", markup=False)
@@ -158,7 +157,6 @@ class IngestApp(NavigationApp):
             widget.disabled = self.busy or self.registered
         for index in range(4):
             self.query_one(f"#step-{index}").display = self.step == index
-        self.query_one("#requirements-fields").display = self.query_one("#structure", Select).value == "requirement"
         self.query_one("#compartment-fields").display = self.query_one("#visibility", Select).value == "compartments"
         source = self.query_one("#identity_source", Select).value
         self.query_one("#board-context").display = source == "board"
@@ -179,7 +177,7 @@ class IngestApp(NavigationApp):
     async def on_select_changed(self, event: Select.Changed) -> None:
         if self._restoring or event.value != event.select.value:
             return
-        if event.select.id in {"structure", "visibility"}:
+        if event.select.id == "visibility":
             self.show_step()
         elif event.select.id == "identity_source":
             if self._identity_mode != event.value:
@@ -285,14 +283,14 @@ class IngestApp(NavigationApp):
         return self.query_one(f"#{name}", Input).value.strip()
 
     def metadata(self) -> dict:
-        data = {key: self.value(key) for key in ("issuer", "part", "program", "doc_type", "version") if self.value(key)}
-        data["structure"] = self.query_one("#structure", Select).value
+        data = {key: self.value(key) for key in ("issuer", "part", "program", "description", "version") if self.value(key)}
+        data["name"] = self.value("name")
         visibility = self.query_one("#visibility", Select).value
         if visibility in {"public", "compartments"}:
             data["labels"] = {"public": visibility == "public", "compartments": self.csv("compartments") if visibility == "compartments" else []}
         if self.value("silicon_revisions"):
             data["silicon_revisions"] = self.csv("silicon_revisions")
-        if data["structure"] == "requirement":
+        if self.value("pattern"):
             data["requirements"] = {"pattern": self.value("pattern")}
         source = {}
         if self.value("source_sha256"):
@@ -328,13 +326,13 @@ class IngestApp(NavigationApp):
             f"File: {self.prepared.source_path.name}",
             f"Issuer: {manifest['issuer']}",
             f"{'Part' if 'part' in manifest else 'Program'}: {manifest.get('part', manifest.get('program'))}",
-            f"Document type: {manifest['doc_type']}",
+            f"Name: {manifest['name']}",
+            f"Description: {manifest.get('description', '')}",
             f"Version: {manifest['version']}",
-            f"Structure: {manifest['structure']}",
             f"Silicon revisions: {', '.join(manifest.get('silicon_revisions', [])) or 'Unknown / not applicable'}",
             f"Access: {access}",
         ]
-        if manifest["structure"] == "requirement":
+        if "requirements" in manifest:
             lines.append(f"Requirement ID pattern: {manifest['requirements']['pattern']}")
         lines.extend([
             "", "Optional provenance",
@@ -407,6 +405,7 @@ class IngestApp(NavigationApp):
                 if self.step == 1:
                     metadata.pop("source", None)
                     metadata.pop("converter", None)
+                    metadata.pop("requirements", None)
                 self.prepared = await asyncio.to_thread(prepare_document, Path(self.value("file")).expanduser(), metadata)
                 self.step += 1
                 if self.step == 3:

@@ -46,6 +46,22 @@ def test_unchanged_bytes_and_optional_provenance(document, metadata):
     verify_prepared(prepared)
 
 
+def test_named_document_has_optional_requirement_validation_without_a_role(document, metadata):
+    metadata.pop('doc_type')
+    metadata.pop('structure')
+    metadata.update(name='Customer specification', description='Requirements for startup')
+    prepared = prepare_document(document, metadata)
+    assert 'structure' not in prepared.manifest and 'doc_type' not in prepared.manifest
+    verify_prepared(prepared)
+    metadata['requirements'] = {'pattern': r'^REQ-\d+$'}
+    with pytest.raises(ValidationError, match='No matching requirement IDs'):
+        prepare_document(document, metadata)
+    document.write_text('# Synthetic specification\nREQ-123: Start correctly.\n')
+    prepared = prepare_document(document, metadata)
+    assert prepared.manifest['requirements'] == metadata['requirements']
+    verify_prepared(prepared)
+
+
 @pytest.mark.parametrize('text', ['', 'Body\n# Title', '```\n# Fake\n```', '# \ntext',
                                   '# Title\n## Repeat\n## Repeat'])
 def test_invalid_heading_structure(document, metadata, text):
@@ -152,7 +168,8 @@ def test_document_schema_literal_is_current_and_older_spellings_still_read(tmp_p
     prepared = prepare_document(path, {
         'issuer': 'synthetic', 'part': 'chip', 'doc_type': 'manual', 'version': 'v1',
         'structure': 'prose', 'labels': {'public': True, 'compartments': []}})
-    assert prepared.manifest['schema'] == current_schema('document') == 'caiman.document.v1'
+    assert prepared.manifest['schema'] == current_schema('document') == 'caiman.document.v2'
     assert is_schema('document', 'caiman.document/1')
-    assert not is_schema('document', 'caiman.document.v2')
+    assert is_schema('document', 'caiman.document.v1')
+    assert not is_schema('document', 'caiman.document.v3')
     assert not is_schema('document', current_schema('board'))

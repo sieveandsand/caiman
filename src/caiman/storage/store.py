@@ -88,6 +88,13 @@ def _validate_manifest(manifest: dict) -> None:
     _hex("sha256:" + str(files[0]["sha256"]))
 
 
+def document_ref(manifest: dict) -> Path:
+    """The canonical mutable name for both ingestion and metadata edits."""
+    return Path(*[_component(value) for value in (
+        manifest.get('issuer'), manifest.get('part') or manifest.get('program'),
+        manifest.get('name') or manifest.get('doc_type'), manifest.get('version'))])
+
+
 class Store:
     def __init__(self, root: Path):
         # Resolve the parent only: standard platform aliases such as /tmp are
@@ -216,10 +223,7 @@ class Store:
             raise StoreError("Prepared document digest mismatch")
         if manifest["files"][0] != {"path": "document.md", "sha256": _hex(prepared.blob_digest), "size": len(prepared.content)}:
             raise StoreError("Manifest does not describe prepared document bytes")
-        identity = manifest.get("part") or manifest.get("program")
-        components = [_component(value) for value in (
-            manifest.get("issuer"), identity, manifest.get("doc_type"), manifest.get("version"))]
-        refs = [self.root / _component(name) / "refs" / "documents" / Path(*components)
+        refs = [self.root / _component(name) / "refs" / "documents" / document_ref(manifest)
                 for name in compartments]
         # Source verification and all input checks precede the first mkdir.
         for compartment in compartments:

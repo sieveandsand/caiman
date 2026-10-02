@@ -12,7 +12,7 @@ from markdown_it import MarkdownIt
 from caiman.documents.models import AccessLabel, ValidationError, canonical_json, current_schema, is_schema, valid_identifier
 
 
-METADATA_FIELDS = frozenset({'issuer', 'part', 'program', 'doc_type', 'version', 'structure',
+METADATA_FIELDS = frozenset({'name', 'description', 'issuer', 'part', 'program', 'doc_type', 'version', 'structure',
                              'labels', 'silicon_revisions', 'source', 'converter', 'requirements'})
 GENERATED_FIELDS = frozenset({'schema', 'original_filename', 'pipeline_version', 'ingested_at', 'files'})
 
@@ -86,12 +86,19 @@ def validate_metadata(metadata: dict) -> dict:
     for key in metadata.keys() - METADATA_FIELDS:
         errors[str(key)] = 'Unknown or automatically generated field'
     result = {}
-    for field in ('issuer', 'doc_type', 'version'):
+    named = 'name' in metadata
+    for field in (('issuer', 'version') if named else ('issuer', 'doc_type', 'version')):
         value = metadata.get(field)
         if not _text(value) or (field != 'version' and not valid_identifier(value)):
             errors[field] = 'Supply a nonempty value without control characters' if field == 'version' else 'Use letters, digits, dots, hyphens or underscores'
         else:
             result[field] = value
+    for field in ('name', 'description', 'doc_type'):
+        if field in metadata:
+            if not _text(metadata[field]):
+                errors[field] = 'Supply nonempty text without control characters'
+            else:
+                result[field] = metadata[field]
     identities = [field for field in ('part', 'program') if field in metadata]
     if len(identities) != 1:
         errors['part'] = 'Supply exactly one part or program'
@@ -101,7 +108,9 @@ def validate_metadata(metadata: dict) -> dict:
         else:
             result[field] = metadata[field]
     structure = metadata.get('structure')
-    if structure not in ('prose', 'requirement'):
+    if structure is None and named:
+        pass
+    elif structure not in ('prose', 'requirement'):
         errors['structure'] = 'Choose prose or requirement'
     else:
         result['structure'] = structure
@@ -146,7 +155,7 @@ def validate_metadata(metadata: dict) -> dict:
                 clean[key] = value.lower() if key == 'sha256' else value
         if clean:
             result[group] = clean
-    if structure == 'requirement':
+    if structure == 'requirement' or (named and 'requirements' in metadata):
         requirements = metadata.get('requirements')
         if not isinstance(requirements, dict) or set(requirements) != {'pattern'} or not _text(requirements.get('pattern')):
             errors['requirements.pattern'] = 'Supply a requirement-ID regular expression'
@@ -165,6 +174,22 @@ def validate_metadata(metadata: dict) -> dict:
     return result
 
 
+def validate_document_text(text: str, manifest: dict) -> tuple[Heading, ...]:
+    """The same citation checks for ingestion and edits to stored metadata."""
+    headings = validate_headings(text)
+    if 'requirements' in manifest:
+        pattern = re.compile(manifest['requirements']['pattern'])
+        # Try literal whitespace-delimited IDs as well as conventional IDs
+        # embedded in Markdown. Preserve punctuation within IDs such as R[123].
+        literal = (candidate for match in re.finditer(r'\S+', text)
+                   for candidate in (match[0], match[0].strip('`*_,.;:()<>')))
+        conventional = (match[0] for match in re.finditer(r'[\w]+(?:[-.:/][\w]+)*', text))
+        candidates = chain(literal, conventional)
+        if not any(pattern.fullmatch(candidate) for candidate in candidates):
+            raise ValidationError({'requirements.pattern': 'No matching requirement IDs found in the document'})
+    return headings
+
+
 def prepare_document(path: Path, metadata: dict) -> PreparedDocument:
     manifest = validate_metadata(metadata)
     path = Path(path).expanduser().absolute()
@@ -177,17 +202,7 @@ def prepare_document(path: Path, metadata: dict) -> PreparedDocument:
         text = content.decode('utf-8')
     except (OSError, UnicodeError) as error:
         raise ValidationError({'file': f'Cannot read UTF-8 Markdown: {error}'}) from error
-    headings = validate_headings(text)
-    if manifest['structure'] == 'requirement':
-        pattern = re.compile(manifest['requirements']['pattern'])
-        # Try literal whitespace-delimited IDs as well as conventional IDs
-        # embedded in Markdown. Preserve punctuation within IDs such as R[123].
-        literal = (candidate for match in re.finditer(r'\S+', text)
-                   for candidate in (match[0], match[0].strip('`*_,.;:()<>')))
-        conventional = (match[0] for match in re.finditer(r'[\w]+(?:[-.:/][\w]+)*', text))
-        candidates = chain(literal, conventional)
-        if not any(pattern.fullmatch(candidate) for candidate in candidates):
-            raise ValidationError({'requirements.pattern': 'No matching requirement IDs found in the document'})
+    headings = validate_document_text(text, manifest)
     blob_digest = digest(content)
     manifest.update(schema=current_schema('document'), original_filename=path.name,
                     pipeline_version='caiman-ingest/0.1',
