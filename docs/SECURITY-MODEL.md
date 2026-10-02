@@ -422,6 +422,8 @@ Write these before the mechanism they test.
 | S-T19 | Attempt to commit the audit directory to a store repository | Refused by the same guard as I-3 |
 | S-T20 | Open the authoring catalog with no scopes, then with one of a project's two required compartments | Private project is absent in both cases; discovery does not widen the declared scope |
 | S-T21 | Select an existing board or project during document ingestion | Metadata reuse does not assert public access; registration still requires explicit document labels |
+| S-T22 | Save a collection without labels, include a private document in a public or different-compartment collection, or read a private collection outside its scope | Rejected before writes; private collections are absent from out-of-scope catalogs (`tests/test_collections.py`) |
+| S-T23 | Edit a document outside authorized scope, change or drop its access labels, or alter its stored file descriptor through metadata editing | Rejected before writes; metadata edits cannot reclassify or replace content (`tests/test_document_edit.py`) |
 
 Architecture-level tests are in `ARCHITECTURE.md` §13; storage-level tests are in
 `STORAGE.md` §11. Some tests cover more than one layer; preserve their IDs when cross-referencing.

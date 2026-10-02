@@ -28,8 +28,9 @@ Three framing facts that constrain most changes:
   are permanently somebody else's job (S-01).
 - **The filesystem is the interface.** No server, no index, no process between
   the agent and the documents (S-18).
-- **A Board is hardware; a Project is a program** — a board version plus a
-  customer specification set, features, precedence, and compartments (S-13).
+- **A Board is hardware; a Project is a program** — one or more board versions
+  plus a customer specification set, features, and compartments (S-13, S-34,
+  S-36).
 
 ---
 
@@ -89,9 +90,11 @@ Three rules follow:
 
 - Do not weaken either guard on the code repository, and do not add exceptions
   "just for testing".
-- Do not commit fixture documents from a real vendor or a real customer. Use the
-  synthetic fixtures in `fixtures/`, including the synthetic specification sets,
-  which exist precisely so this never comes up (D-08).
+- Never commit private customer documents or vendor documents without verified
+  redistribution rights. Public open-source examples in `fixtures/` are allowed
+  when pinned provenance, per-file licenses, and required notices are retained
+  (D-08). Keep Caiman-authored acceptance criteria clearly separate from upstream
+  specifications; never misrepresent an example as a real customer contract.
 - **Ingest does not push.** Writing to the local store and publishing it to a
   remote are separate acts with a label review between them, because a mislabel
   caught before push costs a `git reset` and one caught after does not
@@ -256,10 +259,10 @@ src/caiman/
   hooks/          # harness hook installation, callbacks, and TUI
   little_caiman/  # read-only sidecar: a session's managed-document use, from its transcript
   storage/        # immutable blobs, manifests, refs, and resolution
-  ui/             # shared navigation, theme, mascot, and pixel title
+  ui/             # shared navigation, theme, mascot, and fullwidth headings
 ```
 
-Tests live under `tests/`, synthetic fixtures under `fixtures/`, and design
+Tests live under `tests/`, public example datasets under `fixtures/`, and design
 documentation under `docs/`. Session materialization remains planned; create
 new feature packages when their implementation arrives. Remembered workflow
 state contains compartments, never a default board or project.

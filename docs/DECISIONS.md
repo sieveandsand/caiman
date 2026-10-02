@@ -104,7 +104,7 @@ specifications, features, precedence, and compartments. Separate models let
 multiple customer programs share hardware without putting customer identity in
 the public board manifest.
 
-Settled 2026-08-20.
+Settled 2026-08-20; amended 2026-09-25 by S-34 (several boards) and S-36 (no precedence).
 
 ### S-14. Features are first-class; they declare scope, never status
 
@@ -194,7 +194,7 @@ repository for a single engineer. **S-33 supersedes that topology**: team access
 varies by customer/project, so the planned backend uses one private repository
 per compartment, plus a private public-material repository. Ingest never pushes;
 publication remains separate and reviewed. This resolves the G23 conflict with
-I-3. [Team storage](proposals/TEAM-STORAGE.md) owns the proposed protocol.
+I-3. S-35 adopts the protocol; [Storage §6.6](STORAGE.md#66-team-storage-one-git-repository-per-compartment) owns it.
 
 Settled 2026-09-14; topology superseded 2026-09-24 by user instruction.
 
@@ -279,8 +279,9 @@ and restore “compartment”. [First launch](../README.md#first-launch-and-docu
 
 ### S-30. The bare command is a dashboard with shared Vim-style navigation
 
-Bare `caiman` opens a dashboard. Boards and projects each have Create and View;
-editing starts from the viewed item. JSON utility commands remain directly
+Bare `caiman` opens a dashboard with one card per category. Boards and projects
+each have Create and View: viewing opens the category's cards, creating is the
+add card at the end of them, and editing starts from the viewed item. JSON utility commands remain directly
 available. Use shared Vim-style navigation with an explicit text-editing mode,
 a single mode hint, and no Ctrl shortcuts or command palette.
 
@@ -288,7 +289,8 @@ The current theme is black with green accents and outlined fields. This replaced
 the original orange styling. [Keyboard navigation](../README.md#keyboard-navigation)
 owns controls; S-32 owns the board editing decision.
 
-Settled 2026-09-15; dashboard scope, controls, and colours amended 2026-09-16.
+Settled 2026-09-15; dashboard scope, controls, and colours amended 2026-09-16;
+category cards amended 2026-09-25.
 
 ### S-31. The board schema is `caiman.board.v2`; schema literals are a table
 
@@ -336,9 +338,76 @@ and the subsequently discussed OR/replication option: neither is needed for a
 single-compartment document. Repository permissions enforce teammate access;
 Caiman performs classification checks and session selection. No transport is
 implemented by this decision. [Security §3](SECURITY-MODEL.md#3-classification)
-owns the rule; [Team storage](proposals/TEAM-STORAGE.md) owns the proposal.
+owns the rule; [Storage §6.6](STORAGE.md#66-team-storage-one-git-repository-per-compartment) owns the transport.
 
 Settled 2026-09-24 by user instruction; resolves G23's repository-boundary choice.
+
+### S-34. A project pins one or more boards; realized parts name their board version
+
+A program may run on several boards, or on one board at several versions, so a
+project lists `boards` instead of one `board`. Pinning the same name and version
+twice is rejected. Role names are chosen per board and need not be unique across
+boards, so each `realized_on` entry is `{board, version, role}` and is checked
+against the named board version only. Labels match exactly (I-7). An object
+rather than a `board/role` string, because version labels are free text and
+could contain any separator.
+
+New writes use `caiman.project.v2`. Stored v1 projects remain valid and are never
+rewritten; editors open them restated with their single board spelled out, and
+registering the edit writes a new v2 snapshot. Ingestion takes its board from a
+project only when the project pins exactly one; otherwise the board stays an
+explicit choice. [Project fields](STORAGE.md#project-fields) owns the fields.
+
+Settled 2026-09-25 by user instruction; amends S-13 and the project literal in S-31.
+
+### S-35. Team storage: per-compartment Git publication and a Merkle DAG
+
+Adopt the team storage design. Each compartment's private repository carries a
+managed `caiman-store` branch. Publication is a reviewed plan, sent
+dependency-first and root-last, and application refs carry generations so
+concurrent publishers conflict instead of overwriting. Fetch verifies every
+object before advancing the local view. Document-set and context digests
+identify what a session selected, separately from its local receipt. There is no
+service. Git holds whole history and cannot delete what was fetched; that cost
+is accepted until the triggers in Storage §12.1. Configuration ownership,
+classified boards, a classified brief, and the hardlink fallback remain open.
+None of them is resolved by this decision. [Storage](STORAGE.md) owns the design;
+§14 sets the phases. The earlier proposal document is merged into it.
+
+Settled 2026-09-25 by user instruction; builds on S-22 and S-33.
+
+### S-36. Projects declare no precedence among documents, for now
+
+Remove `precedence` from `caiman.project.v2`; it is not needed yet. A v2 project
+that declares it, even as an empty list, is rejected. A feature's governing
+document must be one of the project's `documents`. Stored v1 projects keep their
+declared precedence and are never rewritten; editors restate them with any
+document pinned only in precedence moved to `documents`, so no pin is lost,
+while order and notes are dropped and shown in the review diff.
+
+If precedence returns, it is declared by a human and never computed (I-8, S-15);
+this decision removes the field, not that rule. D-12 assumed deviations sit at
+the top of the declared order; until it is resolved, a deviation is an ordinary
+project document that names the requirement IDs it amends, so `grep` still
+returns it with the base requirement.
+
+Settled 2026-09-25 by user instruction; amends S-13 and S-34.
+
+### S-37. Documents and collections share one gallery
+
+All file roles use one document concept, identified by a name and description.
+Agents can interpret purpose from those fields and the source; Caiman adds no
+AI dependency or role inference during ingestion. Optional requirement-ID
+validation remains a capability of any document. New registrations use
+`caiman.document.v2`; existing v1 snapshots and refs remain readable unchanged.
+
+The Documents gallery has single document cards, persistent stacked collection
+cards, and separate add cards. Collections select existing documents and have
+no user-facing version. Saves create content-addressed snapshots with exact
+member digests and a stable collection reference. Focus uses a separate dotted
+shadow. Collection storage and access rules are in `STORAGE.md` §6.4.1a.
+
+Settled 2026-10-01 by user instruction.
 
 ## Open
 
@@ -418,33 +487,45 @@ the actual bottleneck in firmware: one board, one probe, one CAN interface.
 *Open: adopt one and contribute project selection upstream, or write a thin
 launcher that shells out to `caiman sync` and then to an existing harness.*
 
-### D-08. Sample / test project
+### D-08. Sample / test projects
 
-Requirements: open-source hardware and software, freely obtainable
-specifications, several distinct parts in distinguishable roles, documents
-markable as *pretend-confidential*, and **at least two board versions** with a
-part swapped or a silicon revision changed, so the change summary and the "right
-fact, wrong board" failure can be demonstrated rather than asserted.
+Selected, following the request to replace synthetic demonstration hardware:
+Zephyr's micro:bit sound sample at v4.2.0, plus Adafruit's MacroPad keyboard/mouse
+and tone-keypad examples. [Dataset guide](../fixtures/README.md) owns usage,
+provenance, exact source commits, file-level licensing, and modeling limitations.
 
-Gaggiuino is under consideration — an espresso-machine controller with an MCU,
-sensors, and a display. Confirm part diversity and version history.
+The micro:bit v1.3 and v2 firmware-facing models change the MCU, sensor population,
+button/display wiring, and sound route. The v1 model needs an external piezo;
+the v2 uses its built-in speaker. These provide concrete "right fact, wrong
+board" cases. MacroPad's HID and tone applications share one board snapshot but
+require different features. Board models deliberately omit unsupported BOM or
+register details rather than inventing them.
 
-The normative half has no open-source analogue: there is no public customer
-specification set to borrow and real ones cannot be committed (I-3). So the
-sample needs a **synthetic specification set** — invented requirement IDs, a
-handful of features, a deviation amending two or three requirements, and two
-releases so the freeze rule can be exercised. This is a feature rather than a
-compromise: synthetic specifications let the negative tests assert exact
-behavior, and building two exercises compartment isolation with no exposure.
+The normative layer remains explicitly Caiman-authored: acceptance baselines
+and a micro:bit R2 deviation amending two R1 hardware requirements. These are not
+customer contracts or official upstream specifications. Both sound releases
+remain available with immutable pins. No automatic precedence or conflict
+inference is introduced; D-12 remains separate.
 
-*Open: confirm part diversity and multi-version availability; write the synthetic
-specification sets.*
+Upstream files use Apache-2.0, MIT, or Unlicense, checked at file level and bundled
+with notices. The examples are all public; named project compartments are schema
+requirements and demonstration groupings, not assertions of confidentiality.
+Synthetic private inputs remain in unit tests for isolation checks. No actual
+customer documents or restricted vendor manuals may be committed. The earlier
+Gaggiuino candidate is not used.
+
+The offline loader validates the entire graph in a temporary store before
+adding missing objects. It preserves existing refs, refuses name/version
+conflicts, reuses unchanged document digests, and remembers the explicitly
+imported demo compartments. It does not push or install firmware.
 
 ### D-12. How program deviations are represented
 
 For now, assume deviations arrive as a single document at the top of the declared
 precedence order, naming the requirement IDs it amends so `grep` surfaces the
 override. That is enough for the MVP and is what the current design assumes.
+S-36 has since removed declared precedence; a deviation is an ordinary project
+document in the meantime. This question stays open.
 
 It will not hold forever. Deviations are often a spreadsheet or a letter, they
 arrive incrementally over a program's life, and they may be per-part-number
@@ -458,6 +539,47 @@ rather than per-program.
 
 *Leaning: the third, once the first becomes painful. Do not build before there is
 a real deviation document to look at.*
+
+### D-14. When and where documents are provisioned into a worktree
+
+Raised 2026-09-25 by agents running in a Docker container per worktree. `sync`
+needs the store, which only the host holds; agent sessions start inside the
+container, where it is too late to provision without exposing the store.
+
+Proposed resolution — the engineer has agreed the direction; not yet settled:
+
+1. **Provision when the worktree exists, not at session start.** Creating
+   worktrees and containers stays outside Caiman (S-01). The engineer then opens
+   Caiman on the host, picks the target, project, version, and mode, and
+   provisions.
+2. **The target is the worktree folder on the host.** Provisioned context
+   belongs to the folder, never to a container; a container is only a way to
+   find the folder, through read-only `docker ps` and `docker inspect`.
+   Creating, starting, execing into, copying into, or committing containers
+   stays out of scope.
+3. **The store never enters a container.** Caiman in the image runs without a
+   store or configuration.
+4. **Session-start selection becomes a local-only fallback.** This amends S-23,
+   which made hook-driven selection the main path.
+5. **A mode declaration covers the worktree** until it is cleared or
+   re-provisioned, and every session start restates it. This answers G18's
+   resume question: the declaration is still made by a human, explicitly, with
+   no default (S-19), but for a worktree rather than one session.
+6. **Clearing and re-provisioning are always available**, warn that running
+   sessions keep what they read, and are logged.
+
+| Option | For | Against |
+|---|---|---|
+| **Provision per worktree from the host (proposed)** | Works when the agent cannot reach the store; one pin set for all of a worktree's sessions; an `open` container holds no compartmented file at all | The mode outlives the moment it was chosen; a later session may run an agent not cleared for it |
+| **Select at every session start (S-23 as written)** | The engineer declares the mode knowing which model runs | Impossible in a container without mounting the store; asks again on every restart |
+| **Mount the permitted store repositories into the container and run `sync` there** | Keeps session-start selection | The agent can read unpinned store objects directly; the mount set fixes the mode at `docker run`; links across mounts fail with `EXDEV`, forcing full copies |
+| **Copy documents into the container (`docker cp`)** | No host-path lookup | Full copies; outside every git guard; lost with the container; baked into images by `docker commit` |
+
+What would settle it: accepting the cost in the first row's "Against" column,
+with the per-session restatement as its mitigation.
+[Architecture §6.11](ARCHITECTURE.md#611-provisioning-a-worktree) holds the
+design. D-07's launcher still applies: a launcher may call `sync` itself after
+creating a worktree, with the mode typed by a human.
 
 ---
 

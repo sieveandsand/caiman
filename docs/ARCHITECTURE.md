@@ -1,7 +1,8 @@
 # Caiman Architecture
 
 **Status:** Design reference; local ingestion and authoring are implemented.
-Session materialization, hooks, and Git transport remain planned.
+Session materialization, hooks, and Git transport remain planned. Provisioning
+local and Docker worktrees (§6.11) is proposed and awaits a `DECISIONS.md` entry.
 **Scope:** Product rationale, scope, and the design that turns supplied documents
 and declared structure into a session workspace a coding agent can use.
 **Related:** [ROADMAP.md](ROADMAP.md) (success criteria and delivery),
@@ -130,6 +131,10 @@ The MVP also has no retrieval server (S-18) or repository-side lockfile (S-07).
 | R-14 | The access log records document identities, never document content | I-10, I-6 |
 | R-15 | A session whose brief no longer matches its project version is told so at start | I-4 |
 | R-16 | A repository with no Caiman configuration has its sessions unaffected | — |
+| R-17 | Provisioning writes only to a host folder at the top of a guarded git worktree; never into a container's filesystem or an image | I-3, I-9 |
+| R-18 | The store and Caiman's configuration never enter a container | I-3, S-19 |
+| R-19 | Every session start in a provisioned worktree restates the declared project, version, and mode | I-1, S-19 |
+| R-20 | Clearing or re-provisioning warns that running sessions keep what they already read, and is logged | I-10, §11.4 |
 
 ### 5.2 Constraints
 
@@ -204,8 +209,9 @@ observe the subsequent session.
 | **Store** | Immutability, content addressing, compartment separation | Query, search, ranking |
 | **Resolve** | Name→digest, transitive pin set, version listing | Choosing a version on the user's behalf |
 | **Materialize** | Workspace assembly, mode filtering, linking, brief rendering | Session lifecycle, agent process |
+| **Provision** | Choosing and checking the target worktree, resolving a container path to its host folder, clearing and re-provisioning (§6.11) | Creating worktrees or containers; writing into a container |
 | **Session integration** | Start-time configuration and staleness check; access recording | Blocking tools or managing the agent process; the per-read recorder never accesses the store |
-| **Harness** (external) | Worktree creation, launching, publishing hook events | Deciding what an agent may see |
+| **Harness and environment** (external) | Worktree and container creation, launching, publishing hook events | Deciding what an agent may see |
 
 ### 6.3 Why there is no server
 
@@ -226,7 +232,7 @@ Missing amendment IDs break this correlation; see §10.2 and D-12.
 #### 6.4.1 Inputs and responsibilities
 
 Input is **one UTF-8 Markdown file**, already prepared outside Caiman, plus
-human-supplied metadata: issuer, part or program, document type and version,
+human-supplied metadata: name, description, issuer, part or program, and version,
 applicable silicon revisions, and access labels. Original-source and converter
 information are optional. The ingestion TUI collects these fields; §6.4.3
 defines the form and `STORAGE.md` §6.4.1 defines their stored representation.
@@ -300,21 +306,37 @@ The form has four steps:
    results; do not ask for a second original-source filename.
 2. **Document.** Pick an existing project or board part to populate declared
    metadata, or enter document identity manually. Offer creation of a new board
-   or project and return to the retained ingestion form. Enter document type,
-   version, and structure (`prose` or `requirement`). Project selection supplies
+   or project and return to the retained ingestion form. Enter a document name,
+   description, and version. All roles use the same document form. Project selection supplies
    the program and compartment context; board-part selection supplies issuer,
    part, and any declared silicon revision. Silicon revisions are optional when
-   not applicable or unknown; display that absence honestly. Show a required
-   ID-pattern field only for requirement-structured documents. Choose public
+   not applicable or unknown; display that absence honestly. Choose public
    access or named compartments explicitly, with no preselected access label.
 3. **Optional provenance.** A skippable section for original-source checksum and
    page count, and converter name, version, and hosted/local information. Each
    may be left unknown. Never infer these from the filename or missing fields.
+   An optional Requirement IDs section enables deterministic ID-pattern validation
+   without choosing a document role or structure.
 4. **Review and register.** Show entered metadata and labels, unknown optional
    fields, and the computed Markdown digest and size. Allow back/edit or cancel.
    Register only on explicit submit; cancellation creates no document version
    and does not repoint a ref. Report field errors inline and heading errors
    with source locations, retaining entered values for correction.
+
+The Documents gallery shows single document cards and stacked collection cards,
+with separate add cards. Collections are named groups selected from existing
+documents, with a review/save editor and automatic immutable snapshots; users
+do not enter collection versions. See `STORAGE.md` §6.4.1a for pin and access rules.
+
+Opening a document card launches the guided metadata editor, using the same
+top-level fields, collapsible card grids, inline fields, and separate review/save
+flow as boards and projects. Applicability, requirement IDs, source provenance,
+and converter provenance are fixed detail groups. File bytes and access labels
+are read-only. Registration details remain available in a collapsed read-only
+section. Cancellation and unchanged drafts write nothing; a reviewed save
+creates an immutable metadata snapshot that reuses the existing blob. The editor
+validates requirement patterns against that stored blob and rejects stale saves
+or renaming onto an existing document label. Existing digest pins remain valid.
 
 The TUI fills a manifest draft. Caiman supplies `original_filename` (the input
 Markdown basename), content digest and size, schema and pipeline versions, and
@@ -345,8 +367,8 @@ registers a new immutable version; Caiman does not repair it in place.
 
 ### 6.5 Register
 
-A board describes hardware; a project combines a pinned board with specifications,
-features, precedence, and compartments. [README.md](../README.md#configure-boards-and-projects) owns editing workflows; [Storage §6.4](STORAGE.md#64-manifest-schemas) owns the
+A board describes hardware; a project combines pinned boards with specifications,
+features, and compartments. [README.md](../README.md#configure-boards-and-projects) owns editing workflows; [Storage §6.4](STORAGE.md#64-manifest-schemas) owns the
 serialized manifests.
 
 #### 6.5.1 Board — hardware only
@@ -358,14 +380,16 @@ names so they can be searched in the manual.
 
 #### 6.5.2 Project — the session unit
 
-A project pins one board version and a specification set, with declared
-precedence and compartments. Separate projects can share a board while carrying
-different customers' requirements.
+A project pins one or more board versions and a specification set, with its
+compartments. It declares no precedence among documents (S-36). A program may run on several boards, or on
+one board at several versions; each pin is explicit (S-34). Separate projects can
+share a board while carrying different customers' requirements.
 
 #### 6.5.3 Features
 
 Features connect requirements to board roles through `governed_by`, `realized_on`,
-and `related`. Their scope is `required` or `not-used`; implementation and
+and `related`. A `realized_on` entry names the board, version, and role, because
+role names repeat across boards. Their scope is `required` or `not-used`; implementation and
 verification status are outside Caiman's scope (S-14).
 
 #### 6.5.4 Rules shared by both models
@@ -379,22 +403,22 @@ snapshot, with no inheritance at read time (S-10, S-11, S-15).
 The store holds immutable blobs and manifests plus mutable refs. Pins identify
 manifests, so changing metadata or labels changes the pinned identity even when
 content bytes are unchanged. [STORAGE.md](STORAGE.md) owns layout, schemas, write
-ordering, and proposed Git transport.
+ordering, and Git transport (adopted by S-35, not yet implemented).
 
 S-33 resolves repository isolation: one private Git repository per compartment,
 with a separate private public-material repository. Each document is public or
-belongs to one compartment. Git transport remains proposed.
+belongs to one compartment. S-35 adopts the transport protocol; it is not yet
+implemented.
 
 ### 6.7 Resolve
 
 **A project version is the complete pin set** (R-4). Resolving
 `falcon @ B-sample` yields:
 
-- the board version, and every `(role, part, silicon revision, document version,
-  digest)` tuple it pins
+- every board version, and every `(role, part, silicon revision, document version,
+  digest)` tuple each one pins
 - assembly-level documents pinned directly by the board
-- every specification document version in the project’s documents and precedence lists
-- the declared precedence order
+- every specification document version in the project’s documents list
 - the feature set
 
 There is no lockfile in the firmware code repository (S-07). Selection is per
@@ -447,6 +471,9 @@ An optional `--agent-label` is carried into the materialization log as an
 unverified annotation. It names the harness, not the model, and is not an input
 to the decision.
 
+When and where `sync` runs, and how a Docker container's worktree is targeted,
+is specified in §6.11.
+
 The workspace layout, link mechanism, and the three materialization constraints
 are specified in [Storage §7.3](STORAGE.md#73-materialize). Prefer filesystem
 clones, then read-only hardlinks; copy when crossing filesystems. Cache entries
@@ -455,8 +482,8 @@ and the document tree has no symlinked directories. If a permitted pinned file
 cannot be written, fail without leaving a partial workspace (I-9, R-11, R-12).
 Intentional omissions in `open` mode are recorded in `documents/_index.md`.
 
-`project.json` is intended to expose the resolved feature graph, precedence, and
-pin set on demand. Its schema and visibility rules remain open (G16/G17): it must
+`project.json` is intended to expose the resolved feature graph and pin set on
+demand. Its schema and visibility rules remain open (G16/G17): it must
 not be treated as permission to dump a compartmented project manifest into an
 open workspace. The brief's codename rule alone does not settle other outputs.
 
@@ -508,10 +535,6 @@ This mode does not verify which model is running or whether it is authorized.
 - OEM spec set 3.0 → 3.2
 - added feature: secure flashing
 - application MCU silicon rev 1.0 → 1.1
-
-## Precedence (highest authority first)
-1. Program deviations — DEV-2026-014
-2. OEM spec set 3.2
 
 ## Where things are
 Documents: .caiman/documents/ — each document directory contains one unchanged
@@ -586,31 +609,29 @@ harness with no hooks degrades to the manual path (D-07) rather than breaking.
 #### 6.10.2 Session start
 
 On `SessionStart` the adapter calls `caiman session start` with the working
-directory and the harness's session identifier. Four outcomes:
+directory and the harness's session identifier. Session start **reports**
+provisioned context; selecting context normally happens earlier, at
+provisioning (§6.11). Five outcomes:
 
 | State | Behavior |
 |---|---|
-| A valid `.caiman/project.md` exists and its digest still resolves | Inject the existing brief reference; whether selection can be reused depends on the resume contract (G18) |
-| The selected project version's ref now points to another digest | Warn with both digests. Keep the workspace pinned until the engineer explicitly selects new context |
-| No `.caiman/` in this worktree | Inject the available projects and versions, and an instruction for the agent to ask the engineer **which project and which mode**, then run `caiman sync` |
-| Caiman not configured on this machine | Inject nothing. A repository without Caiman must not have its sessions disrupted |
+| `.caiman/` exists | Inject the brief reference and restate the declaration: project, version, digest, mode, compartments, and when it was provisioned (R-19). With the store reachable, check whether the version ref moved; without it (inside a container), say staleness is unverified |
+| `.caiman/` exists and the selected version's ref now points to another digest | Warn with both digests. Keep the workspace pinned until the engineer explicitly provisions new context |
+| No `.caiman/`, store reachable (local fallback) | Inject the available projects and versions, and an instruction for the agent to ask the engineer **which project and which mode**, then run `caiman sync` |
+| No `.caiman/`, no store (inside a container) | Inject that no documents are provisioned and that the engineer provisions this worktree from Caiman on the host. List no projects, because none are visible |
+| Caiman not installed or not configured | Inject nothing. A repository without Caiman must not have its sessions disrupted |
 
 **The hook cannot prompt the engineer directly.** Hooks run non-interactively —
-stdin carries the event payload, not a terminal. So the hook injects context and
-the *agent* asks, which is the only path that works with the grain of the
-harness. Selection is conversational rather than a startup dialog, and the
-engineer answers both questions in their first message: which project, and
-whether this session is `open` or `sealed`.
+stdin carries the event payload, not a terminal. So in the local fallback the
+hook injects context and the *agent* asks, which is the only path that works
+with the grain of the harness. The engineer answers both questions in their
+first message: which project, and whether this worktree is `open` or `sealed`.
 
-That the mode is asked rather than looked up is deliberate (S-19). The engineer
-answering knows which model this session is running; a configuration file written
-months ago does not.
-
-A proposed `.caiman/session.toml` records project, version, and mode for resume.
-Its contract is not settled: distinguish resuming the same session from starting
-a new one with another model. A saved record must not silently authorize a new
-session or bypass S-19's explicit mode requirement (G18). Changing mode requires
-re-running `sync`.
+Whichever entry point is used, the mode is declared by a human and never looked
+up from a policy file (S-19). The declaration covers the worktree until it is
+cleared or re-provisioned; §6.11.5 explains that lifetime and why every session
+start restates it. This replaces the earlier proposal for a
+`.caiman/session.toml` resume record.
 
 A moved version ref does not invalidate the workspace's pinned digest. The hook
 may report that a new ref target exists, but must not adopt it automatically.
@@ -693,6 +714,219 @@ versions, compartments — the same metadata-only rule as the brief (I-6). An au
 record containing an excerpt of a specification would be a copy of the
 specification in a file nobody thinks of as one.
 
+### 6.11 Provisioning a worktree
+
+*Proposed in D-14.* This section covers two setups, defined by **where the
+agent process runs**, not where the toolchain runs:
+
+| Setup | Agent runs | Examples |
+|---|---|---|
+| **Local** | On the machine that holds the store | A plain CLI session; a host agent in Claude Code's sandbox runtime; a host agent that builds with `docker exec` into a toolchain container |
+| **Docker** | In a container or microVM that mounts a worktree from that machine | A dev container with the agent installed; one container per worktree; Docker Sandboxes |
+
+A host agent with only its toolchain in a container is the local setup: the
+container never reads documents, so Caiman ignores it. Remote machines, cloud
+development environments, cloud agents, and CI are out of scope until Git
+transport exists (§15.1). A dated survey of which setups are common is in
+[research/agent_container_landscape.md](research/agent_container_landscape.md).
+
+**Provisioning** means running `sync` into a worktree. **Clearing** removes the
+provisioned context. **Re-provisioning** is clearing followed by provisioning.
+
+#### 6.11.1 When and where
+
+Provisioning happens after the worktree exists, and for Docker after its
+container exists — not at agent session start. Two reasons:
+
+- `sync` needs the store. In the Docker setup only the host has the store, and
+  agent sessions start inside the container, where the chance to provision has
+  already passed.
+- A worktree is one line of work on one project version. Its agent sessions are
+  restarted, cleared, resumed, and switched between harnesses; they should all
+  see one pin set (I-4) instead of selecting again each time.
+
+**The target is always a folder on the host: the top of a git worktree.**
+Provisioned context belongs to that folder, never to a container. Containers are
+recreated; several containers can mount one worktree, and one container can mount
+several worktrees. A container is only a way of finding the folder.
+
+Caiman creates neither worktrees nor containers (S-01). The engineer's own tools
+do that; Caiman is visited afterwards.
+
+#### 6.11.2 Entry points
+
+| Entry point | Setups | Who declares the mode | Who runs `sync` |
+|---|---|---|---|
+| **Host TUI** (primary) | Local and Docker | The engineer, in the TUI | Caiman, on the host |
+| **Session-start fallback** | Local only, when the session can reach the store and the worktree has no `.caiman/` | The engineer, answering the agent (§6.10.2) | The agent |
+
+The fallback is the weaker path. The mode reaches `sync` through the agent,
+and the agent's OS user can read the whole store anyway (§11.4). It exists so
+that a local session without prior provisioning still works.
+
+The TUI flow, from the dashboard:
+
+1. **Target.** Choose one source:
+   - a running Docker container, then a path inside it (§6.11.3);
+   - a worktree listed by `git worktree list` for a repository the engineer
+     names;
+   - a typed host path.
+2. **Checks.** Run the target checks (§6.11.4). A failed check stops here with
+   its reason.
+3. **Project and version.** Choose a project, then a version from its list.
+   Nothing is preselected: no "latest" (I-7) and no remembered default
+   project (S-29).
+4. **Mode.** Choose `open` or `sealed`. Nothing is preselected (I-1, R-7).
+5. **Review.** Show:
+   - the host path, plus the container and container path when used;
+   - `project@version` and the digest it resolves to;
+   - the mode, and the documents to be written and omitted;
+   - the link mechanism: clone, hardlink, or copy.
+6. **Provision.** Run `sync --into <host path>/.caiman` and write the
+   materialization log.
+
+If the target already has `.caiman/`, step 3 onward becomes re-provisioning
+(§6.11.6).
+
+#### 6.11.3 Resolving a container target
+
+Docker use is read-only: `docker ps` to list containers, and `docker inspect`
+for their mounts and configured user. Caiman never creates, starts, execs into,
+copies into, or commits a container. It invokes the `docker` CLI rather than
+adding a Python dependency (D-04). If the CLI is missing, lacks permission, or
+the daemon is unreachable, the TUI falls back to a typed host path.
+
+The chosen container path must fall inside a mount of type `bind`. Its host
+folder is the mount's source plus the remainder of the path. Refuse:
+
+| Container path is in | Why it is refused |
+|---|---|
+| The container's writable layer (no mount) | No host folder exists. Documents written there are a full copy per session, sit outside every worktree guard, disappear with the container, and are baked into an image by `docker commit` |
+| A named volume | The host path lives under Docker's data directory, is not a worktree, and is not a folder the engineer manages |
+| A `tmpfs` mount | Not on disk |
+| Any mount, when the daemon is not local (`DOCKER_HOST` or a non-local context) | The mount source is a path on another machine |
+
+Docker Desktop on macOS or Windows bind-mounts real host folders, so the same
+resolution applies there.
+
+Docker Sandboxes (`sbx`) run agents in microVMs, not containers, so `docker ps`
+does not list them. They mount the workspace at the same absolute path as on
+the host, with no sync step. Provision them by choosing the worktree or typing
+its host path; no sandbox lookup is proposed.
+
+This is why provisioning never uses `docker cp`: every row in the table above
+applies to what it writes. The container name and ID are recorded in the
+materialization log as an annotation only; `.caiman/` belongs to the folder
+(§6.11.1).
+
+Mounting the worktree at the same absolute path inside the container is
+recommended, not required. Git worktrees record absolute paths to the main
+repository, so git — and the commit guard — only works in the container when
+those paths resolve. Identical paths also let host-side tools match transcript
+paths to host files.
+
+#### 6.11.4 Target checks
+
+| Check | On failure | Reason |
+|---|---|---|
+| The host folder is the top of a git worktree | Refuse | The commit guards are per repository |
+| `git check-ignore` covers `.caiman/` | Refuse | I-3 |
+| The pre-commit guard is installed and active for this worktree, honouring `core.hooksPath` | Refuse | I-3 |
+| No container mount targets `.caiman/` or a path below it | Refuse | A separate mount pins the directory it was given. Re-provisioning installs a new generation by rename (`STORAGE.md` §7.3), so the container would keep the old, possibly sealed, set |
+| The worktree is on the store's filesystem | Report, then copy | Clones and hardlinks cannot cross filesystems (`STORAGE.md` §8.6) |
+| The container runs as root, and the link mechanism would be hardlink | Warn: recommend a non-root container user or a filesystem with reflink support | `0444` does not stop root. One in-place write changes the shared inode for every session and the store's cache (I-9) |
+| The worktree has a `Dockerfile` or `Containerfile`, and `.dockerignore` does not exclude `.caiman/` | Warn | A build with `COPY . .` puts the documents into an image layer, and images get pushed to registries |
+
+The refusals are not overridable. The I-3 guards admit no exceptions, including
+for testing.
+
+#### 6.11.5 Mode lifetime
+
+The mode declared at provisioning applies to every agent session in the worktree
+until the worktree is cleared or re-provisioned. This is still S-19: a human
+declares the mode explicitly, with no default and no policy file. The
+declaration covers a worktree instead of a single session.
+
+What this costs: a session started later may run an agent the engineer would not
+have cleared for the worktree's compartments. Caiman cannot prevent that (I-10,
+S-19). It makes the declaration visible every time: session start restates the
+project, version, mode, compartments, and provisioning time, and instructs the
+agent to tell the engineer to stop if this agent should not see those
+compartments (R-19). A reminder narrows nothing and widens nothing.
+
+The declaration is recorded in the workspace beside the brief. Its file and
+format fall under G16 with the rest of the workspace formats.
+
+#### 6.11.6 Clearing and re-provisioning
+
+Both are available in every mode, from the TUI and the CLI (§9.1).
+
+- **Clear** removes the whole `.caiman/` directory.
+- **Re-provision** installs the new workspace as a new generation
+  (`STORAGE.md` §7.3), so no partial workspace is ever visible.
+
+Before either, the TUI states that **agent sessions that are running keep what
+they already read**, in their context and their transcripts (R-20). Switching a
+worktree from `sealed` to `open` does not make a running session open; start a
+new agent session after the change. Transcripts are outside Caiman's reach
+(§11.4). Caiman cannot reliably detect running sessions — inside a container
+their transcripts are not on the host — so the warning is unconditional.
+
+Every provision and every clear is written to the materialization log. The log
+then shows when each document set was available in the worktree, not only when
+it appeared.
+
+The container sees the result through its worktree mount without a restart.
+
+#### 6.11.7 What runs inside the container
+
+| Inside the container | Needs the store |
+|---|---|
+| `caiman session start`, working from `.caiman/` alone | No |
+| `caiman session record` (planned) | No, by design (§6.10.3) |
+| Little caiman, run with `docker exec` | No. Its integrity check reports `unverified` |
+
+The image contains Caiman and nothing else of Caiman's: no store, no Caiman
+configuration, and never a materialized document (R-18). Mounting the store,
+even read-only, would put every compartment within an `open` session's reach
+and make the mode meaningless.
+
+Two locations in the container home need a decision per setup:
+
+| Location | If not mounted from the host | Recommendation |
+|---|---|---|
+| Caiman state (`$XDG_STATE_HOME/caiman`, holding the access log) | Lost with the container | Mount a per-worktree host folder, so the compliance record survives |
+| Harness transcripts (for Claude Code, `~/.claude`) | Lost with the container | Undecided (G20). Deleting them helps revocation; keeping them helps audit, and they hold copies of what the agent read |
+
+Run little caiman inside the container. Dev containers keep `~/.claude` in a
+Docker named volume by default, so the transcripts are usually not in any host
+folder. Little caiman run on the host against a container's transcript sees
+container paths. If the transcript's working directory does not exist on the
+host, it says that reads cannot be matched here, rather than reporting that no
+`.caiman/` exists. A silent zero is the failure to avoid (I-9's reasoning,
+applied to the audit view).
+
+**The host and the container can run different Caiman versions.** The image's
+Caiman is fixed when the image is built; the host's is upgraded separately. The
+workspace therefore carries a format version, written by `sync`. When
+`session start` or little caiman meets a format version it does not know, it
+says so and names both versions — never silence, never a failed session (R-13).
+The format itself is part of G16; the compatibility rule is G27.
+
+#### 6.11.8 Long-lived containers
+
+A container per worktree usually lives as long as the branch: days to weeks,
+stopped and started freely, and rebuilt — as a new container — whenever its
+image definition changes. Disposable containers (`docker run --rm`, Docker
+Sandboxes) need nothing extra, because `.caiman/` is in the worktree. Long
+lifetimes change three things:
+
+| Effect | Consequence | Response |
+|---|---|---|
+| One provisioning serves weeks of sessions, possibly with different agents | A stale mode declaration is more likely | Restating it at every session start (R-19) |
+| A version ref moves while the worktree keeps its pin | Correct (I-4), but inside the container nobody can see it, because there is no store | The host TUI lists provisioned worktrees from the materialization log and marks those whose version ref now points elsewhere (G28) |
+| Transcripts accumulate in the container for weeks | More copies of more documents outside Caiman's control | G20 decides; §6.11.7 lists the mount choice |
+
 ---
 
 ## 7. Data Model
@@ -711,14 +945,13 @@ Board ──< BoardVersion ──< PartInstance ──> Part
      + relation     │       pinned DocumentVersions
                   Link ──> PartInstance, PartInstance
 
-Project ──< ProjectVersion ──> BoardVersion
+Project ──< ProjectVersion ──< BoardVersion (one or more)
    │              │  │
 codename          │  ├──> pinned spec DocumentVersions
-customer          │  ├──> precedence order (declared)
-compartments      │  └──< Feature
-                  │            │
+customer          │  └──< Feature
+compartments      │            │
            derives_from   governed_by ──> DocumentVersion + requirement IDs
-           + relation     realized_on ──> PartInstance
+           + relation     realized_on ──> PartInstance on a pinned BoardVersion
                           related     ──> Feature + relation
                           scope: required | not-used
 ```
@@ -782,24 +1015,37 @@ document into a board or project, or publish it remotely.
 Use [Configuration guide](../README.md#configure-boards-and-projects) to create, edit, validate, and inspect snapshots.
 Document selectors resolve to immutable pins before registration.
 
-### 8.3 Starting a session
+### 8.3 Provisioning and starting a session
 
-The planned direct-launch path is:
+Both setups use the provisioning design in §6.11. Available local configurations
+can be browsed in the dashboard; `caiman project show NAME --compartment NAME`
+lists a project's versions. The CLI does not currently provide `project list` or
+`project versions`.
 
-1. The engineer chooses a project/version, an agent/model, and explicitly
-   `open` or `sealed`. Available local configurations can be browsed in the
-   dashboard; `caiman project show NAME --compartment NAME` lists that project's
-   versions. The CLI does not currently provide `project list` or `project versions`.
-2. The harness creates a worktree and calls
-   `caiman sync --project … --version … --mode … --into …`.
-3. Caiman validates the required mode, resolves the project pin set (§6.7), and
-   materializes the permitted documents with `project.json`, `project.md`, and
-   `documents/_index.md`. Missing mode writes nothing.
-4. The harness launches the agent with the brief in context.
+**Docker**
 
-The hook-driven alternative in §6.10.2 asks for project and mode after the session
-starts. Both paths use the same planned `sync` boundary; Caiman does not own
-worktree creation or agent launch (S-01).
+1. The engineer's own tools create the worktree and start its container with
+   the worktree bind-mounted. Caiman is not involved (S-01).
+2. In Caiman on the host, the engineer picks the container and the path inside
+   it. Caiman resolves the host folder and runs the target checks (§6.11.3,
+   §6.11.4).
+3. The engineer picks the project, version, and mode; reviews; and provisions.
+   `sync` resolves the pin set (§6.7) and writes `project.md`, `project.json`,
+   and `documents/` into the host folder. The container sees them through the
+   mount.
+4. The agent starts in the container. `session start` restates the declaration
+   (§6.10.2).
+
+**Local**
+
+1. The engineer's tools create the worktree.
+2. Either provision from the host TUI as above, choosing the worktree instead of
+   a container, or start the agent and use the session-start fallback: the agent
+   asks for the project and mode, then runs `sync` (§6.10.2).
+3. Later sessions in the worktree reuse the declaration and are reminded of it.
+
+In both setups, changing the project, version, or mode means clearing or
+re-provisioning (§6.11.6), then starting a new agent session.
 
 ### 8.4 During the session
 
@@ -812,7 +1058,7 @@ recording hooks read no store, resolve nothing, and never block.
 ### 8.5 First run, end to end
 
 For the implemented local workflow, follow [README.md](../README.md). Planned remote setup is in
-[Storage §7.5](STORAGE.md#75-initialization); the planned session flow is §8.3.
+[Storage §7.5](STORAGE.md#75-initialization-and-onboarding); the planned session flow is §8.3.
 [ROADMAP.md](ROADMAP.md) owns sequencing and completion status.
 
 ### 8.6 Gaps in the end-to-end workflow
@@ -858,7 +1104,7 @@ caiman project configure | template | validate | show | export | new-version
 
 The following surface is proposed and is not available yet. Remote configuration
 and compartment setup follow S-33; final arguments remain to be
-reconciled with [Storage §7.5](STORAGE.md#75-initialization).
+reconciled with [Storage §7.5](STORAGE.md#75-initialization-and-onboarding).
 
 ```text
 caiman init [--remote URL]
@@ -867,8 +1113,13 @@ caiman compartment add|clone …
 caiman push [compartment…]
 caiman pull [compartment…]
 caiman sync --project P --version V --mode open|sealed --into DIR
+caiman clear --into DIR
 caiman brief --project P --version V
 ```
+
+`sync` and `clear` take a host path. Resolving a container path to its host
+folder is a TUI convenience (§6.11.3); no container flag is proposed for the CLI.
+Both commands run the target checks in §6.11.4.
 
 Three groups, and the separation is deliberate:
 
@@ -876,7 +1127,7 @@ Three groups, and the separation is deliberate:
 |---|---|---|
 | Store lifecycle | `init`, `clone`, `compartment add/clone`, `push`, `pull` | The store, between machines |
 | Authoring | `ingest`, `board`, `project` | Content into the local store |
-| Session | `sync`, `brief` | The store into a workspace |
+| Session | `sync`, `clear`, `brief` | The store into a workspace, and out of it |
 
 `push`/`pull` are named separately from `sync` because they do a different job:
 `sync` builds a session workspace from the store, `push`/`pull` move the store
@@ -898,13 +1149,19 @@ specified and tested before this becomes a stable interface (G16/G21).
 
 | Command | Fired on | Reads | Writes | May fail the session |
 |---|---|---|---|---|
-| `caiman session start` | Session start or resume | `cwd`, `session_id` | Context to inject: confirmation, staleness warning, or project choices | No |
+| `caiman session start` | Session start or resume | `cwd`, `session_id` | Context to inject: the restated declaration, a staleness warning, project choices, or an instruction to provision from the host (§6.10.2) | No |
 | `caiman session record` | After a tool call | `session_id`, `tool_name`, `tool_input` | Nothing | No |
 | `caiman session end` | Stop, SubagentStop | `session_id` | Nothing | No |
 
 `caiman hooks install` writes the adapter configuration into the harness's
 settings file. It prints exactly what it will add and requires confirmation,
 because it modifies a file Caiman does not own.
+
+The installed command calls `caiman` from `PATH`. It embeds no interpreter path
+and no store path, so the same settings file works on the host and inside a
+container. The current installer embeds both; inside a container the command
+then fails and, correctly under R-13, injects nothing — which hides the
+misconfiguration. This must change before the Docker setup is supported.
 
 Two properties are contractual, not incidental: **no command exits non-zero in a
 way that blocks a tool call** (R-13), and **`session record` performs no store
@@ -950,6 +1207,9 @@ the layers above it.
 | `session start` finds a changed project ref or an unavailable pinned digest | Report the changed ref with both digests, or name the unavailable digest; do not block or repin | A moved label and a broken pin are different conditions (§6.10.2, R-15) |
 | `session record` receives a `Bash` call | Representation unresolved (G22); I-10 prohibits content in logs | Commands can contain document text; do not implement the former verbatim-logging proposal |
 | Two sessions log concurrently | Separate files keyed by session id | No contention, no locking |
+| A provisioning target fails a check | Refuse or warn as §6.11.4 specifies; write nothing on refusal | The guards protect permanent history (I-3); a warning covers risks Caiman cannot rule out |
+| The `docker` CLI is missing, lacks permission, or cannot reach the daemon | Offer a typed host path instead | Docker is a convenience for finding the folder, not a requirement |
+| Clear or re-provision while agent sessions may be running | Warn unconditionally, then proceed; log the change | Running sessions keep what they read; Caiman cannot see container transcripts to tell (R-20) |
 
 ### 10.2 Edge cases worth naming
 
@@ -976,16 +1236,21 @@ about a customer requirement is exactly the failure mode the system exists to
 prevent. This is a residual risk of the human-routing model (S-19), not a defect
 to be fixed in the architecture.
 
-**Two sessions, same worktree.** Not supported. `sync --into .caiman/` overwrites.
-Concurrent sessions are expected to use separate worktrees, which is what the
-harness provides.
+**Two sessions, same worktree.** They share one provisioned context and one
+declared mode (§6.11.5). Re-provisioning replaces it for both, and neither
+running session forgets what it read. Sessions that need different projects,
+versions, or modes use separate worktrees.
+
+**Several containers on one worktree, or one container on several.** The
+context belongs to each worktree folder (§6.11.1). Which containers mount it
+does not change what is in it.
 
 ---
 
 ## 11. Security Considerations
 
 [SECURITY-MODEL.md](SECURITY-MODEL.md) owns the threat model and limitations.
-The architectural requirements are R-3, R-7–R-9, and R-13–R-14.
+The architectural requirements are R-3, R-7–R-9, R-13–R-14, and R-17–R-20.
 
 ### 11.1 Differential materialization is the mechanism
 
@@ -1017,6 +1282,28 @@ eviction, and workspace/brief regeneration. The procedure and its limits belong
 in [Security §8](SECURITY-MODEL.md#8-reclassification-and-revocation); deleting a
 workspace cannot retract transcripts or copies already published.
 
+### 11.5 The Docker setup
+
+In the local setup, workspace filtering is not a process boundary: the agent's
+OS user can read the store. In the Docker setup, the store never enters the
+container (R-18), so an `open` container has no compartmented document anywhere
+in its filesystem — provided nothing else mounted into it holds one. This is
+the first setup where the scope of G19's isolation claim can be stated as a
+mount list rather than as good behavior. The mode is still a human declaration
+(S-19); Docker enforces the result of that declaration, not its correctness.
+
+Two new copies of documents appear with containers, and §6.11 addresses each:
+the container's writable layer and images built from the worktree
+(§6.11.3, §6.11.4). A root container with hardlinked documents can also modify
+the store's cache (§6.11.4).
+
+The local setup has a comparable option without Docker. Claude Code's sandbox
+runtime wraps the whole agent process, including hooks, in an OS sandbox; a
+configuration that denies reads of the store folder would keep the store out of
+a local agent's reach. The cost is the session-start fallback, in which the
+agent runs `sync` and therefore must read the store. Whether to document this
+as a supported local configuration is open (§15.1).
+
 ## 12. Performance and Resource Considerations
 
 | Operation | Cost driver | Notes |
@@ -1043,7 +1330,7 @@ Storage-level tests are in `STORAGE.md` §11. The security negative tests are in
 |---|---|---|
 | A-1 | Ingest headingless content, content before the first heading, empty headings, duplicate full heading paths, and headings only inside code blocks | Invalid documents rejected with actionable locations (§6.4.2) |
 | A-2 | Ingest a `requirement` document with valid headings but missing or invalid ID pattern, or no matching IDs | Rejected (R-1) |
-| A-3 | Resolve a project version; compare against its manifest | Includes board assembly and part documents plus project document/precedence pins, transitively (R-4) |
+| A-3 | Resolve a project version; compare against its manifest | Includes board assembly and part documents plus project document pins, transitively (R-4) |
 | A-4 | Resolve a bare project name | Returns the version list; resolves nothing (R-5) |
 | A-5 | `sync` without `--mode` | Fails; workspace not created (R-7) |
 | A-6 | `sync --mode open` against a project with specifications | No compartmented document in the workspace; `_index.md` records the omission |
@@ -1053,7 +1340,7 @@ Storage-level tests are in `STORAGE.md` §11. The security negative tests are in
 | A-10 | Materialize two project versions differing only in silicon revision; ask the same question | Corpora differ correspondingly |
 | A-11 | Walk a materialized document tree for symlinked directories | None (R-12) |
 | A-12 | Regenerate a workspace after repointing a document ref | The previously pinned digest still materializes (R-6, I-4) |
-| A-13 | Run `session start` in a worktree with no `.caiman/` | Injects project choices; does not fail, does not create anything |
+| A-13 | Run `session start` with the store reachable, in a worktree with no `.caiman/` | Injects project choices; does not fail, does not create anything |
 | A-14 | Run `session start` after the selected project ref moves | Warns with old/new digests without changing existing workspace pins (R-15) |
 | A-15 | Run `session start` in a repository with no Caiman configuration | Injects nothing; exits zero (R-16) |
 | A-16 | `session record` for a read inside `documents/` | One access-log line with document, version, and compartment derived from the path |
@@ -1073,6 +1360,21 @@ Storage-level tests are in `STORAGE.md` §11. The security negative tests are in
 | A-30 | Type a vendor that is not in the common list, in any case | Accepted as declared; the list suggests a canonical spelling and constrains nothing (I-8, S-32) |
 | A-31 | Point little caiman at a transcript whose tool results and shell commands contain a restricted string | Counts and locators only; the string is not retained or shown, and nothing is written (R-14, I-10) |
 | A-32 | Show little caiman's usage view | The absence-of-record notice is visible; a materialized file whose bytes match no stored blob is flagged as modified (§6.10.4, R-6) |
+| A-33 | Provision into a container path that is in the writable layer, a named volume, or `tmpfs`, or through a non-local daemon | Refused with the reason; nothing written anywhere (R-17) |
+| A-34 | Provision into a container path on a bind mount | Written to the resolved host folder; no `docker cp`, `exec`, or other write command is invoked (R-17, §6.11.3) |
+| A-35 | Provision into a folder that is not a worktree top, where `.caiman/` is not ignored, or where the pre-commit guard is inactive | Refused; nothing written (R-17, I-3) |
+| A-36 | Provision a worktree whose container mounts a path at or below `.caiman/` | Refused (§6.11.4) |
+| A-37 | Provision a worktree whose root container would receive hardlinks, or whose `Dockerfile` has no `.dockerignore` entry for `.caiman/` | Warning shown before writing (§6.11.4) |
+| A-38 | Open the provisioning TUI with a remembered compartment and a previously provisioned project | No project, version, or mode is preselected (R-7, I-7, S-29) |
+| A-39 | Run with the `docker` CLI missing or failing | Typed host path is offered; no error ends the flow |
+| A-40 | Run `session start` in a container with no store and no `.caiman/` | Says to provision from the host; lists no projects; exits zero |
+| A-41 | Run `session start` in a provisioned worktree, with and without the store | Restates project, version, digest, mode, and compartments; staleness is checked or reported as unverified (R-19) |
+| A-42 | Clear and re-provision a worktree | The running-session warning is shown; both acts appear in the materialization log; no partial workspace is visible at any point (R-20, R-11) |
+| A-43 | Inspect the command written by `hooks install` | Calls `caiman` from `PATH`; contains no interpreter or store path (§9.2) |
+| A-44 | Point little caiman on the host at a transcript whose working directory does not exist on the host | States that reads cannot be matched here; does not report an absent `.caiman/` (§6.11.7) |
+| A-45 | List the container's filesystem after provisioning in `open` mode | No store path and no compartmented document (R-18) |
+| A-46 | Run `session start` and little caiman against a workspace with an unknown format version | Both name the found and supported versions; `session start` exits zero (§6.11.7, R-13) |
+| A-47 | Provision a worktree, then repoint its project version ref | The host TUI marks the worktree as pinned to a digest its ref no longer names; the workspace is unchanged (§6.11.8, I-4) |
 
 A-9 is the test that covers the highest-value normative behavior, and A-12 covers
 the reproducibility property the whole pinning model exists for.
@@ -1093,7 +1395,41 @@ Track unresolved formats (`project.json`, omission notices, access logs) in G16,
 subagent and shell-read audit coverage in G21, and content-free shell logging in
 G22. G16/G17 must also define metadata visibility for resolved JSON and omission
 notices; G16/G21 must define document-path attribution and startup lookup inputs.
-G18 covers safe reuse of saved selections on resume versus a new session.
+G18 covers safe reuse of saved selections on resume versus a new session; §6.11.5
+proposes an answer.
+
+Provisioning (§6.11) is proposed in D-14, which must be settled before
+implementation. It changes three recorded positions:
+
+| Position | Today | Proposed |
+|---|---|---|
+| Primary selection path (S-23) | Session-start hooks inject choices; the agent asks | The host TUI provisions the worktree; the session-start path is a local-only fallback |
+| Scope of a mode declaration (G18, §6.10.2) | One session; a saved selection must not authorize a new session | The worktree, until cleared or re-provisioned; restated at every session start |
+| Docker and S-01 | Not addressed | Read-only `docker ps` and `docker inspect` are inside S-01; creating, starting, execing into, or copying into containers is not |
+
+Also open for these setups:
+
+- **Multi-repository firmware workspaces.** Zephyr `west`, Yocto `repo`/`kas`, and
+  Android `repo` workspaces have a root that is not a git repository, so §6.11.4
+  refuses it, while agents often run in a member repository whose `.caiman/`
+  is absent. Options: provision into the manifest or application repository, or
+  let session start search parent folders, which risks finding another
+  project's context. Blocks Caiman on these workspaces (G29).
+- **Transcript mounts in containers.** Keeping or discarding container
+  transcripts is G20's decision (§6.11.7).
+- **Host/container version compatibility.** Which workspace format versions a
+  given `session start` accepts, and what it says otherwise (G27).
+- **Stale pins in long-lived worktrees.** How the host TUI surfaces them (G28).
+- **The sandbox runtime as a local configuration.** Whether to document a
+  store-denying sandbox runtime setup, at the cost of the session-start
+  fallback (§11.5).
+- **Cloud-synced worktrees.** A worktree inside an iCloud Drive, Dropbox, or
+  OneDrive folder uploads the documents. Detection is possible only for known
+  locations; whether §6.11.4 should warn on them is undecided.
+- **Other setups.** Remote SSH machines, cloud development environments, cloud
+  agents, and CI all need a store on another machine. They wait for Git
+  transport (S-35) and a decision on `sealed` mode on hardware the engineer does
+  not control.
 Repository boundaries are settled by S-33; code-to-context traceability remains G11.
 Decide how to collect retrieval misses before relying on the §15.2 trigger.
 [GAPS.md](GAPS.md) owns completion criteria; [DECISIONS.md](DECISIONS.md) records
@@ -1124,4 +1460,7 @@ semantic retrieval deferred.
 | The access log is read as an accounting rather than as evidence | A false negative treated as proof a document was never read | State the incompleteness wherever the log is surfaced, not only in this document (§6.10.4) |
 | Subagent reads missing from the log | An audit gap that looks like completeness | Verify coverage before relying on it (§15.1) |
 | `hooks install` writes to a settings file Caiman does not own | Surprising edits to the engineer's configuration | Print the exact change and require confirmation (§9.2) |
+| A worktree's declared mode outlives the decision behind it | A later session runs an agent not cleared for the worktree's compartments | Restate the declaration at every session start (R-19); clearing is always available (§6.11.5) |
+| The store is mounted into a container to make hooks or `sync` work there | Every compartment within reach of an `open` session | R-18; §6.11.7 lists what runs in the container without a store |
+| Docker CLI output differs across versions, Podman, or Docker Desktop | A container path resolves to the wrong host folder | Accept only `bind` mounts with an absolute local source; show both paths at review (§6.11.2) |
 | Context budget growth in the brief | Every added line is paid on every turn of every session | Keep detail in `project.json` and the documents; treat brief size as a reviewed budget, not an incidental outcome |

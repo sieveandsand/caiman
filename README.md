@@ -14,8 +14,8 @@ Repo Manager supports repository validation and initialization with an optional 
 Startup guidance hooks can be installed for Claude Code and Codex from the home menu.
 
 Caiman models hardware as boards and customer programs as projects. Each project
-pins a board and its specification documents, with human-declared features and
-precedence. The planned session workflow writes that context as ordinary files
+pins one or more boards and its specification documents, with human-declared
+features. The planned session workflow writes that context as ordinary files
 for the agent to search and cite.
 
 [Architecture](docs/ARCHITECTURE.md#2-background-and-problem) explains the problem and product boundaries;
@@ -33,27 +33,70 @@ python3 -m venv .venv
 ```
 
 Caiman opens a home screen; create a board, then a project that uses it. Neither
-becomes a default: later actions ask which board or project to use. They can
-start with no documents. Use your hardware and project details, or synthetic
-values such as board `example-board`, version `Rev A`, part `example/example-mcu`,
-project `example-program`, version `Prototype`, customer `Synthetic Example
-Customer`, and compartment `example-customer`. A compartment keeps one
-customer's private documents separate from another's; usually use one per
-customer. Each document is explicitly public or belongs to exactly one
-compartment. Projects may reference documents from several compartments.
+becomes a default: later actions ask which board or project to use.
 
-The home screen provides document actions plus **Create** and **View** for
-boards and projects; press `e` while viewing a board or project to edit it. Use
-`hjkl` to move between tiles and Enter to open one. In a form, Enter or `i`
+For a populated example workspace, import the [public example dataset](fixtures/README.md):
+
+```bash
+.venv/bin/python scripts/load_examples.py --check
+.venv/bin/python scripts/load_examples.py --install
+.venv/bin/caiman
+```
+
+This adds micro:bit v1/v2 hardware, Zephyr's sound application, and two Adafruit
+MacroPad applications with their hardware context, pinned upstream source, and
+Caiman-authored acceptance examples. It registers 11 public documents, 3 board
+snapshots, 4 project snapshots, and 2 document collections. It also remembers
+`demo-microbit` and `demo-macropad` so their projects appear in the gallery.
+Existing entries are preserved; identical imports are a no-op, and conflicting
+names/versions stop the import. Close other Caiman writers during installation.
+Use `--store /absolute/path` to try a separate store. This does not install or
+run firmware on a device.
+
+A compartment keeps one customer's private documents separate from another's;
+usually use one per customer. Each document is explicitly public or belongs to
+exactly one compartment. Projects may reference documents from several
+compartments. The demo projects need named compartments under the current schema,
+but all their documents are explicitly public, including the example requirements.
+
+The home screen shows one card per category: Documents, Boards, Projects,
+Hooks, and Repo Manager. Opening Documents, Boards, or Projects shows that
+category's cards with add cards at the end; press Enter or `e` on a board
+or project to edit it. After adding, you return to the same category. Use
+`hjkl` to move between cards and Enter to open one. In a form, Enter or `i`
 starts editing; Escape returns to navigation. Press `q` to go back while
 navigating, or to quit from the dashboard. The direct command equivalent for
 ingestion is:
 
 ```bash
-.venv/bin/caiman ingest fixtures/reference-manual.md
+.venv/bin/caiman ingest fixtures/documents/microbit-v2-hardware.md
 ```
 
-Use **Repo Manager** on the home screen to manage one repository per compartment:
+Documents has separate **+ Add document** and **+ Add collection** cards. Give
+each document a name and description; manuals, design notes, and requirements
+all use the same document form. Requirement-ID validation is optional under
+the provenance step, without a document-type selector. Existing registrations
+remain readable.
+
+Open a document card to edit its name, version, description, applicability,
+requirement-ID pattern, and optional provenance. The guided page follows the
+board/project editor: expandable detail cards, **Review changes**, then
+**Register changes**. Stored file bytes, access, and registration details are
+read-only. Edits reuse the stored file, so the original import path is not
+needed. Existing digest pins retain their old snapshots; a changed name/version
+creates a separate catalog label, and an existing label cannot be overwritten
+by renaming another document onto it.
+
+A collection appears as a stack of cards. Name it, describe it, choose its
+access, and select documents already in the catalog. Review and save; opening
+the stack lets you edit its membership. Collections have no version field:
+each save retains an immutable snapshot of the exact selected document revisions.
+Re-registering a document does not update collection membership automatically.
+Collections contain documents directly, without nested collections. Public
+collections contain public documents; a private collection may also contain
+documents in its own compartment. Collection access is fixed after creation.
+
+Open **Repo Manager** on the home screen to manage one repository per compartment:
 
 - **Add repo**: enter the compartment and an existing SSH or HTTPS URL. Caiman
   fetches the `caiman-store` branch into a temporary private directory and checks
@@ -89,16 +132,12 @@ It uses the Python installation running Caiman and the selected store, so
 reinstall it if that Python environment moves. A missing store produces no
 context, and a missing installation or callback error leaves the session running.
 
-The example manual contains only synthetic text. Select your existing board and
-its `example/example-mcu` part to populate issuer and part. Enter document type
-`reference-manual`, version `Rev A`, structure `Prose`, and explicitly select
-`Public`. Skip optional provenance, review, and select **Register**. The form
-also offers existing projects and creation of a new project or board. Cancel
-before document registration to avoid publishing that document; configurations
-already explicitly registered during setup remain available.
-
-For the synthetic specification in `fixtures/customer-specification.md`, select
-`Requirements` and use the ID pattern `^REQ-FLASH-\d{4}$`.
+For manual ingestion, use the metadata for that document in
+[`fixtures/dataset.json`](fixtures/dataset.json). The hardware documents are
+integration notes with attributed upstream source, not semiconductor reference
+manuals. The requirement documents are explicitly Caiman-authored examples;
+they do not claim to be official upstream or customer specifications. The loader
+above registers the whole set in dependency order and is the easiest starting point.
 
 The default store is `~/.local/share/caiman/store` (or beneath `XDG_DATA_HOME`).
 Override it with `caiman ingest manual.md --store /path/to/store`, or set
@@ -116,17 +155,18 @@ are not an isolation boundary against another process running as the same user.
 
 ## Configure boards and projects
 
-After registering the synthetic manual using the values above:
+After importing the dataset above, open the micro:bit v2 board or its R2 project:
 
 ```bash
 .venv/bin/caiman board configure fixtures/board.json
 .venv/bin/caiman project configure fixtures/project.json
 ```
 
-Review and register the board before configuring the project. These fixtures
-contain synthetic identities only; the project starts with no customer documents
-selected. The TUI supports top-level fields, nested JSON collections, a document
-catalog, and review before registration.
+The top-level JSON files are copies of the micro:bit v2 and sound R2 drafts.
+The full dataset also demonstrates v1 hardware and two projects sharing the
+MacroPad board. Use a new version label to retain the imported snapshot when
+experimenting. The TUI supports top-level fields, nested JSON collections, a
+document catalog, and review before registration.
 
 For a fresh draft, run `caiman board configure` or `caiman project configure`.
 Both use the same validation as JSON drafts. **Review** resolves document and
@@ -162,8 +202,8 @@ available controls; there are no Ctrl shortcuts or command palette.
 
 ### Edit an existing board or project
 
-Choose **View boards**, select a card, then press Enter or `e` for the guided
-editor. Cards emphasize the board name and version with dot-matrix headings
+Choose **Boards**, select a card, then press Enter or `e` for the guided
+editor. Cards emphasize the board name and version with fullwidth uppercase headings
 where they fit, and show only part names and counts of parts, links, and document
 pins (board and part documents combined). Page Up/Down scroll long cards.
 Board-level fields stay at the top;
@@ -186,7 +226,13 @@ are not lost. Legacy `caiman.board/1` boards and boards with `from`/`to` links
 are shown without guided editing; use raw JSON to preserve their shape.
 
 For projects, choose **View projects**, select a snapshot, and press `e` or
-**Edit**. Nested project collections use JSON editors. Choose a new version label
+**Edit**. Boards, documents, and features each appear as a card grid.
+A project may pin several boards, including one board at more than one version.
+Each part a feature is realized on names its board, version, and role; a new part
+starts on the board when exactly one is pinned. A project registered with a
+single `board` (`caiman.project.v1`) opens restated with that board spelled out;
+any document it listed only under `precedence` moves to documents, and precedence
+order and notes are dropped. The review shows the rewrite. Choose a new version label
 or explicitly replace the selected label's ref, then review and register.
 Repointing a label never changes an existing digest pin. Editing a board does
 not update projects that pin it; adopt the changed board in each project explicitly.
@@ -207,10 +253,10 @@ and never overwrite an existing file. Keep private drafts in `.caiman/` or
 outside the firmware repository.
 
 List document selectors with `caiman documents`, adding `--compartment NAME`
-for private documents. For the synthetic manual above:
+for private documents. For the imported micro:bit v2 integration notes:
 
 ```json
-{"ref": "example/example-mcu/reference-manual/Rev%20A", "compartment": "public"}
+{"ref": "microbit/bbc-microbit/micro%3Abit%20v2%20integration%20notes/v2-zephyr-4.2.0", "compartment": "public"}
 ```
 
 Use the catalog's encoded ref, or a full `sha256:…` manifest digest. A supplied
@@ -221,14 +267,14 @@ digest is authoritative even if the ref moves. See [board fields](docs/STORAGE.m
 ### Inspect, export, and derive versions
 
 ```bash
-caiman board show example-board
-caiman board show example-board --version 'Rev A'
-caiman board export example-board --version 'Rev A' --output .caiman/exported-board.json
-caiman board new-version example-board --from-version 'Rev A' --version 'Rev B' \
-  --relation 'Adds a second serial peripheral'
-caiman project show example-program --version Prototype --compartment example-customer
-caiman project export example-program --version Prototype \
-  --compartment example-customer --output .caiman/exported-project.json
+caiman board show bbc-microbit
+caiman board show bbc-microbit --version v2-zephyr-lsm303agr
+caiman board export bbc-microbit --version v2-zephyr-lsm303agr --output .caiman/exported-board.json
+caiman board new-version bbc-microbit --from-version v2-zephyr-lsm303agr --version Lab-A \
+  --relation 'Local experiment based on the imported v2 model'
+caiman project show microbit-sound --version R2-v2 --compartment demo-microbit
+caiman project export microbit-sound --version R2-v2 \
+  --compartment demo-microbit --output .caiman/exported-project.json
 ```
 
 Omitting the version on `show` lists labels; it never chooses the latest.
@@ -247,7 +293,10 @@ These operations register locally and never commit or push.
 The shared preparation and registration code is separate from Textual widgets so
 the future native macOS app can use the same rules. Tests cover metadata and
 heading admission, byte preservation, storage integrity, and the interactive
-workflow. All fixtures are synthetic; do not add vendor or customer documents.
+workflow. Most unit tests construct small synthetic inputs. `tests/test_examples.py`
+validates the public demo dataset and its repeatable import. Reviewed open-source
+excerpts in `fixtures/` retain pinned provenance and license notices; never add
+private customer documents or vendor material without redistribution rights.
 
 ## Documentation
 
@@ -266,7 +315,7 @@ Start with the guide for the task; there is no need to read the whole folder.
 | Evaluate MVP success | [Roadmap criteria](docs/ROADMAP.md#success-criteria-for-the-mvp) |
 | Change components, resolution, or session interfaces | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Change stored objects or workspace layout | [STORAGE.md](docs/STORAGE.md) |
-| Review the proposed shared Git backend and Merkle session identity | [Team storage proposal](docs/proposals/TEAM-STORAGE.md) |
+| Understand the shared Git backend and Merkle session identity | [Storage §6.6–§6.7](docs/STORAGE.md#66-team-storage-one-git-repository-per-compartment) |
 | Review labels, visibility, audit, or revocation | [SECURITY-MODEL.md](docs/SECURITY-MODEL.md) |
 | Understand a choice or resolve an open decision | [DECISIONS.md](docs/DECISIONS.md) |
 | Find outstanding validation and review tasks | [GAPS.md](docs/GAPS.md) |

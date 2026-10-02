@@ -17,8 +17,8 @@ not silently change an existing configuration.
   headings or requirement IDs, and assign explicit access labels.
 - **Model hardware.** Create and edit boards with parts, document references,
   and declared relationships.
-- **Define projects.** Pin a board and specification versions, then declare
-  features and document precedence.
+- **Define projects.** Pin board and specification versions, then declare
+  features and the board parts that realize them.
 - **Preserve exact versions.** Content hashes identify immutable snapshots;
   adopting a changed document or board is an explicit action.
 - **Manage repositories.** Validate and register existing Caiman repositories,
@@ -47,7 +47,7 @@ For your first walkthrough:
 
 1. Create a board and a project from the dashboard. Both can start without
    documents.
-2. Register the synthetic manual in `fixtures/reference-manual.md`, following
+2. Import the public [firmware datasets](fixtures/README.md), following
    the [ingestion guide](README.md#first-launch-and-document-ingestion).
 3. Edit the board to select the manual, then explicitly adopt the updated board
    in your project.
@@ -62,7 +62,7 @@ and `q` to go back while navigating.
 |---|---|
 | **Document** | One unchanged Markdown file with metadata and an explicit access label |
 | **Board** | A versioned description of hardware and its supporting documents |
-| **Project** | A board version plus specifications, features, and declared precedence |
+| **Project** | One or more board versions plus specifications and declared features |
 | **Compartment** | The customer or project access group for a private document |
 | **Digest pin** | A content hash identifying an exact immutable version |
 
@@ -74,7 +74,7 @@ enforcing teammate access.
 Documents are stored locally at `~/.local/share/caiman/store` by default.
 Registration does not commit, push, or send document contents to a service.
 Keep document stores outside firmware repositories, and use the included
-synthetic fixtures when trying the tool or contributing tests.
+public firmware datasets when trying the tool; unit tests use synthetic inputs.
 
 ## Learn more
 
@@ -84,7 +84,7 @@ synthetic fixtures when trying the tool or contributing tests.
 | [Architecture](docs/ARCHITECTURE.md) | How boards, projects, and agent context fit together |
 | [Storage](docs/STORAGE.md) | Object formats, immutable versions, and document pins |
 | [Security model](docs/SECURITY-MODEL.md) | Classification, compartments, and access boundaries |
-| [Team storage proposal](docs/proposals/TEAM-STORAGE.md) | Planned Git sharing and Merkle-based context identity |
+| [Team storage](docs/STORAGE.md#66-team-storage-one-git-repository-per-compartment) | Git sharing and Merkle-based context identity |
 | [Roadmap](docs/ROADMAP.md) | Remaining milestones and validation work |
 
 ## Development
@@ -96,5 +96,5 @@ Run the test suite from the repository root:
 ```
 
 Read [CLAUDE.md](CLAUDE.md) for repository invariants before making changes.
-Use synthetic documents in fixtures and tests; vendor and customer documents
-must stay out of this repository.
+Use synthetic test inputs or reviewed public source with redistribution rights
+and retained license notices. Private customer documents must stay out of this repository.

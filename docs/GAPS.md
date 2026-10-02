@@ -88,6 +88,21 @@ Suggested starting order: **G01, G06, G17, G25**. G13 is complete.
   restricted, and unavailable information. Define metadata visibility for resolved
   JSON and omission notices, the document-path identity format, and startup
   inventory/staleness inputs before implementing their producers.
+- [ ] **G27 — Specify host/container version compatibility.** The host's `sync`
+  and the container's `session start` and little caiman can be different Caiman
+  versions ([Architecture §6.11.7](ARCHITECTURE.md#6117-what-runs-inside-the-container)).
+  Define the workspace format version, which versions each reader accepts, and
+  the message for an unknown one. Settle this before the workspace format ships.
+- [ ] **G28 — Surface stale pins in provisioned worktrees.** Long-lived
+  worktrees keep their pins while version refs move, and inside a container
+  nothing can check ([Architecture §6.11.8](ARCHITECTURE.md#6118-long-lived-containers)).
+  Specify how the host TUI finds provisioned worktrees and what it shows,
+  without repinning anything.
+- [ ] **G29 — Decide provisioning for multi-repository workspaces.** Zephyr
+  `west`, Yocto `repo`/`kas`, and Android `repo` roots are not git repositories,
+  and agents often run in a member repository. Choose between provisioning into
+  the manifest or application repository and searching parent folders, and state
+  the guard implications (I-3). See [Architecture §15.1](ARCHITECTURE.md#151-open-questions).
 
 ## Security and isolation
 
@@ -100,6 +115,8 @@ Suggested starting order: **G01, G06, G17, G25**. G13 is complete.
   Describe the human responsibility, wrong-mode outcomes, and any explicitly
   accepted limitation without implying model attestation. Specify how a saved
   selection distinguishes same-session resume from a new session or model change.
+  D-14 proposes scoping the declaration to the worktree and restating it at every
+  session start.
 - [ ] **G19 — Bound workspace isolation claims.** State what prevents, or does
   not prevent, an agent from reading the underlying store or another workspace.
   Scope tests and guarantees to the actual filesystem and process boundaries.
