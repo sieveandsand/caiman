@@ -1,7 +1,7 @@
 {
   "schema": "caiman.project.v2",
   "project": "microbit-sound",
-  "version": "R2-v2",
+  "version": "R1-v1.3",
   "customer": "Caiman",
   "compartments": [
     "demo-microbit"
@@ -9,10 +9,10 @@
   "boards": [
     {
       "name": "bbc-microbit",
-      "version": "v2-zephyr-lsm303agr"
+      "version": "v1.3"
     }
   ],
-  "spec_set": "Caiman acceptance R2-v2; not an upstream specification",
+  "spec_set": "Caiman acceptance R1-v1.3; not an upstream specification",
   "documents": [
     {
       "ref": "zephyr/microbit-sound/Zephyr%20micro%3Abit%20sound%20application/4.2.0",
@@ -20,10 +20,6 @@
     },
     {
       "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20acceptance%20baseline%20R1/R1",
-      "compartment": "public"
-    },
-    {
-      "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20R2%20hardware%20deviation/R2",
       "compartment": "public"
     }
   ],
@@ -44,32 +40,32 @@
       "realized_on": [
         {
           "board": "bbc-microbit",
-          "version": "v2-zephyr-lsm303agr",
+          "version": "v1.3",
           "role": "application-mcu"
         },
         {
           "board": "bbc-microbit",
-          "version": "v2-zephyr-lsm303agr",
+          "version": "v1.3",
           "role": "buttons"
         },
         {
           "board": "bbc-microbit",
-          "version": "v2-zephyr-lsm303agr",
+          "version": "v1.3",
           "role": "display"
         },
         {
           "board": "bbc-microbit",
-          "version": "v2-zephyr-lsm303agr",
-          "role": "speaker"
+          "version": "v1.3",
+          "role": "external-piezo"
         }
       ]
     },
     {
-      "name": "integrated-audio",
+      "name": "external-audio",
       "scope": "required",
       "governed_by": [
         {
-          "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20R2%20hardware%20deviation/R2",
+          "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20acceptance%20baseline%20R1/R1",
           "compartment": "public",
           "requirements": [
             "REQ-SOUND-001",
@@ -80,8 +76,8 @@
       "realized_on": [
         {
           "board": "bbc-microbit",
-          "version": "v2-zephyr-lsm303agr",
-          "role": "speaker"
+          "version": "v1.3",
+          "role": "external-piezo"
         }
       ]
     },
@@ -90,7 +86,7 @@
       "scope": "not-used",
       "governed_by": [
         {
-          "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20R2%20hardware%20deviation/R2",
+          "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20acceptance%20baseline%20R1/R1",
           "compartment": "public",
           "requirements": [
             "REQ-SOUND-004"
@@ -100,8 +96,8 @@
       "realized_on": [
         {
           "board": "bbc-microbit",
-          "version": "v2-zephyr-lsm303agr",
-          "role": "motion-sensor"
+          "version": "v1.3",
+          "role": "accelerometer"
         }
       ]
     },
@@ -110,7 +106,7 @@
       "scope": "not-used",
       "governed_by": [
         {
-          "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20R2%20hardware%20deviation/R2",
+          "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20acceptance%20baseline%20R1/R1",
           "compartment": "public",
           "requirements": [
             "REQ-SOUND-004"
@@ -120,12 +116,10 @@
       "realized_on": [
         {
           "board": "bbc-microbit",
-          "version": "v2-zephyr-lsm303agr",
+          "version": "v1.3",
           "role": "application-mcu"
         }
       ]
     }
-  ],
-  "derives_from": "microbit-sound@R1-v1.3",
-  "relation": "Caiman R2 explicitly amends hardware/accessory requirements 001 and 004; period and beep behavior remain pinned to the same Zephyr source."
+  ]
 }

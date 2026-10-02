@@ -1,0 +1,168 @@
+{
+  "repositories": {
+    "zephyr": {
+      "repository": "zephyrproject-rtos/zephyr",
+      "commit": "413b789deb391d3a37d06b463288a5fe765ee57e",
+      "release": "v4.2.0",
+      "license": "Apache-2.0"
+    },
+    "macropad": {
+      "repository": "adafruit/Adafruit_CircuitPython_MacroPad",
+      "commit": "c3b6a690fa71af3bd39cfd157ea812e6e5d950ea",
+      "release": "commit c3b6a690",
+      "license": "MIT"
+    },
+    "circuitpython": {
+      "repository": "adafruit/circuitpython",
+      "commit": "361dbc02066f8d2b83c3a7f1f4993a9a590d1239",
+      "release": "9.2.8",
+      "license": "MIT"
+    }
+  },
+  "files": [
+    {
+      "repository": "zephyr",
+      "path": "boards/bbc/microbit/doc/index.rst",
+      "sha256": "72eca157417a6ee84dd168d5ebcb710147d760ba41709da02419e6013a570b88",
+      "license": "Apache-2.0",
+      "document": "documents/microbit-v1-hardware.md",
+      "heading": "Source: boards/bbc/microbit/doc/index.rst",
+      "final_newline": true
+    },
+    {
+      "repository": "zephyr",
+      "path": "boards/bbc/microbit/bbc_microbit.dts",
+      "sha256": "9f7e5128509e711060f1678cc032d6d073871cfbf8ea7a5471ccd3b32aeaf81a",
+      "license": "Apache-2.0",
+      "document": "documents/microbit-v1-hardware.md",
+      "heading": "Source: boards/bbc/microbit/bbc_microbit.dts",
+      "final_newline": true
+    },
+    {
+      "repository": "zephyr",
+      "path": "boards/bbc/microbit_v2/doc/index.rst",
+      "sha256": "465cb4935470eb87ed6bb05fdf4b01b9ca3114e68f6a5df867210e705e4daa7e",
+      "license": "Apache-2.0",
+      "document": "documents/microbit-v2-hardware.md",
+      "heading": "Source: boards/bbc/microbit_v2/doc/index.rst",
+      "final_newline": true
+    },
+    {
+      "repository": "zephyr",
+      "path": "boards/bbc/microbit_v2/bbc_microbit_v2.dts",
+      "sha256": "462d9befe34aa9816c6ad667ea0ad933f009f6a66f7cadb0251c25eb0da08b13",
+      "license": "Apache-2.0",
+      "document": "documents/microbit-v2-hardware.md",
+      "heading": "Source: boards/bbc/microbit_v2/bbc_microbit_v2.dts",
+      "final_newline": true
+    },
+    {
+      "repository": "zephyr",
+      "path": "boards/bbc/microbit_v2/bbc_microbit_v2-pinctrl.dtsi",
+      "sha256": "8e71133c717b0e2bb9516b70bb9486f9f3f595a224d35892cd36918144d6488a",
+      "license": "Apache-2.0",
+      "document": "documents/microbit-v2-hardware.md",
+      "heading": "Source: boards/bbc/microbit_v2/bbc_microbit_v2-pinctrl.dtsi",
+      "final_newline": true
+    },
+    {
+      "repository": "zephyr",
+      "path": "samples/boards/bbc/microbit/sound/README.rst",
+      "sha256": "492a983446a23a5cacd0fb86a4d1c678da73dc7ac7ad44315a512058c55da40d",
+      "license": "Apache-2.0",
+      "document": "documents/zephyr-sound-guide.md",
+      "heading": "Source: samples/boards/bbc/microbit/sound/README.rst",
+      "final_newline": true
+    },
+    {
+      "repository": "zephyr",
+      "path": "samples/boards/bbc/microbit/sound/src/main.c",
+      "sha256": "4e7351297d12ad6f12bac8098e7d51fa93b0c2ff3794109837347a0b7a52363c",
+      "license": "Apache-2.0",
+      "document": "documents/zephyr-sound-guide.md",
+      "heading": "Source: samples/boards/bbc/microbit/sound/src/main.c",
+      "final_newline": true
+    },
+    {
+      "repository": "zephyr",
+      "path": "samples/boards/bbc/microbit/sound/boards/bbc_microbit.overlay",
+      "sha256": "c946e99d558058d374373eb5f3e555af4513969f9d31eb16a752e46366045c60",
+      "license": "Apache-2.0",
+      "document": "documents/zephyr-sound-guide.md",
+      "heading": "Source: samples/boards/bbc/microbit/sound/boards/bbc_microbit.overlay",
+      "final_newline": true
+    },
+    {
+      "repository": "zephyr",
+      "path": "samples/boards/bbc/microbit/sound/boards/bbc_microbit_v2.overlay",
+      "sha256": "2034d31e7f7a0c7bfc38ebe32857d5c04d20e541352b26d498c93647b2ede982",
+      "license": "Apache-2.0",
+      "document": "documents/zephyr-sound-guide.md",
+      "heading": "Source: samples/boards/bbc/microbit/sound/boards/bbc_microbit_v2.overlay",
+      "final_newline": true
+    },
+    {
+      "repository": "circuitpython",
+      "path": "ports/raspberrypi/boards/adafruit_macropad_rp2040/board.c",
+      "sha256": "2c1f98c3ee32f2d4309efa0b24ce0acf64db6f5d72073a3692f126778e2778a7",
+      "license": "MIT",
+      "document": "documents/macropad-hardware.md",
+      "heading": "Source: ports/raspberrypi/boards/adafruit_macropad_rp2040/board.c",
+      "final_newline": true
+    },
+    {
+      "repository": "circuitpython",
+      "path": "ports/raspberrypi/boards/adafruit_macropad_rp2040/pins.c",
+      "sha256": "6a3f1bbbe84d8468ea72b0dd43f62db0bb6e41a4502011808cbf3ee1f7ffd6c6",
+      "license": "MIT",
+      "document": "documents/macropad-hardware.md",
+      "heading": "Source: ports/raspberrypi/boards/adafruit_macropad_rp2040/pins.c",
+      "final_newline": true
+    },
+    {
+      "repository": "circuitpython",
+      "path": "ports/raspberrypi/boards/adafruit_macropad_rp2040/mpconfigboard.h",
+      "sha256": "1c004e2c812b99603e97b170a5790b1c786e4bf2bb58856f1f5adceddcecbf07",
+      "license": "MIT",
+      "document": "documents/macropad-hardware.md",
+      "heading": "Source: ports/raspberrypi/boards/adafruit_macropad_rp2040/mpconfigboard.h",
+      "final_newline": true
+    },
+    {
+      "repository": "circuitpython",
+      "path": "ports/raspberrypi/boards/adafruit_macropad_rp2040/mpconfigboard.mk",
+      "sha256": "813e54b5aad67a909a6754987daa1db8c485b30922814c70ceed3fd3ae16493f",
+      "license": "MIT",
+      "document": "documents/macropad-hardware.md",
+      "heading": "Source: ports/raspberrypi/boards/adafruit_macropad_rp2040/mpconfigboard.mk",
+      "final_newline": true
+    },
+    {
+      "repository": "macropad",
+      "path": "adafruit_macropad.py",
+      "sha256": "0fe0ed7973c29d0d497ad20f13d1d23b66a3a310a0dc423f1cf5a5ff115019a0",
+      "license": "MIT",
+      "document": "documents/macropad-library.md",
+      "heading": "Source: adafruit_macropad.py",
+      "final_newline": true
+    },
+    {
+      "repository": "macropad",
+      "path": "examples/macropad_keyboard_mouse.py",
+      "sha256": "9ab1da4399a77b8455b014bcfe40383be92d9343406eb95eb40453afe2b199f4",
+      "license": "Unlicense",
+      "document": "documents/macropad-hid-guide.md",
+      "heading": "Source: examples/macropad_keyboard_mouse.py",
+      "final_newline": true
+    },
+    {
+      "repository": "macropad",
+      "path": "examples/macropad_tone_keypad.py",
+      "sha256": "06a5a543e50c93671617c07fb0cdeffa315dbafe9f0d7b22d0ccb36f49a11919",
+      "license": "Unlicense",
+      "document": "documents/macropad-tone-guide.md",
+      "heading": "Source: examples/macropad_tone_keypad.py",
+      "final_newline": true
+    }
+  ]
+}

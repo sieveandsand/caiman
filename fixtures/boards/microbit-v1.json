@@ -1,0 +1,84 @@
+{
+  "schema": "caiman.board.v2",
+  "board": "bbc-microbit",
+  "version": "v1.3",
+  "vendor": "microbit",
+  "notes": "Selected firmware-facing hardware model; see the pinned board integration notes for source provenance and omissions.",
+  "documents": [
+    {
+      "ref": "microbit/bbc-microbit/micro%3Abit%20v1.3%20integration%20notes/v1.3-zephyr-4.2.0",
+      "compartment": "public"
+    }
+  ],
+  "parts": [
+    {
+      "role": "application-mcu",
+      "vendor": "nordic",
+      "part": "nRF51822-QFAA",
+      "documents": [],
+      "notes": "Zephyr nrf51822_qfaa.dtsi selection."
+    },
+    {
+      "role": "accelerometer",
+      "vendor": "nxp",
+      "part": "MMA8653FC",
+      "documents": [],
+      "notes": "v1.3 population at I2C 0x1d; alternate v1.5 nodes excluded."
+    },
+    {
+      "role": "display",
+      "vendor": "microbit",
+      "part": "led-matrix-5x5",
+      "documents": [],
+      "notes": "Assembly identifier; three row and nine column scan signals."
+    },
+    {
+      "role": "buttons",
+      "vendor": "microbit",
+      "part": "buttons-a-b",
+      "documents": [],
+      "notes": "Assembly identifier; active-low P0.17 and P0.26."
+    },
+    {
+      "role": "external-piezo",
+      "vendor": "unspecified",
+      "part": "external-piezo",
+      "documents": [],
+      "notes": "External test accessory, not an on-board part; no MPN asserted."
+    }
+  ],
+  "links": [
+    {
+      "name": "sensor-i2c",
+      "between": [
+        "application-mcu.I2C0",
+        "accelerometer.I2C"
+      ],
+      "notes": "MMA8653FC at 0x1d."
+    },
+    {
+      "name": "button-inputs",
+      "between": [
+        "application-mcu.GPIO",
+        "buttons"
+      ],
+      "notes": "A P0.17; B P0.26."
+    },
+    {
+      "name": "display-scan",
+      "between": [
+        "application-mcu.GPIO",
+        "display"
+      ],
+      "notes": "Use v1 LED matrix mapping from the board document."
+    },
+    {
+      "name": "audio-pwm",
+      "between": [
+        "application-mcu.P0.03",
+        "external-piezo"
+      ],
+      "notes": "Software PWM through edge P0, per the v1 sound overlay."
+    }
+  ]
+}

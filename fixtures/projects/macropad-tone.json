@@ -1,0 +1,108 @@
+{
+  "schema": "caiman.project.v2",
+  "project": "macropad-tone",
+  "version": "R1",
+  "customer": "Caiman",
+  "compartments": [
+    "demo-macropad"
+  ],
+  "boards": [
+    {
+      "name": "macropad-rp2040",
+      "version": "circuitpython-9.2.8"
+    }
+  ],
+  "spec_set": "Caiman acceptance R1; not an upstream specification",
+  "documents": [
+    {
+      "ref": "adafruit/macropad-library/MacroPad%20helper%20library%20reference/c3b6a690",
+      "compartment": "public"
+    },
+    {
+      "ref": "adafruit/macropad-tone/MacroPad%20tone%20keypad/c3b6a690",
+      "compartment": "public"
+    },
+    {
+      "ref": "caiman-examples/macropad-tone/MacroPad%20tone%20acceptance%20baseline%20R1/R1",
+      "compartment": "public"
+    }
+  ],
+  "features": [
+    {
+      "name": "tone-keypad",
+      "scope": "required",
+      "governed_by": [
+        {
+          "ref": "caiman-examples/macropad-tone/MacroPad%20tone%20acceptance%20baseline%20R1/R1",
+          "compartment": "public",
+          "requirements": [
+            "REQ-TONE-001",
+            "REQ-TONE-002"
+          ]
+        }
+      ],
+      "realized_on": [
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "application-mcu"
+        },
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "keypad"
+        },
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "speaker"
+        },
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "pixels"
+        }
+      ]
+    },
+    {
+      "name": "usb-hid",
+      "scope": "not-used",
+      "governed_by": [
+        {
+          "ref": "caiman-examples/macropad-tone/MacroPad%20tone%20acceptance%20baseline%20R1/R1",
+          "compartment": "public",
+          "requirements": [
+            "REQ-TONE-003"
+          ]
+        }
+      ],
+      "realized_on": [
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "application-mcu"
+        }
+      ]
+    },
+    {
+      "name": "display-ui",
+      "scope": "not-used",
+      "governed_by": [
+        {
+          "ref": "caiman-examples/macropad-tone/MacroPad%20tone%20acceptance%20baseline%20R1/R1",
+          "compartment": "public",
+          "requirements": [
+            "REQ-TONE-003"
+          ]
+        }
+      ],
+      "realized_on": [
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "display"
+        }
+      ]
+    }
+  ]
+}

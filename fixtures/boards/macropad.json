@@ -1,0 +1,106 @@
+{
+  "schema": "caiman.board.v2",
+  "board": "macropad-rp2040",
+  "version": "circuitpython-9.2.8",
+  "vendor": "adafruit",
+  "notes": "Selected firmware-facing hardware model; see the pinned board integration notes for source provenance and omissions.",
+  "documents": [
+    {
+      "ref": "adafruit/macropad-rp2040/MacroPad%20RP2040%20integration%20notes/circuitpython-9.2.8",
+      "compartment": "public"
+    }
+  ],
+  "parts": [
+    {
+      "role": "application-mcu",
+      "vendor": "raspberry-pi",
+      "part": "RP2040",
+      "documents": [],
+      "notes": "CHIP_VARIANT in the pinned board definition."
+    },
+    {
+      "role": "flash",
+      "vendor": "winbond",
+      "part": "W25Q64JVxQ",
+      "documents": [],
+      "notes": "Supported external flash family; package suffix not asserted."
+    },
+    {
+      "role": "keypad",
+      "vendor": "adafruit",
+      "part": "keypad-12",
+      "documents": [],
+      "notes": "Assembly identifier; KEY1..KEY12 = GPIO1..GPIO12."
+    },
+    {
+      "role": "encoder",
+      "vendor": "adafruit",
+      "part": "rotary-encoder",
+      "documents": [],
+      "notes": "Assembly identifier; A/B GPIO17/18, switch GPIO0."
+    },
+    {
+      "role": "display",
+      "vendor": "adafruit",
+      "part": "oled-128x64",
+      "documents": [],
+      "notes": "Assembly identifier; source uses SH1107 addressing."
+    },
+    {
+      "role": "pixels",
+      "vendor": "adafruit",
+      "part": "neopixel-chain-12",
+      "documents": [],
+      "notes": "Twelve addressable LEDs on GPIO19; no LED silicon MPN asserted."
+    },
+    {
+      "role": "speaker",
+      "vendor": "adafruit",
+      "part": "speaker-assembly",
+      "documents": [],
+      "notes": "PWM GPIO16, enable GPIO14."
+    }
+  ],
+  "links": [
+    {
+      "name": "key-inputs",
+      "between": [
+        "application-mcu.GPIO",
+        "keypad"
+      ],
+      "notes": "Twelve discrete key inputs, not a scanned key matrix."
+    },
+    {
+      "name": "encoder-inputs",
+      "between": [
+        "application-mcu.GPIO",
+        "encoder"
+      ],
+      "notes": "A=17, B=18, switch=0."
+    },
+    {
+      "name": "display-spi",
+      "between": [
+        "application-mcu.SPI",
+        "display"
+      ],
+      "notes": "SCK26 MOSI27 CS22 RESET23 DC24; initialization 10 MHz mode 0."
+    },
+    {
+      "name": "pixel-data",
+      "between": [
+        "application-mcu.GPIO19",
+        "pixels"
+      ],
+      "notes": "Twelve pixels; separate status LED is outside this selected model."
+    },
+    {
+      "name": "speaker-pwm",
+      "between": [
+        "application-mcu.GPIO16",
+        "speaker"
+      ],
+      "notes": "Enable GPIO14."
+    }
+  ]
+}

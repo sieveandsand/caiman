@@ -1,0 +1,204 @@
+{
+  "format": "caiman.examples.v1",
+  "documents": [
+    {
+      "path": "documents/microbit-v1-hardware.md",
+      "metadata": {
+        "description": "v1.3 MCU, button and LED wiring, accelerometer, and external piezo route. Includes pinned Zephyr definitions.",
+        "issuer": "microbit",
+        "version": "v1.3-zephyr-4.2.0",
+        "doc_type": "integration-notes",
+        "structure": "prose",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "part": "bbc-microbit",
+        "name": "micro:bit v1.3 integration notes"
+      }
+    },
+    {
+      "path": "documents/microbit-v2-hardware.md",
+      "metadata": {
+        "description": "v2 MCU, LSM303AGR, internal I2C, display resources, and integrated speaker. Includes pinned Zephyr definitions.",
+        "issuer": "microbit",
+        "version": "v2-zephyr-4.2.0",
+        "doc_type": "integration-notes",
+        "structure": "prose",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "part": "bbc-microbit",
+        "name": "micro:bit v2 integration notes"
+      }
+    },
+    {
+      "path": "documents/zephyr-sound-guide.md",
+      "metadata": {
+        "description": "Real tone-control logic, nominal timing, busy behavior, and board overlays from Zephyr v4.2.0.",
+        "issuer": "zephyr",
+        "version": "4.2.0",
+        "doc_type": "integration-notes",
+        "structure": "prose",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "program": "microbit-sound",
+        "name": "Zephyr micro:bit sound application"
+      }
+    },
+    {
+      "path": "documents/macropad-hardware.md",
+      "metadata": {
+        "description": "RP2040, flash family, key and encoder pins, OLED SPI, NeoPixels, and speaker wiring from CircuitPython 9.2.8.",
+        "issuer": "adafruit",
+        "version": "circuitpython-9.2.8",
+        "doc_type": "integration-notes",
+        "structure": "prose",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "part": "macropad-rp2040",
+        "name": "MacroPad RP2040 integration notes"
+      }
+    },
+    {
+      "path": "documents/macropad-library.md",
+      "metadata": {
+        "description": "Complete pinned helper module: keypad rotation, HID, display, encoder debounce, and audio API.",
+        "issuer": "adafruit",
+        "version": "c3b6a690",
+        "doc_type": "integration-notes",
+        "structure": "prose",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "program": "macropad-library",
+        "name": "MacroPad helper library reference"
+      }
+    },
+    {
+      "path": "documents/macropad-hid-guide.md",
+      "metadata": {
+        "description": "Actual Adafruit keyboard, consumer-control, and mouse example, including encoder polling behavior.",
+        "issuer": "adafruit",
+        "version": "c3b6a690",
+        "doc_type": "integration-notes",
+        "structure": "prose",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "program": "macropad-hid",
+        "name": "MacroPad keyboard and mouse"
+      }
+    },
+    {
+      "path": "documents/macropad-tone-guide.md",
+      "metadata": {
+        "description": "Actual Adafruit monophonic tone keypad: twelve frequencies, key colors, and any-key-release stop behavior.",
+        "issuer": "adafruit",
+        "version": "c3b6a690",
+        "doc_type": "integration-notes",
+        "structure": "prose",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "program": "macropad-tone",
+        "name": "MacroPad tone keypad"
+      }
+    },
+    {
+      "path": "documents/microbit-sound-r1.md",
+      "metadata": {
+        "description": "Caiman-authored example acceptance criteria, not an upstream or customer specification.",
+        "issuer": "caiman-examples",
+        "version": "R1",
+        "doc_type": "acceptance-specification",
+        "structure": "requirement",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "program": "microbit-sound",
+        "requirements": {
+          "pattern": "^REQ-SOUND-\\d{3}$"
+        },
+        "name": "micro:bit sound acceptance baseline R1"
+      }
+    },
+    {
+      "path": "documents/microbit-sound-r2-deviation.md",
+      "metadata": {
+        "description": "Caiman-authored example acceptance criteria, not an upstream or customer specification.",
+        "issuer": "caiman-examples",
+        "version": "R2",
+        "doc_type": "acceptance-specification",
+        "structure": "requirement",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "program": "microbit-sound",
+        "requirements": {
+          "pattern": "^REQ-SOUND-\\d{3}$"
+        },
+        "name": "micro:bit sound R2 hardware deviation"
+      }
+    },
+    {
+      "path": "documents/macropad-hid-r1.md",
+      "metadata": {
+        "description": "Caiman-authored example acceptance criteria, not an upstream or customer specification.",
+        "issuer": "caiman-examples",
+        "version": "R1",
+        "doc_type": "acceptance-specification",
+        "structure": "requirement",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "program": "macropad-hid",
+        "requirements": {
+          "pattern": "^REQ-HID-\\d{3}$"
+        },
+        "name": "MacroPad HID acceptance baseline R1"
+      }
+    },
+    {
+      "path": "documents/macropad-tone-r1.md",
+      "metadata": {
+        "description": "Caiman-authored example acceptance criteria, not an upstream or customer specification.",
+        "issuer": "caiman-examples",
+        "version": "R1",
+        "doc_type": "acceptance-specification",
+        "structure": "requirement",
+        "labels": {
+          "public": true,
+          "compartments": []
+        },
+        "program": "macropad-tone",
+        "requirements": {
+          "pattern": "^REQ-TONE-\\d{3}$"
+        },
+        "name": "MacroPad tone acceptance baseline R1"
+      }
+    }
+  ],
+  "boards": [
+    "boards/microbit-v1.json",
+    "boards/microbit-v2.json",
+    "boards/macropad.json"
+  ],
+  "projects": [
+    "projects/microbit-sound-r1.json",
+    "projects/microbit-sound-r2.json",
+    "projects/macropad-hid.json",
+    "projects/macropad-tone.json"
+  ]
+}

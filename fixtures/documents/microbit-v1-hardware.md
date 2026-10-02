@@ -1,44 +1,41 @@
-# micro:bit v2 integration notes
+# micro:bit v1.3 integration notes
 
 ## Scope and provenance
 
-This firmware-facing model follows Zephyr's pinned `bbc_microbit_v2` target and
-its LSM303AGR sensor population. It is not a claim about every manufactured v2
-PCB variant. Caiman wrote these notes; the source definitions are reproduced below.
+This is a selected firmware-facing hardware model for the v1.3 sensor population,
+not a complete schematic or semiconductor reference manual. The pinned Zephyr
+board definition below includes alternate v1.5 nodes; those disabled nodes are
+not populated parts in this fixture. The assembly vendor is recorded as
+`microbit`; the notes are authored by Caiman, not the board manufacturer.
 
 ## Processor and input wiring
 
-The MCU is nRF52833 QIAA. Button A is active-low P0.14 and button B is active-low
-P0.23. The 5 by 5 display uses five row and five column signals; it also reserves
-TIMER4 and PWM0 in this board definition. Do not reuse the v1 display pin table.
+The board definition includes nRF51822 QFAA. Button A is active-low P0.17;
+button B is active-low P0.26. The 5 by 5 display is multiplexed using three row
+and nine column signals: its wiring is not the v2 wiring.
 
-## Sensor bus
+## Sensors and external sound
 
-LSM303AGR exposes accelerometer address 0x19 and magnetometer address 0x1e.
-Both functions share interrupt P0.25. The internal I2C0 bus uses SDA P0.16 and
-SCL P0.08, with fast-mode bitrate selected. These are not the edge connector
-I2C pins (P19 maps to P0.26, P20 to P1.00).
+The v1.3 accelerometer node is MMA8653FC at I2C address 0x1d. The board file also
+mentions MAG3110; this selected model does not model its driver or registers.
+The sound application's external piezo uses edge connector P0, mapped here to
+MCU P0.03. A ring labeled P0 is not MCU pin P0.00. The piezo is an external test
+accessory with no asserted manufacturer or part number. See the sound guide
+for its overlay; the bare v1 board has no integrated speaker.
 
-## Sound output
+## Modeling limits
 
-The built-in speaker uses PWM1 channel 0 on P0.00; its default pinctrl includes
-`nordic,invert`. The sound sample selects PWM1, not the display's PWM0. No
-external piezo is needed. Edge connector P0 instead maps to MCU P0.02.
+LED matrix and button identifiers denote assemblies, not invented IC part
+numbers. No sensor register map, timing tolerance, package refdes, or unverified
+silicon revision is supplied. See the exact source nodes below for each pin.
 
-## Migration boundaries
+## Source: boards/bbc/microbit/doc/index.rst
 
-Moving the sound project from v1 to v2 changes the MCU, button pins, display
-wiring, sensor population, and audio peripheral. The requirement document must
-name the selected hardware explicitly. Sensor and radio support in the hardware
-does not make those features required by the sound project.
-
-## Source: boards/bbc/microbit_v2/doc/index.rst
-
-Unmodified upstream file from [zephyrproject-rtos/zephyr@413b789deb39](https://github.com/zephyrproject-rtos/zephyr/blob/413b789deb391d3a37d06b463288a5fe765ee57e/boards/bbc/microbit_v2/doc/index.rst).
-License: Apache-2.0. SHA-256: `465cb4935470eb87ed6bb05fdf4b01b9ca3114e68f6a5df867210e705e4daa7e`.
+Unmodified upstream file from [zephyrproject-rtos/zephyr@413b789deb39](https://github.com/zephyrproject-rtos/zephyr/blob/413b789deb391d3a37d06b463288a5fe765ee57e/boards/bbc/microbit/doc/index.rst).
+License: Apache-2.0. SHA-256: `72eca157417a6ee84dd168d5ebcb710147d760ba41709da02419e6013a570b88`.
 
 ````text
-.. zephyr:board:: bbc_microbit_v2
+.. zephyr:board:: bbc_microbit
 
 Overview
 ********
@@ -47,26 +44,25 @@ The Micro Bit (also referred to as BBC Micro Bit, stylized as micro:bit) is an
 ARM-based embedded system designed by the BBC for use in computer education in
 the UK.
 
-The board is 4 cm × 5 cm and has an ARM Cortex-M4F processor, accelerometer and
+The board is 4 cm × 5 cm and has an ARM Cortex-M0 processor, accelerometer and
 magnetometer sensors, Bluetooth and USB connectivity, a display consisting of
-25 LEDs, a microphone, two programmable buttons, and can be powered by either
-USB or an external battery pack. The device inputs and outputs are through five
-ring connectors that are part of the 23-pin edge connector.
+25 LEDs, two programmable buttons, and can be powered by either USB or an
+external battery pack. The device inputs and outputs are through five ring
+connectors that are part of the 23-pin edge connector.
 
 More information about the board can be found at the `microbit website`_.
 
 Hardware
 ********
 
-The micro:bit-v2 has the following physical features:
+The micro:bit has the following physical features:
 
 * 25 individually-programmable LEDs
 * 2 programmable buttons
-* Microphone sensors
 * Physical connection pins
 * Light and temperature sensors
 * Motion sensors (accelerometer and compass)
-* Wireless Communication, via Radio and Bluetooth 5
+* Wireless Communication, via Radio and Bluetooth
 * USB interface
 
 
@@ -94,14 +90,14 @@ First, run your favorite terminal program to listen for output.
 
    $ minicom -D <tty_device> -b 115200
 
-Replace :code:`<tty_device>` with the port where the micro:bit board
+Replace :code:`<tty_device>` with the port where the board nRF51 DK
 can be found. For example, under Linux, :code:`/dev/ttyACM0`.
 
 Then build and flash the application in the usual way.
 
 .. zephyr-app-commands::
    :zephyr-app: samples/hello_world
-   :board: bbc_microbit_v2
+   :board: bbc_microbit
    :goals: build flash
 
 
@@ -113,33 +109,33 @@ References
 .. _microbit website: http://www.microbit.org/
 ````
 
-## Source: boards/bbc/microbit_v2/bbc_microbit_v2.dts
+## Source: boards/bbc/microbit/bbc_microbit.dts
 
-Unmodified upstream file from [zephyrproject-rtos/zephyr@413b789deb39](https://github.com/zephyrproject-rtos/zephyr/blob/413b789deb391d3a37d06b463288a5fe765ee57e/boards/bbc/microbit_v2/bbc_microbit_v2.dts).
-License: Apache-2.0. SHA-256: `462d9befe34aa9816c6ad667ea0ad933f009f6a66f7cadb0251c25eb0da08b13`.
+Unmodified upstream file from [zephyrproject-rtos/zephyr@413b789deb39](https://github.com/zephyrproject-rtos/zephyr/blob/413b789deb391d3a37d06b463288a5fe765ee57e/boards/bbc/microbit/bbc_microbit.dts).
+License: Apache-2.0. SHA-256: `9f7e5128509e711060f1678cc032d6d073871cfbf8ea7a5471ccd3b32aeaf81a`.
 
 ````text
 /*
- * Copyright (c) 2020 Lingao Meng
+ * Copyright (c) 2017 Linaro Limited
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 /dts-v1/;
-#include <nordic/nrf52833_qiaa.dtsi>
-#include "bbc_microbit_v2-pinctrl.dtsi"
+#include <nordic/nrf51822_qfaa.dtsi>
+#include "bbc_microbit-pinctrl.dtsi"
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
-	model = "BBC Micro:bit V2";
-	compatible = "bbc,microbit-v2";
+	model = "BBC Micro:bit";
+	compatible = "bbc,microbit";
 
 	/* These aliases are provided for compatibility with samples */
 	aliases {
 		sw0 = &buttonA;
 		sw1 = &buttonB;
 		magn0 = &lsm303agr_magn;
-		accel0 = &lsm303agr_accel;
+		accel0 = &mma8653fc;
 		watchdog0 = &wdt0;
 	};
 
@@ -158,13 +154,13 @@ License: Apache-2.0. SHA-256: `462d9befe34aa9816c6ad667ea0ad933f009f6a66f7cadb02
 		compatible = "gpio-keys";
 		buttonA: button_0 {
 			label = "BTN_A";
-			gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
+			gpios = <&gpio0 17 GPIO_ACTIVE_LOW>;
 			zephyr,code = <INPUT_KEY_A>;
 		};
 
 		buttonB: button_1 {
 			label = "BTN_B";
-			gpios = <&gpio0 23 GPIO_ACTIVE_LOW>;
+			gpios = <&gpio0 26 GPIO_ACTIVE_LOW>;
 			zephyr,code = <INPUT_KEY_B>;
 		};
 	};
@@ -174,25 +170,26 @@ License: Apache-2.0. SHA-256: `462d9befe34aa9816c6ad667ea0ad933f009f6a66f7cadb02
 		status = "okay";
 		width = <5>;
 		height = <5>;
-		pixel-mapping = [00 01 02 03 04
-				 10 11 12 13 14
-				 20 21 22 23 24
-				 30 31 32 33 34
-				 40 41 42 43 44];
-		row-gpios = <&gpio0 21 GPIO_ACTIVE_HIGH>,
-			    <&gpio0 22 GPIO_ACTIVE_HIGH>,
-			    <&gpio0 15 GPIO_ACTIVE_HIGH>,
-			    <&gpio0 24 GPIO_ACTIVE_HIGH>,
-			    <&gpio0 19 GPIO_ACTIVE_HIGH>;
-		col-gpios = <&gpio0 28 GPIO_ACTIVE_LOW>,
+		pixel-mapping = [00 13 01 14 02
+				 23 24 25 26 27
+				 11 08 12 28 10
+				 07 06 05 04 03
+				 22 16 20 15 21];
+		row-gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>,
+			    <&gpio0 14 GPIO_ACTIVE_HIGH>,
+			    <&gpio0 15 GPIO_ACTIVE_HIGH>;
+		col-gpios = <&gpio0  4 GPIO_ACTIVE_LOW>,
+			    <&gpio0  5 GPIO_ACTIVE_LOW>,
+			    <&gpio0  6 GPIO_ACTIVE_LOW>,
+			    <&gpio0  7 GPIO_ACTIVE_LOW>,
+			    <&gpio0  8 GPIO_ACTIVE_LOW>,
+			    <&gpio0  9 GPIO_ACTIVE_LOW>,
+			    <&gpio0 10 GPIO_ACTIVE_LOW>,
 			    <&gpio0 11 GPIO_ACTIVE_LOW>,
-			    <&gpio0 31 GPIO_ACTIVE_LOW>,
-			    <&gpio1  5 GPIO_ACTIVE_LOW>,
-			    <&gpio0 30 GPIO_ACTIVE_LOW>;
+			    <&gpio0 12 GPIO_ACTIVE_LOW>;
 		refresh-frequency = <50>;
-		timer = <&timer4>;
-		pwm = <&pwm0>;
-		pixel-group-size = <4>;
+		timer = <&timer2>;
+		pixel-group-size = <3>;
 	};
 
 	edge_connector: connector {
@@ -200,25 +197,26 @@ License: Apache-2.0. SHA-256: `462d9befe34aa9816c6ad667ea0ad933f009f6a66f7cadb02
 		#gpio-cells = <2>;
 		gpio-map-mask = <0xffffffff 0xffffffc0>;
 		gpio-map-pass-thru = <0 0x3f>;
-		gpio-map = <0 0 &gpio0 2 0>,	/* P0 */
-			   <1 0 &gpio0 3 0>,	/* P1 */
-			   <2 0 &gpio0 4 0>,	/* P2 */
-			   <3 0 &gpio0 31 0>,	/* P3 */
-			   <4 0 &gpio0 28 0>,	/* P4 */
-			   <5 0 &gpio0 14 0>,	/* P5 */
-			   <6 0 &gpio1 5 0>,	/* P6 */
-			   <7 0 &gpio0 11 0>,	/* P7 */
-			   <8 0 &gpio0 10 0>,	/* P8 */
-			   <9 0 &gpio0 9 0>,	/* P9 */
-			   <10 0 &gpio0 30 0>,	/* P10 */
-			   <11 0 &gpio0 23 0>,	/* P11 */
-			   <12 0 &gpio0 12 0>,	/* P12 */
-			   <13 0 &gpio0 17 0>,	/* P13 */
-			   <14 0 &gpio0 1 0>,	/* P14 */
-			   <15 0 &gpio0 13 0>,	/* P15 */
-			   <16 0 &gpio1 2 0>,	/* P16 */
-			   <19 0 &gpio0 26 0>,	/* P19 */
-			   <20 0 &gpio1 0 0>;	/* P20 */
+		gpio-map = <0 0 &gpio0 3 0>,	/* P0, Analog in */
+			   <1 0 &gpio0 2 0>,	/* P1, Analog in */
+			   <2 0 &gpio0 1 0>,	/* P2, Analog in */
+			   <3 0 &gpio0 4 0>,	/* P3, Analog in, LED Col 1 */
+			   <4 0 &gpio0 5 0>,	/* P4, Analog in, LED Col 2 */
+			   <5 0 &gpio0 17 0>,	/* P5, Button A */
+			   <6 0 &gpio0 12 0>,	/* P6, LED Col 9 */
+			   <7 0 &gpio0 11 0>,	/* P7, LED Col 8 */
+			   <8 0 &gpio0 18 0>,	/* P8 */
+			   <9 0 &gpio0 10 0>,	/* P9, LED Col 7 */
+			   <10 0 &gpio0 6 0>,	/* P10, Analog in, LED Col 3 */
+			   <11 0 &gpio0 26 0>,	/* P11, Button B */
+			   <12 0 &gpio0 20 0>,	/* P12 */
+			   <13 0 &gpio0 23 0>,	/* P13, SPI1 SCK */
+			   <14 0 &gpio0 22 0>,	/* P14, SPI1 MISO */
+			   <15 0 &gpio0 21 0>,	/* P15, SPI1 MOSI */
+			   <16 0 &gpio0 16 0>,	/* P16 */
+			   /* 17 and 18 are just 3.3V pins */
+			   <19 0 &gpio0 0 0>,	/* P19, I2C1 SCL */
+			   <20 0 &gpio0 30 0>;	/* P20, I2C1 SDA */
 	};
 };
 
@@ -228,22 +226,14 @@ License: Apache-2.0. SHA-256: `462d9befe34aa9816c6ad667ea0ad933f009f6a66f7cadb02
 
 &gpio0 {
 	status = "okay";
-};
-
-&gpio1 {
-	status = "okay";
-};
-
-&pwm1 {
-	/* buzzer */
-	status = "okay";
-	pinctrl-0 = <&pwm1_default>;
-	pinctrl-1 = <&pwm1_sleep>;
-	pinctrl-names = "default", "sleep";
+	/*
+	 * Use the sensing mechanism for all pins by default, as GPIOTE channels
+	 * are needed for the LED matrix and the SW PWM.
+	 */
+	sense-edge-mask = <0xffffffff>;
 };
 
 &uart0 {
-	compatible = "nordic,nrf-uart";
 	status = "okay";
 	current-speed = <115200>;
 	pinctrl-0 = <&uart0_default>;
@@ -252,27 +242,36 @@ License: Apache-2.0. SHA-256: `462d9befe34aa9816c6ad667ea0ad933f009f6a66f7cadb02
 };
 
 &i2c0 {
-	compatible = "nordic,nrf-twim";
 	status = "okay";
 	clock-frequency = <I2C_BITRATE_FAST>;
 
 	/* See https://tech.microbit.org/hardware/i2c/ for board variants */
 
+	/* v1.3 MMA8653FC (= FXOS8700) + MAG3110 */
 	pinctrl-0 = <&i2c0_default>;
 	pinctrl-1 = <&i2c0_sleep>;
 	pinctrl-names = "default", "sleep";
+	mma8653fc: mma8653fc@1d {
+		compatible = "nxp,fxos8700", "nxp,mma8653fc";
+		status = "okay";
+		reg = <0x1d>;
+		int1-gpios = <&gpio0 28 GPIO_ACTIVE_LOW>;
+		int2-gpios = <&gpio0 27 GPIO_ACTIVE_LOW>;
+	};
+
+	/* v1.5 variant 1 LSM303AGR */
 	lsm303agr_magn: lsm303agr-magn@1e {
 		compatible = "st,lis2mdl", "st,lsm303agr-magn";
-		status = "okay";
+		status = "disabled";
 		reg = <0x1e>;
-		irq-gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;	/* A3 */
+		irq-gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;	/* A3 */
 	};
 
 	lsm303agr_accel: lsm303agr-accel@19 {
 		compatible = "st,lis2dh", "st,lsm303agr-accel";
-		status = "okay";
+		status = "disabled";
 		reg = <0x19>;
-		irq-gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
+		irq-gpios = <&gpio0 28 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -285,86 +284,23 @@ License: Apache-2.0. SHA-256: `462d9befe34aa9816c6ad667ea0ad933f009f6a66f7cadb02
 
 		boot_partition: partition@0 {
 			label = "mcuboot";
-			reg = <0x00000000 0xC000>;
+			reg = <0x00000000 0x8000>;
 		};
-		slot0_partition: partition@c000 {
+		slot0_partition: partition@8000 {
 			label = "image-0";
-			reg = <0x0000C000 0x32000>;
+			reg = <0x00008000 0x1a000>;
 		};
-		slot1_partition: partition@3e000 {
+		slot1_partition: partition@22000 {
 			label = "image-1";
-			reg = <0x0003E000 0x32000>;
+			reg = <0x00022000 0x1a000>;
 		};
-		scratch_partition: partition@70000 {
+		scratch_partition: partition@3c000 {
 			label = "image-scratch";
-			reg = <0x00070000 0xA000>;
+			reg = <0x0003c000 0x2000>;
 		};
-		storage_partition: partition@7a000 {
+		storage_partition: partition@3e000 {
 			label = "storage";
-			reg = <0x0007A000 0x00006000>;
-		};
-	};
-};
-
-zephyr_udc0: &usbd {
-	compatible = "nordic,nrf-usbd";
-	status = "okay";
-};
-````
-
-## Source: boards/bbc/microbit_v2/bbc_microbit_v2-pinctrl.dtsi
-
-Unmodified upstream file from [zephyrproject-rtos/zephyr@413b789deb39](https://github.com/zephyrproject-rtos/zephyr/blob/413b789deb391d3a37d06b463288a5fe765ee57e/boards/bbc/microbit_v2/bbc_microbit_v2-pinctrl.dtsi).
-License: Apache-2.0. SHA-256: `8e71133c717b0e2bb9516b70bb9486f9f3f595a224d35892cd36918144d6488a`.
-
-````text
-/*
- * Copyright (c) 2022 Nordic Semiconductor
- * SPDX-License-Identifier: Apache-2.0
- */
-
-&pinctrl {
-	uart0_default: uart0_default {
-		group1 {
-			psels = <NRF_PSEL(UART_TX, 0, 6)>,
-				<NRF_PSEL(UART_RX, 1, 8)>;
-		};
-	};
-
-	uart0_sleep: uart0_sleep {
-		group1 {
-			psels = <NRF_PSEL(UART_TX, 0, 6)>,
-				<NRF_PSEL(UART_RX, 1, 8)>;
-			low-power-enable;
-		};
-	};
-
-	i2c0_default: i2c0_default {
-		group1 {
-			psels = <NRF_PSEL(TWIM_SDA, 0, 16)>,
-				<NRF_PSEL(TWIM_SCL, 0, 8)>;
-		};
-	};
-
-	i2c0_sleep: i2c0_sleep {
-		group1 {
-			psels = <NRF_PSEL(TWIM_SDA, 0, 16)>,
-				<NRF_PSEL(TWIM_SCL, 0, 8)>;
-			low-power-enable;
-		};
-	};
-
-	pwm1_default: pwm1_default {
-		group1 {
-			psels = <NRF_PSEL(PWM_OUT0, 0, 0)>;
-			nordic,invert;
-		};
-	};
-
-	pwm1_sleep: pwm1_sleep {
-		group1 {
-			psels = <NRF_PSEL(PWM_OUT0, 0, 0)>;
-			low-power-enable;
+			reg = <0x0003e000 0x00002000>;
 		};
 	};
 };

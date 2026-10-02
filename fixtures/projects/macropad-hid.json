@@ -1,0 +1,122 @@
+{
+  "schema": "caiman.project.v2",
+  "project": "macropad-hid",
+  "version": "R1",
+  "customer": "Caiman",
+  "compartments": [
+    "demo-macropad"
+  ],
+  "boards": [
+    {
+      "name": "macropad-rp2040",
+      "version": "circuitpython-9.2.8"
+    }
+  ],
+  "spec_set": "Caiman acceptance R1; not an upstream specification",
+  "documents": [
+    {
+      "ref": "adafruit/macropad-library/MacroPad%20helper%20library%20reference/c3b6a690",
+      "compartment": "public"
+    },
+    {
+      "ref": "adafruit/macropad-hid/MacroPad%20keyboard%20and%20mouse/c3b6a690",
+      "compartment": "public"
+    },
+    {
+      "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
+      "compartment": "public"
+    }
+  ],
+  "features": [
+    {
+      "name": "usb-keyboard",
+      "scope": "required",
+      "governed_by": [
+        {
+          "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
+          "compartment": "public",
+          "requirements": [
+            "REQ-HID-001"
+          ]
+        }
+      ],
+      "realized_on": [
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "application-mcu"
+        },
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "keypad"
+        }
+      ]
+    },
+    {
+      "name": "usb-pointer",
+      "scope": "required",
+      "governed_by": [
+        {
+          "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
+          "compartment": "public",
+          "requirements": [
+            "REQ-HID-002"
+          ]
+        }
+      ],
+      "realized_on": [
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "application-mcu"
+        },
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "encoder"
+        }
+      ]
+    },
+    {
+      "name": "speaker-audio",
+      "scope": "not-used",
+      "governed_by": [
+        {
+          "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
+          "compartment": "public",
+          "requirements": [
+            "REQ-HID-003"
+          ]
+        }
+      ],
+      "realized_on": [
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "speaker"
+        }
+      ]
+    },
+    {
+      "name": "display-ui",
+      "scope": "not-used",
+      "governed_by": [
+        {
+          "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
+          "compartment": "public",
+          "requirements": [
+            "REQ-HID-003"
+          ]
+        }
+      ],
+      "realized_on": [
+        {
+          "board": "macropad-rp2040",
+          "version": "circuitpython-9.2.8",
+          "role": "display"
+        }
+      ]
+    }
+  ]
+}
