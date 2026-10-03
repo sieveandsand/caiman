@@ -139,9 +139,22 @@ class DocumentFormApp(EditorFormApp):
                                read_only=True, soft_wrap=True)
         yield Static(self.message, id='form-error', markup=False)
         with Horizontal(id='navigation'):
-            yield Button('Review changes', id='review-changes', variant='primary')
+            yield Button('Review changes', id='review-changes', variant='primary', disabled=True)
             yield Button('Back to documents', id='cancel')
         yield self.navigation_hint()
+
+    def on_mount(self):
+        super().on_mount()
+        self.update_review_button()
+
+    def update_review_button(self):
+        self.query_one('#review-changes', Button).disabled = self.collect() == self.original
+
+    def on_input_changed(self, event: Input.Changed):
+        self.update_review_button()
+
+    def on_select_changed(self, event: Select.Changed):
+        self.update_review_button()
 
     def collect(self):
         result = deepcopy(self.draft)
