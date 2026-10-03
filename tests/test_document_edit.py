@@ -168,6 +168,7 @@ async def test_visible_card_focus_keeps_scroll_stable_and_typing_is_preserved(se
         second = app.query_one('#detail-requirements', DetailCard)
         first.query_one('.card-summary', Button).focus()
         await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
         body = app.query_one('#body', VerticalScroll)
         before = body.scroll_y
         await pilot.press('l')

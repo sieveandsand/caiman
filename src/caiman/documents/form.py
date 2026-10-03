@@ -89,6 +89,9 @@ class DetailCard(CardRow):
 
 class DocumentFormApp(EditorFormApp):
     TITLE = 'Caiman · Edit document'
+    DEFAULT_CSS = '''
+    #document-pod { margin-bottom: 1; }
+    '''
 
     def __init__(self, *, original, draft=None, message='', selection=None):
         super().__init__()
@@ -119,7 +122,7 @@ class DocumentFormApp(EditorFormApp):
                         key='applicability', hint='Issuer and hardware or program')
                     yield DetailCard('Requirement IDs', self.draft.get('requirements', {}),
                                      [('pattern', 'Requirement ID Pattern')], key='requirements', hint='Optional')
-            with Collapsible(title='Provenance', collapsed=False):
+                yield Label('Provenance', classes='field-label')
                 with Grid(classes='card-grid'):
                     yield DetailCard('Original Source', self.draft.get('source', {}),
                                      [('sha256', 'Original Source SHA-256'), ('pages', 'Original Page Count')],
@@ -127,11 +130,11 @@ class DocumentFormApp(EditorFormApp):
                     yield DetailCard('Converter', self.draft.get('converter', {}),
                                      [('name', 'Converter Name'), ('version', 'Converter Version')],
                                      key='converter', hint='Unknown')
-            with Collapsible(title='Stored File', collapsed=True):
+                yield Label('Stored File', classes='field-label')
                 entry = self.original['files'][0]
                 yield Static(f"{self.original.get('original_filename', entry['path'])}\n"
                              f"{entry['size']:,} bytes · Read Only\n\nSHA-256: {entry['sha256']}", markup=False)
-            with Collapsible(title='Registration Details', collapsed=True):
+                yield Label('Raw JSON File', classes='field-label')
                 yield TextArea(json.dumps(self.selection or self.original, indent=2, ensure_ascii=False),
                                read_only=True, soft_wrap=True)
         yield Static(self.message, id='form-error', markup=False)
