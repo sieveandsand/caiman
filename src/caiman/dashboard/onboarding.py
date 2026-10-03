@@ -340,9 +340,10 @@ class CategoryApp(NavigationApp):
     .pod-create-actions Button, #pod-actions Button { width: auto; min-width: 0; padding: 0 1; }
     #selected-pod { height: auto; margin: 1 0; color: #aab69c; }
     #pod-list { height: auto; background: #000000; padding: 0; }
-    #pod-list > ListItem { height: auto; padding: 0 1; border-bottom: solid #33422e; background: #000000; }
+    #pod-list > ListItem { height: auto; padding: 0 1 0 0; border-left: blank #000000; border-bottom: solid #33422e; background: #000000; }
     #pod-list > ListItem > Static { height: auto; }
-    #pod-list > ListItem.-highlight { background: #102210; }
+    /* The dark background maps to black in 16/256 colors; keep a visible edge. */
+    #pod-list > ListItem.-highlight { background: #102210; border-left: solid #7fdc4f; }
     #pod-list:focus > ListItem.-highlight { background: #102210; }
     .section-heading { height: auto; color: #7fdc4f; text-style: bold; margin-top: 1; }
     '''

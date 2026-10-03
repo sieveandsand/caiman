@@ -181,6 +181,12 @@ Say so wherever the log is surfaced.
 
 - **Small, reviewable changes.** Single-engineer project; keep diffs readable six
   weeks from now.
+- **Support truecolor, 256-color, and 16-color terminals.** Selection, keyboard
+  focus, and status indicators must remain distinguishable after color reduction.
+  Do not rely only on subtle background differences: `#102210` and `#000000`
+  both map to black in 16/256 colors. Use a visible border, marker, or text cue,
+  and check changed UI states in all three color modes, including selection
+  retained after focus moves to action controls.
 - **Prefer boring dependencies.** Operational surface is the scarcest resource
   here (D-04). Adding a service needs a written reason — and "no server" is a
   settled decision, not a default.
