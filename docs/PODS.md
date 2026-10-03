@@ -71,6 +71,11 @@ New records use the active tab. Press `/` anywhere in a gallery for the next pod
 previous and next pods. On the tab bar, use Left/Right or `h` / `l` to switch and `j` to enter the
 cards. Tab and Shift+Tab move between controls. Forms show a single Pod field. The Pods page offers local
 creation, cloning, Git connection, sync, default selection, and disconnection.
+New pod asks for a pod name and an optional Git remote. Back cancels; Create
+creates the pod and returns to the pod list without a review step. Supplying a
+remote enables Git locally; use Sync to commit and share the pod.
+Clone pod asks for a local pod name and a repository URL. Back cancels; Clone
+clones the pod and returns to the pod list without a review step.
 All local pods are available without entering authorization names.
 
 The Pods page isolates Git errors to the affected pod. If the configured default

@@ -1,4 +1,4 @@
-"""Dashboard repository setup with explicit preview and application."""
+"""Dashboard pod creation and Git operations."""
 
 import asyncio
 
@@ -42,18 +42,23 @@ class RepoManagerApp(NavigationApp):
                 yield Static('Local files remain available.', classes='hint')
             with VerticalScroll(id='repository-fields', classes='step'):
                 yield Label('Pod')
-                yield Input(value=self.selected_pod or '', placeholder='alpha', id='pod', disabled=bool(self.selected_pod))
-                yield Static('Choose a pod name, such as alpha.', classes='hint')
+                yield Input(value=self.selected_pod or '', placeholder='pod name', id='pod', disabled=bool(self.selected_pod))
+                yield Static('Use letters, digits, dots, hyphens or underscores.', classes='hint')
                 yield Label('Repository URL', id='remote-label')
-                yield Input(placeholder='git@example.com:team/store-alpha.git', id='remote')
+                yield Input(placeholder='git@example.com:team/pod.git', id='remote')
 
                 yield Static('', id='operation-help')
             yield Static('', id='preview', markup=False)
         yield Static('', id='status', markup=False)
         with Horizontal(id='navigation'):
             yield Button('Back', id='back')
-            yield Button('Review', id='review', variant='primary')
-            yield Button('Apply', id='apply', disabled=True)
+            if self.operation == 'create':
+                yield Button('Create', id='create', variant='primary')
+            elif self.operation == 'add':
+                yield Button('Clone', id='clone', variant='primary')
+            else:
+                yield Button('Review', id='review', variant='primary')
+                yield Button('Apply', id='apply', disabled=True)
         yield self.navigation_hint()
 
     async def on_mount(self):
@@ -65,11 +70,11 @@ class RepoManagerApp(NavigationApp):
         choose = action in {'remove', 'sync', 'default'}
         self.query_one('#remove-fields').display = choose
         self.query_one('#repository-fields').display = not choose
-        self.query_one('#remote').display = action in {'add', 'initialize'}
-        self.query_one('#remote-label').display = action in {'add', 'initialize'}
-        self.query_one('#remote-label', Label).update('Repository URL (optional)' if action == 'initialize' else 'Repository URL')
+        self.query_one('#remote').display = action in {'create', 'add', 'initialize'}
+        self.query_one('#remote-label').display = action in {'create', 'add', 'initialize'}
+        self.query_one('#remote-label', Label).update('Git remote (optional)' if action in {'create', 'initialize'} else 'Repository URL')
         self.query_one('#operation-help', Static).update({
-            'create': 'Creates a folder. Git is optional.',
+            'create': 'Leave the remote blank for a local pod. Use Sync to share its contents.',
             'add': 'Clone an existing pod using your Git credentials.',
             'initialize': 'Enable Git in a pod folder. Use Sync to share its contents.',
         }.get(action, ''))
@@ -88,7 +93,8 @@ class RepoManagerApp(NavigationApp):
 
     def invalidate(self):
         self.plan = None
-        self.query_one('#apply', Button).disabled = True
+        for button in self.query('#apply'):
+            button.disabled = True
         self.query_one('#preview', Static).update('')
 
     def on_input_changed(self, event):
@@ -107,7 +113,8 @@ class RepoManagerApp(NavigationApp):
         if self.selected_pod:
             self.query_one('#repository', Select).disabled = True
             self.query_one('#pod', Input).disabled = True
-        self.query_one('#apply', Button).disabled = value or self.plan is None
+        for button in self.query('#apply'):
+            button.disabled = value or self.plan is None
 
     def action_cancel(self):
         if not self.busy:
@@ -121,7 +128,7 @@ class RepoManagerApp(NavigationApp):
             return
         self.set_busy(True)
         try:
-            if event.button.id == 'review':
+            if event.button.id in {'review', 'create', 'clone'}:
                 self.invalidate()
                 action = self.operation
                 pod = (self.query_one('#repository', Select).value if action in {'remove', 'sync', 'default'}
@@ -131,6 +138,12 @@ class RepoManagerApp(NavigationApp):
                 remote = self.query_one('#remote', Input).value.strip()
                 push = False
                 self.plan = await asyncio.to_thread(self.manager.prepare, action, pod, remote, push)
+                if event.button.id in {'create', 'clone'}:
+                    self.query_one('#status', Static).update(
+                        'Cloning pod…' if action == 'add' else 'Creating pod…')
+                    await asyncio.to_thread(self.manager.apply, self.plan)
+                    self.exit(None)
+                    return
                 self.query_one('#preview', Static).update(self.plan.preview)
                 self.query_one('#apply', Button).label = OPERATIONS[action]
                 self.query_one('#status', Static).update('Review the operation above, then apply it.')

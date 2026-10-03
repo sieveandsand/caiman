@@ -361,7 +361,10 @@ class RepoManager:
             if self.prepare(plan.action, plan.pod, plan.remote, plan.push) != plan:
                 raise ValueError('Pod changed since review; review again')
             if plan.action == 'create':
-                self.store.pods.ensure(plan.pod)
+                if plan.remote:
+                    self._initialize(plan)
+                else:
+                    self.store.pods.ensure(plan.pod)
             elif plan.action == 'default':
                 self.store.pods.set_default(plan.pod)
             elif plan.action == 'initialize':
