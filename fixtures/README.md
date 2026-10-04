@@ -5,6 +5,12 @@ source, integration notes, and clearly identified example acceptance criteria.
 They support onboarding, manual UI exploration, local demo data, and integration
 tests. Most unit tests still construct their own small synthetic inputs.
 
+The dataset uses `caiman.examples.v2`, explicit `pod` routes, and current board
+and project schemas. Document manifests are generated at import as
+`caiman.document.v4`, with a fresh stable ID, a null initial `previous`, and a
+current-manifest pointer. Resolved attachments use `{pod, document, blob}`.
+The fixture loader does not upgrade older installed datasets or import overlays.
+
 ## What is included
 
 | Application | Board snapshot | Why it is useful |
@@ -63,12 +69,12 @@ store has no transaction spanning the entire dataset. If an I/O failure
 interrupts installation, rerun it: complete matching entries are reused.
 The loader verifies all imported pins again after writing.
 
-Installation adds `demo-microbit` and `demo-macropad` to remembered authoring
-compartments so the projects appear in the gallery. Existing preferences are
+Installation creates `demo-microbit` and `demo-macropad` pods so their projects
+appear in the gallery. Existing preferences are
 retained, and the previous state file is backed up under
 `<store>/.example-import-backups/` before modification. Neither a board nor a
-project becomes a default. All documents are **public**; the project's named
-compartment is required by the current schema and is not a secrecy claim.
+project becomes a default. All example documents live in the **public** pod;
+projects live in their named demo pods.
 
 ## Explore the examples
 

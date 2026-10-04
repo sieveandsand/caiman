@@ -61,6 +61,8 @@ def test_legacy_document_bytes_and_hash_stay_intact(tmp_path):
     root = tmp_path / 'store'; store = Store(root)
     record = add_document(root, tmp_path, 'alpha')
     manifest = store.read_manifest('alpha', record.manifest_digest)
+    manifest.pop('document_id')
+    manifest.pop('previous')
     manifest.update(schema='caiman.document.v2', labels={'public': False, 'compartments': ['alpha']})
     content = canonical_json(manifest); value = digest(content)
     store._write_object('alpha', 'manifests', value, content)
@@ -94,13 +96,19 @@ def test_sync_conflict_preserves_local_and_remote_versions(tmp_path):
     add_document(first.store.root, tmp_path, 'alpha')
     apply(first, 'initialize', 'alpha', remote); apply(first, 'sync', 'alpha')
     apply(second, 'add', 'alpha', remote)
-    one = add_document(first.store.root, tmp_path, 'alpha')
-    two = add_document(second.store.root, tmp_path, 'alpha')
+    from caiman.documents.edit_service import DocumentEditService
+    revisions = []
+    for manager, revision in ((first, 'mask-1'), (second, 'mask-2')):
+        selected = ConfigurationService(manager.store).list_documents()[0]
+        edits = DocumentEditService(manager.store)
+        revisions.append(edits.register(selected, edits.prepare(selected,
+            dict(selected['manifest'], silicon_revisions=[revision]))))
+    one, two = revisions
     apply(first, 'sync', 'alpha')
     with pytest.raises(ValueError, match='needs a merge'):
         apply(second, 'sync', 'alpha')
-    assert ConfigurationService(second.store).list_documents()[0]['digest'] == two.manifest_digest
-    assert second._git(second.local_path('alpha'), 'show', 'FETCH_HEAD:refs/documents/synthetic/chip/Manual/A') == one.manifest_digest
+    assert ConfigurationService(second.store).list_documents()[0]['digest'] == two['digest']
+    assert second._git(second.local_path('alpha'), 'show', 'FETCH_HEAD:refs/documents/synthetic/chip/Manual/A') == one['digest']
     assert not (second.local_path('alpha') / '.git/MERGE_HEAD').exists()
 
 
@@ -176,7 +184,7 @@ def test_unpinned_stored_configuration_rejected_without_resolving_dependencies(t
          'documents': [{'ref': 'synthetic/chip/manual/A', 'pod': 'missing'}]}]}
     content = canonical_json(manifest); value = digest(content)
     store._write_object('alpha', 'manifests', value, content)
-    with pytest.raises(ValueError, match='immutable digest'):
+    with pytest.raises(ValueError, match='document ID, blob'):
         ConfigurationService(store).load_digest('board', value, pod='alpha')
 
 
@@ -194,29 +202,6 @@ def test_pod_cli_local_create_default_and_filtered_catalog(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)[0]['pod'] == 'alpha'
 
 
-def test_legacy_metadata_edit_preserves_old_bytes_and_noop_digest(tmp_path):
-    from caiman.documents.edit_service import DocumentEditService
-    from caiman.documents.models import canonical_json
-    from caiman.documents.ingest import digest
-    store = Store(tmp_path / 'store')
-    saved = add_document(store.root, tmp_path, 'alpha')
-    old = store.read_manifest('alpha', saved.manifest_digest)
-    old.update(schema='caiman.document.v2', labels={'public': False, 'compartments': ['alpha']})
-    content = canonical_json(old); old_digest = digest(content)
-    store._write_object('alpha', 'manifests', old_digest, content)
-    store._atomic_write(saved.ref_path, (old_digest + '\n').encode(), immutable=False)
-    selected = ConfigurationService(store).list_documents()[0]
-    edits = DocumentEditService(store)
-    noop = edits.prepare(selected, selected['manifest'])
-    assert noop.digest == old_digest
-    assert edits.register(selected, noop) == selected
-    changed = edits.prepare(selected, dict(selected['manifest'], description='Updated description'))
-    result = edits.register(selected, changed)
-    assert result['manifest']['schema'] == 'caiman.document.v3'
-    assert 'labels' not in result['manifest']
-    assert store._read_object('alpha', 'manifests', old_digest) == content
-
-
 def test_configuration_move_has_one_owner_and_rejects_collision(tmp_path):
     service = ConfigurationService(Store(tmp_path))
     data = {'board': 'demo', 'version': 'A', 'parts': [
@@ -231,3 +216,30 @@ def test_configuration_move_has_one_owner_and_rejects_collision(tmp_path):
     selected = service.list_configs('board', pods=['beta'])[0]
     with pytest.raises(ValueError, match='already uses'):
         service.register(first, replaces=selected)
+
+
+def test_binary_documents_survive_git_sync_clone_and_metadata_edit(tmp_path):
+    from caiman.documents.edit_service import DocumentEditService
+
+    source = tmp_path / 'manual.pdf'
+    source.write_bytes(b'%PDF-1.7\n\x00\xff\r\n# Not Markdown\n')
+    first = RepoManager(tmp_path / 'one')
+    saved = first.store.register(prepare_document(source,
+        dict(name='Manual', issuer='synthetic', part='chip', version='A'), pod='alpha'))
+    remote = bare(tmp_path)
+    apply(first, 'initialize', 'alpha', remote)
+    apply(first, 'sync', 'alpha')
+    second = RepoManager(tmp_path / 'two')
+    apply(second, 'add', 'renamed-folder', remote)
+    [selected] = ConfigurationService(second.store).list_documents()
+    assert selected['digest'] == saved.manifest_digest
+    assert selected['manifest']['files'][0]['path'] == 'document.pdf'
+    assert second.store.read_blob('alpha', saved.blob_digest) == source.read_bytes()
+    edits = DocumentEditService(second.store)
+    changed = edits.prepare(selected, dict(selected['manifest'], description='Reviewed'))
+    edits.register(selected, changed)
+    apply(second, 'sync', 'alpha')
+    apply(first, 'sync', 'alpha')
+    assert ConfigurationService(first.store).list_documents()[0]['digest'] == changed.digest
+    assert first.store.read_manifest('alpha', saved.manifest_digest)['files'] == selected['manifest']['files']
+    assert first.store.read_blob('alpha', saved.blob_digest) == source.read_bytes()

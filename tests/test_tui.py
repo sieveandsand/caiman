@@ -79,15 +79,15 @@ async def test_invalid_labels_retained_then_register_and_edit(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_heading_errors_are_located_without_writes(tmp_path):
+async def test_duplicate_headings_are_accepted_without_writes(tmp_path):
     source = tmp_path / "manual.md"
     source.write_text("# Manual\n## Control\n## Control\n")
     store = tmp_path / "store"
     app = IngestApp(store, source)
     async with app.run_test(size=(100, 35)) as pilot:
         await advance(pilot)
-        assert app.step == 0
-        assert "lines 2 and 3" in str(app.query_one("#error-file", Static).render())
+        assert app.step == 1
+        assert not str(app.query_one("#error-file", Static).render())
         assert app.value("file") == str(source)
         assert not store.exists()
 
@@ -113,17 +113,17 @@ async def test_optional_errors_can_be_corrected_after_going_back(tmp_path):
         await advance(pilot)
         assert app.step == 2
         app.query_one("#source_pages", Input).value = "12"
-        app.query_one("#converter_version", Input).value = "1.2"
+        app.query_one("#converter_name", Input).value = "Example converter"
         await advance(pilot)
         assert app.step == 3
-        assert app.prepared.manifest["converter"] == {"version": "1.2"}
+        assert app.prepared.manifest["converter"] == {"name": "Example converter"}
         assert "Pod: synthetic-program" in app.review_text()
-        assert "Conversion location: Unknown" in app.review_text()
+        assert "Conversion location:" not in app.review_text()
     assert not (tmp_path / "store").exists()
 
 
 @pytest.mark.asyncio
-async def test_optional_requirement_pattern_can_be_corrected_after_back(tmp_path):
+async def test_document_form_has_no_structure_or_requirement_fields(tmp_path):
     source = tmp_path / 'spec.md'
     source.write_text('# Specification\nREQ-123: Start correctly.\n')
     app = IngestApp(tmp_path / 'store', source)
@@ -132,17 +132,11 @@ async def test_optional_requirement_pattern_can_be_corrected_after_back(tmp_path
         fill_document(app)
         app.query_one('#pod', Select).value = 'public'
         await advance(pilot)
-        app.query_one('#pattern', Input).value = '['
-        await advance(pilot)
-        assert app.step == 2
-        await pilot.click('#back')
-        await pilot.pause(0.25)
-        await advance(pilot)
-        assert app.step == 2
-        app.query_one('#pattern', Input).value = r'^REQ-\d+$'
+        assert not app.query('#pattern')
+        assert not app.query('#structure')
         await advance(pilot)
         assert app.step == 3
-        assert app.prepared.manifest['requirements'] == {'pattern': r'^REQ-\d+$'}
+        assert not {'structure', 'requirements'} & app.prepared.manifest.keys()
     assert not (tmp_path / 'store').exists()
 
 
@@ -289,3 +283,22 @@ async def test_project_selection_never_uses_repointed_board_ref_for_hardware(tmp
         assert app.context["board"]["manifest"]["parts"][0]["part"] == "chip"
         assert app.value("part") == ""
         assert app.value("program") == "synthetic-alpha-program"
+
+
+@pytest.mark.parametrize('color_system', ['truecolor', '256', 'standard'])
+async def test_binary_file_ingestion_in_all_color_modes(tmp_path, color_system):
+    source = tmp_path / 'manual.pdf'
+    source.write_bytes(b'%PDF-1.7\n\x00\xff')
+    app = IngestApp(tmp_path / 'store', source)
+    app.console._color_system = __import__('rich.console', fromlist=['COLOR_SYSTEMS']).COLOR_SYSTEMS[color_system]
+    async with app.run_test(size=(100, 35)) as pilot:
+        await advance(pilot)
+        assert app.step == 1
+        fill_document(app)
+        app.query_one('#pod', Select).value = 'public'
+        await advance(pilot)
+        await advance(pilot)
+        assert app.step == 3
+        assert app.prepared.content == source.read_bytes()
+        await advance(pilot)
+        assert app.registered

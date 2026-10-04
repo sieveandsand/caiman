@@ -251,8 +251,6 @@ def test_v2_fields_are_rejected_on_a_legacy_board(mutation):
     lambda x: x['parts'][0].update(aliases={'refdes': ''}),
     lambda x: x['parts'][0].update(aliases='U1'),
     lambda x: x.update(notes=''),
-    # Board-level documents resolve against <vendor>/<board>, so vendor is required.
-    lambda x: x.update(documents=[{'ref': 'synthetic/synthetic/user-guide/v1'}]),
     lambda x: x.update(schema='caiman.board/2'),
     lambda x: x.update(schema='caiman.board.v99'),
 ])

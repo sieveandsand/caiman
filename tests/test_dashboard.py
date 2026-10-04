@@ -316,7 +316,7 @@ async def test_dashboard_cards_resize_and_move_shadow_without_layout_changes():
         second = app.query_one('#show-board', DashboardTile)
         assert 'DOCUMENTS' in first.label.plain
         assert 'Documents' not in first.label.plain
-        assert 'Ingest · browse registered' in app.export_screenshot().replace('&#160;', ' ')
+        assert 'Add · view · edit' in first.label.plain
         before = [card.region for card in (first, second)]
         assert first.parent.query_one('.card-shadow').visible
         await pilot.press('l')

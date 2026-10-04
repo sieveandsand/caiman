@@ -90,7 +90,7 @@ the user/project/session, not as multiple labels on one document. The proposed
 Git backend uses one private repository per compartment, with a separate private
 repository for explicitly public material.
 
-Labels apply to the entire unchanged Markdown document and are supplied by a
+Labels apply to the entire unchanged document and are supplied by a
 human from provenance, never inferred from its contents or filename. The generic
 scope representation and current multi-compartment project validation remain
 unchanged by the document-cardinality rule.
@@ -220,11 +220,12 @@ review in G17 (§5.5).
 
 ### 7.2 Conversion happens outside Caiman
 
-Caiman registers one already-converted Markdown file unchanged (S-08, S-25).
+Caiman registers one file of any format unchanged (S-08, S-25). Conversion is
+optional and happens outside Caiman.
 It makes no AI calls for splitting, labeling, or navigation generation.
 **Handing a confidential PDF to a hosted conversion service is a disclosure,
 and Caiman cannot prevent it.** By
-the time markdown reaches ingest, the document has already been wherever it was
+the time a converted file reaches ingest, the document has already been wherever it was
 going to go.
 
 This matters more for customer specifications than vendor manuals, per §2.1: a
@@ -232,10 +233,9 @@ leaked reference manual is the vendor's widely-held document; a leaked
 specification is identifiable as that customer's.
 
 Original-source and converter information are optional (S-26). When converter
-information is supplied, it can help identify affected documents and support a
-lint for reported or known hosted conversion. Without it, the conversion history
-is unknown. Skip that lint when there is insufficient information; absence is
-not evidence of local processing or permission to widen access.
+name is supplied, it can help identify affected documents. Caiman does not
+record converter versions or hosted/local status. A name or its absence is not
+evidence of local processing or permission to widen access.
 
 The TUI labels this section optional and permits skipping it. Explicit access
 labels for the document remain mandatory and independent of provenance. Missing
@@ -416,7 +416,7 @@ Write these before the mechanism they test.
 | S-T8 | Generate a brief for a project with compartmented documents | No document body text appears |
 | S-T9 | Generate a brief; search for the customer string from the project manifest | Absent |
 | S-T10 | Reclassify or compartment-correct a document | Gone from re-materialized documents and every cache; brief regenerated |
-| S-T11 | Register a document without usable headings; register a requirement-structured document with headings but no matching requirement IDs | Both rejected; no repair or line-only citation fallback |
+| S-T11 | Supply retired document `structure` or `requirements` metadata | New metadata rejected; historical snapshots remain readable without rewriting bytes |
 | S-T12 | Resolve a bare project or board name | Returns the version list; resolves nothing |
 | S-T13 | `push` a compartment whose remote is public | Hard error; nothing sent |
 | S-T14 | `push` with unreviewed labels | Reports what would be published, by document and compartment, before sending |

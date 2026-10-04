@@ -11,7 +11,7 @@ from caiman.ui.navigation import NavigationApp
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static
 
-from caiman.documents.ingest import PreparedDocument, ValidationError, prepare_document, validate_headings
+from caiman.documents.ingest import PreparedDocument, ValidationError, prepare_document
 from caiman.configurations.service import ConfigurationService
 from caiman.configurations.models import part_identity, part_vendor_and_part, project_boards
 from caiman.storage.store import Store
@@ -55,7 +55,7 @@ class IngestApp(NavigationApp):
         with VerticalScroll(id="body"):
             yield Static("1 / 4 · File", id="step-title")
             with VerticalScroll(id="step-0", classes="step"):
-                yield from self.field("file", "Markdown file", str(self.source_path or ""))
+                yield from self.field("file", "Document file", str(self.source_path or ""))
                 yield Static("", id="file-result", markup=False)
             with VerticalScroll(id="step-1", classes="step"):
                 yield Label("Document identity")
@@ -88,11 +88,6 @@ class IngestApp(NavigationApp):
                     yield from self.field("source_sha256", "Original source SHA-256 (optional)")
                     yield from self.field("source_pages", "Original source page count (optional)")
                     yield from self.field("converter_name", "Converter name (optional)")
-                    yield from self.field("converter_version", "Converter version (optional)")
-                    yield Label("Conversion location (optional)")
-                    yield Select([("Unknown", "unknown"), ("Local", "local"), ("Hosted", "hosted")], value="unknown", allow_blank=False, id="hosted")
-                with Collapsible(title="Requirement IDs (optional)", collapsed=True):
-                    yield from self.field("pattern", "Requirement ID Pattern")
             with VerticalScroll(id="step-3", classes="step"):
                 yield Static("", id="review", markup=False)
         yield Static("", id="status", markup=False)
@@ -276,8 +271,6 @@ class IngestApp(NavigationApp):
         data["name"] = self.value("name")
         if self.value("silicon_revisions"):
             data["silicon_revisions"] = self.csv("silicon_revisions")
-        if self.value("pattern"):
-            data["requirements"] = {"pattern": self.value("pattern")}
         source = {}
         if self.value("source_sha256"):
             source["sha256"] = self.value("source_sha256")
@@ -286,10 +279,7 @@ class IngestApp(NavigationApp):
                 source["pages"] = int(self.value("source_pages"))
             except ValueError:
                 source["pages"] = self.value("source_pages")
-        converter = {key: self.value(f"converter_{key}") for key in ("name", "version") if self.value(f"converter_{key}")}
-        hosted = self.query_one("#hosted", Select).value
-        if hosted != "unknown":
-            converter["hosted"] = hosted == "hosted"
+        converter = {"name": self.value("converter_name")} if self.value("converter_name") else {}
         if source:
             data["source"] = source
         if converter:
@@ -305,7 +295,6 @@ class IngestApp(NavigationApp):
         source = manifest.get("source", {})
         converter = manifest.get("converter", {})
         pod = self.service.store.pod_name(self.prepared.pod)
-        hosted = {True: "Hosted", False: "Local"}.get(converter.get("hosted"), "Unknown")
         lines = [
             "Review before registering locally",
             f"File: {self.prepared.source_path.name}",
@@ -317,24 +306,20 @@ class IngestApp(NavigationApp):
             f"Silicon revisions: {', '.join(manifest.get('silicon_revisions', [])) or 'Unknown / not applicable'}",
             f"Pod: {pod}",
         ]
-        if "requirements" in manifest:
-            lines.append(f"Requirement ID pattern: {manifest['requirements']['pattern']}")
         lines.extend([
             "", "Optional provenance",
             f"Original source checksum: {source.get('sha256', 'Unknown')}",
             f"Original source pages: {source.get('pages', 'Unknown')}",
             f"Converter name: {converter.get('name', 'Unknown')}",
-            f"Converter version: {converter.get('version', 'Unknown')}",
-            f"Conversion location: {hosted}",
             "", f"Store: {self.store_root.expanduser().absolute()}",
             f"Size: {len(self.prepared.content):,} bytes",
-            f"Markdown digest: {self.prepared.blob_digest}",
+            f"File digest: {self.prepared.blob_digest}",
             f"Manifest digest: {self.prepared.manifest_digest}",
         ])
         return "\n".join(lines)
 
     def errors(self, errors: dict[str, str]) -> None:
-        aliases = {"headings": "file", "requirements.pattern": "pattern", "source.sha256": "source_sha256", "source.pages": "source_pages", "converter.name": "converter_name", "converter.version": "converter_version"}
+        aliases = {"source.sha256": "source_sha256", "source.pages": "source_pages", "converter.name": "converter_name"}
         for field, message in errors.items():
             target = aliases.get(field, field).replace(".", "_")
             matches = self.query(f"#error-{target}")
@@ -375,13 +360,10 @@ class IngestApp(NavigationApp):
             if self.step == 0:
                 path = Path(self.value("file")).expanduser()
                 if not path.is_file():
-                    self.errors({"file": "Select an existing Markdown file."})
+                    self.errors({"file": "Select an existing file."})
                     return
-                if path.suffix.lower() not in {".md", ".markdown"}:
-                    self.errors({"file": "Select a Markdown file (.md or .markdown)."})
-                    return
-                headings = await asyncio.to_thread(lambda: validate_headings(path.read_bytes().decode("utf-8")))
-                result = f"{path.name}: {len(headings)} usable headings"
+                content = await asyncio.to_thread(path.read_bytes)
+                result = f"{path.name}: {len(content):,} bytes"
                 self.query_one("#file-result", Static).update(result)
                 self.query_one("#status", Static).update(result)
                 self.step = 1
@@ -390,7 +372,6 @@ class IngestApp(NavigationApp):
                 if self.step == 1:
                     metadata.pop("source", None)
                     metadata.pop("converter", None)
-                    metadata.pop("requirements", None)
                 self.prepared = await asyncio.to_thread(prepare_document, Path(self.value("file")).expanduser(), metadata, pod=self.query_one("#pod", Select).value)
                 self.step += 1
                 if self.step == 3:

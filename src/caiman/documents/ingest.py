@@ -1,20 +1,20 @@
-"""Read-only preparation of unchanged Markdown for reviewed registration."""
+"""Read-only preparation of unchanged files for reviewed registration."""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
-from itertools import chain
 from pathlib import Path
 import re
+from uuid import uuid4
 
 from markdown_it import MarkdownIt
 
 from caiman.documents.models import ValidationError, canonical_json, current_schema, is_schema, valid_identifier
 
 
-METADATA_FIELDS = frozenset({'name', 'description', 'issuer', 'part', 'program', 'doc_type', 'version', 'structure',
-                             'silicon_revisions', 'source', 'converter', 'requirements'})
-GENERATED_FIELDS = frozenset({'schema', 'original_filename', 'pipeline_version', 'ingested_at', 'files'})
+METADATA_FIELDS = frozenset({'name', 'description', 'issuer', 'part', 'program', 'doc_type', 'version',
+                             'silicon_revisions', 'source', 'converter'})
+GENERATED_FIELDS = frozenset({'schema', 'original_filename', 'pipeline_version', 'ingested_at', 'files', 'document_id', 'previous'})
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,6 @@ class PreparedDocument:
     manifest: dict
     blob_digest: str
     manifest_digest: str
-    headings: tuple[Heading, ...]
     pod: str = "public"
 
 
@@ -38,15 +37,8 @@ def digest(content: bytes) -> str:
     return 'sha256:' + hashlib.sha256(content).hexdigest()
 
 
-def validate_headings(text: str) -> tuple[Heading, ...]:
-    headings, errors = heading_outline(text)
-    if errors:
-        raise ValidationError({'headings': '; '.join(errors)})
-    return headings
-
-
 def heading_outline(text: str) -> tuple[tuple[Heading, ...], list[str]]:
-    """Heading paths and any reasons they would be rejected at ingest."""
+    """Best-effort Markdown heading paths and navigation diagnostics."""
     tokens = MarkdownIt('commonmark').parse(text)
     errors = []
     if not tokens or tokens[0].type != 'heading_open':
@@ -108,13 +100,6 @@ def validate_metadata(metadata: dict) -> dict:
             errors[field] = 'Use letters, digits, dots, hyphens or underscores'
         else:
             result[field] = metadata[field]
-    structure = metadata.get('structure')
-    if structure is None and named:
-        pass
-    elif structure not in ('prose', 'requirement'):
-        errors['structure'] = 'Choose prose or requirement'
-    else:
-        result['structure'] = structure
     if 'silicon_revisions' in metadata:
         revisions = metadata['silicon_revisions']
         if not isinstance(revisions, list) or any(not _text(v) for v in revisions):
@@ -124,7 +109,7 @@ def validate_metadata(metadata: dict) -> dict:
     validators = {
         'source': {'sha256': lambda v: isinstance(v, str) and bool(re.fullmatch('[0-9a-fA-F]{64}', v)),
                    'pages': lambda v: type(v) is int and v > 0},
-        'converter': {'name': _text, 'version': _text, 'hosted': lambda v: type(v) is bool},
+        'converter': {'name': _text},
     }
     for group, fields in validators.items():
         if group not in metadata:
@@ -141,39 +126,14 @@ def validate_metadata(metadata: dict) -> dict:
                 clean[key] = value.lower() if key == 'sha256' else value
         if clean:
             result[group] = clean
-    if structure == 'requirement' or (named and 'requirements' in metadata):
-        requirements = metadata.get('requirements')
-        if not isinstance(requirements, dict) or set(requirements) != {'pattern'} or not _text(requirements.get('pattern')):
-            errors['requirements.pattern'] = 'Supply a requirement-ID regular expression'
-        else:
-            try:
-                pattern = re.compile(requirements['pattern'])
-                if pattern.fullmatch(''):
-                    raise ValueError('Pattern must not match an empty ID')
-                result['requirements'] = dict(requirements)
-            except (re.error, ValueError) as error:
-                errors['requirements.pattern'] = str(error)
-    elif 'requirements' in metadata:
-        errors['requirements.pattern'] = 'Requirement patterns apply only to requirement documents'
     if errors:
         raise ValidationError(errors)
     return result
 
 
-def validate_document_text(text: str, manifest: dict) -> tuple[Heading, ...]:
-    """The same citation checks for ingestion and edits to stored metadata."""
-    headings = validate_headings(text)
-    if 'requirements' in manifest:
-        pattern = re.compile(manifest['requirements']['pattern'])
-        # Try literal whitespace-delimited IDs as well as conventional IDs
-        # embedded in Markdown. Preserve punctuation within IDs such as R[123].
-        literal = (candidate for match in re.finditer(r'\S+', text)
-                   for candidate in (match[0], match[0].strip('`*_,.;:()<>')))
-        conventional = (match[0] for match in re.finditer(r'[\w]+(?:[-.:/][\w]+)*', text))
-        candidates = chain(literal, conventional)
-        if not any(pattern.fullmatch(candidate) for candidate in candidates):
-            raise ValidationError({'requirements.pattern': 'No matching requirement IDs found in the document'})
-    return headings
+def document_path(filename: str) -> str:
+    """Keep the file extension without allowing source names to become paths."""
+    return 'document' + Path(filename).suffix
 
 
 def prepare_document(path: Path, metadata: dict, *, pod: str = "public") -> PreparedDocument:
@@ -183,22 +143,20 @@ def prepare_document(path: Path, metadata: dict, *, pod: str = "public") -> Prep
         raise ValidationError({"pod": "Choose a pod"})
     manifest = validate_metadata(metadata)
     path = Path(path).expanduser().absolute()
-    if path.suffix.lower() not in {'.md', '.markdown'} or not _text(path.name):
-        raise ValidationError({'file': 'Select a Markdown file with a usable filename'})
+    if not _text(path.name):
+        raise ValidationError({'file': 'Select a file with a usable filename'})
     try:
         if not path.is_file():
             raise OSError('Not a regular file')
         content = path.read_bytes()
-        text = content.decode('utf-8')
-    except (OSError, UnicodeError) as error:
-        raise ValidationError({'file': f'Cannot read UTF-8 Markdown: {error}'}) from error
-    headings = validate_document_text(text, manifest)
+    except OSError as error:
+        raise ValidationError({'file': f'Cannot read file: {error}'}) from error
     blob_digest = digest(content)
-    manifest.update(schema=current_schema('document'), original_filename=path.name,
+    manifest.update(schema=current_schema('document'), document_id=uuid4().hex, previous=None, original_filename=path.name,
                     pipeline_version='caiman-ingest/0.1',
                     ingested_at=datetime.now(timezone.utc).isoformat(timespec='microseconds').replace('+00:00', 'Z'),
-                    files=[{'path': 'document.md', 'sha256': blob_digest[7:], 'size': len(content)}])
-    return PreparedDocument(path, content, manifest, blob_digest, digest(canonical_json(manifest)), headings, pod)
+                    files=[{'path': document_path(path.name), 'sha256': blob_digest[7:], 'size': len(content)}])
+    return PreparedDocument(path, content, manifest, blob_digest, digest(canonical_json(manifest)), pod)
 
 
 def verify_prepared(prepared: PreparedDocument) -> None:
@@ -208,7 +166,7 @@ def verify_prepared(prepared: PreparedDocument) -> None:
         manifest = prepared.manifest
         metadata = {key: value for key, value in manifest.items() if key in METADATA_FIELDS}
         validated = validate_metadata(metadata)
-        expected_files = [{'path': 'document.md', 'sha256': digest(prepared.content)[7:],
+        expected_files = [{'path': document_path(prepared.source_path.name), 'sha256': digest(prepared.content)[7:],
                            'size': len(prepared.content)}]
         timestamp = datetime.fromisoformat(manifest.get('ingested_at', '').replace('Z', '+00:00'))
         unchanged = (prepared.source_path.read_bytes() == prepared.content and
@@ -217,6 +175,7 @@ def verify_prepared(prepared: PreparedDocument) -> None:
                      manifest.keys() <= METADATA_FIELDS | GENERATED_FIELDS and
                      validated == metadata and manifest.get('files') == expected_files and
                      is_schema('document', manifest.get('schema')) and
+                     valid_identifier(manifest.get('document_id')) and manifest.get('previous') is None and
                      manifest.get('pipeline_version') == 'caiman-ingest/0.1' and
                      manifest.get('original_filename') == prepared.source_path.name and
                      timestamp.tzinfo is not None)

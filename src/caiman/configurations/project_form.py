@@ -36,7 +36,7 @@ from caiman.ui.theme import apply_theme
 
 
 SCOPES = ('required', 'not-used')
-SELECTOR_TEXT = ('ref', 'digest', 'pod', 'note', 'notes')
+SELECTOR_TEXT = ('ref', 'digest', 'pod', 'document', 'blob', 'note', 'notes')
 
 
 def _strings(value) -> bool:
@@ -145,12 +145,14 @@ def _selector_fields(row: Row, suggestions: Suggestions):
     yield from row.text_field('ref', 'Document Ref', suggester=suggestions.refs,
                               placeholder='issuer/part-or-program/doc-type/version')
     yield from row.text_field('digest', 'Manifest Digest (optional)', placeholder='sha256:…')
+    yield from row.text_field('document', 'Document ID (optional)')
+    yield from row.text_field('blob', 'Pinned Blob (with Document ID)', placeholder='sha256:…')
     yield from row.text_field('pod', 'Pod (optional)', suggester=suggestions.pods,
                               placeholder='Pod name or ID')
 
 
 def _selector_title(data, new_label):
-    return data.get('ref') or ('Pinned by digest' if data.get('digest') else new_label)
+    return data.get('ref') or data.get('document') or ('Pinned by digest' if data.get('digest') else new_label)
 
 
 class PinnedBoardCard(CardRow):
@@ -199,7 +201,7 @@ class PinnedBoardCard(CardRow):
 class ProjectDocumentCard(CardRow):
     kind = 'document'
     first_field = 'ref'
-    keys = ('ref', 'digest', 'pod')
+    keys = ('ref', 'digest', 'pod', 'document', 'blob')
 
     def __init__(self, data, *, suggestions: Suggestions, expanded=False):
         super().__init__(data, expanded=expanded)
@@ -226,7 +228,7 @@ class ProjectDocumentCard(CardRow):
 class GoverningRow(Row):
     """A governing document inside a feature, with the requirement IDs it names."""
 
-    keys = ('ref', 'digest', 'pod')
+    keys = ('ref', 'digest', 'pod', 'document', 'blob')
 
     def __init__(self, data, *, suggestions: Suggestions):
         super().__init__(data)

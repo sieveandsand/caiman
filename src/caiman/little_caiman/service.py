@@ -196,7 +196,7 @@ class Resolver:
                     return TREE
                 continue
             parts = path.relative_to(root).parts
-            if location == 'workspace' and len(parts) >= 2 and parts[-1] == 'document.md' and '@' in parts[-2]:
+            if location == 'workspace' and len(parts) >= 2 and (parts[-1] == 'document' or parts[-1].startswith('document.')) and '@' in parts[-2]:
                 name, version = parts[-2].split('@', 1)
                 return DocumentRef(path, '/'.join((*parts[:-2], name)), version, location)
             if (location == 'store' and len(parts) == 5 and parts[1:3] == ('blobs', 'sha256')
@@ -453,7 +453,9 @@ class UsageTracker:
 
     def sections(self, ref: DocumentRef, start: int, end: int) -> list[str]:
         """Heading paths whose span overlaps the lines read; a line range when none are known."""
-        headings = self._headings(ref.path)
+        # Digest-only store paths carry no format; do not guess Markdown from bytes.
+        headings = (self._headings(ref.path)
+                    if ref.location == 'workspace' and ref.path.suffix.lower() in {'.md', '.markdown'} else ())
         if not headings:
             return [f'Lines {start}–{end}']
         spans = [(heading.line, following.line - 1 if following else None, heading.path)
@@ -467,10 +469,11 @@ class UsageTracker:
             status = path.stat()
             key = (status.st_mtime_ns, status.st_size)
             if self._outlines.get(path, (None,))[0] != key:
-                headings, _ = heading_outline(path.read_text(encoding='utf-8', errors='replace'))
+                text = path.read_text(encoding='utf-8')
+                headings = heading_outline(text)[0] if '\x00' not in text else ()
                 self._outlines[path] = (key, headings)
             return self._outlines[path][1]
-        except OSError:
+        except (OSError, UnicodeError):
             return ()
 
     def integrity(self, ref: DocumentRef) -> Integrity:

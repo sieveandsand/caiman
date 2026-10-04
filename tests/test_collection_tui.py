@@ -25,7 +25,7 @@ async def test_create_review_edit_save_and_reopen_old_members(tmp_path):
         assert card.chosen
         await pilot.click('#review-save')
         await pilot.pause(0.25)
-        assert app.prepared['manifest']['documents'] == [pin]
+        assert CollectionService(store).documents.document_record(app.prepared['manifest']['documents'][0])['digest'] == pin['digest']
         assert not list(store.root.rglob('collections'))
         assert 'Manual' in str(app.query_one('#review', Static).content)
         await pilot.click('#edit-selection')
@@ -36,16 +36,23 @@ async def test_create_review_edit_save_and_reopen_old_members(tmp_path):
         await pilot.pause()
     saved = app.return_value
     assert saved['manifest']['name'] == 'Chip library'
-    document(tmp_path, store)  # Repoint the document name after the save.
+    from caiman.configurations.service import ConfigurationService
+    from caiman.documents.edit_service import DocumentEditService
+    selected = ConfigurationService(store).list_documents()[0]
+    edits = DocumentEditService(store)
+    updated = edits.register(selected, edits.prepare(selected, dict(selected['manifest'], name='Renamed')))
+    current_digest = CollectionService(store).list_collections()[0]['digest']
+    assert current_digest == saved['digest']
+    # The same collection snapshot shows current metadata for its fixed member.
     edit = CollectionApp(root=store.root, pods=[], record=saved)
     async with edit.run_test(size=(65, 30)) as pilot:
         await pilot.pause()
         cards = list(edit.query(MemberCard))
-        assert len(cards) == 2
-        assert [c.record['digest'] for c in cards if c.chosen] == [pin['digest']]
+        assert len(cards) == 1
+        assert [c.record['digest'] for c in cards if c.chosen] == [updated['digest']]
         assert not edit.query('#version')
         await pilot.click('#cancel')
-    assert CollectionService(store).list_collections()[0]['digest'] == saved['digest']
+    assert CollectionService(store).list_collections()[0]['digest'] == current_digest
 
 
 @pytest.mark.asyncio

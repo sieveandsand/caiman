@@ -84,7 +84,7 @@ class ConfigApp(NavigationApp):
                     yield from self.field("customer", "Customer identity (private project information)")
                     yield from self.field("spec_set", "Specification set")
                 else:
-                    yield from self.field("vendor", "Board vendor (required only for board-level documents)")
+                    yield from self.field("vendor", "Board vendor (optional)")
                     yield from self.field("notes", "Notes (optional, unstructured; nothing parses them)")
                 with Collapsible(title="Registered document catalog · copy exact pins", collapsed=True):
                     yield Static("Documents from available pods", classes="hint")
@@ -109,7 +109,7 @@ class ConfigApp(NavigationApp):
 
     def collection_hint(self, key: str) -> str:
         if self.kind == "board" and key == "documents":
-            return 'Documents about the assembly itself, issued by the board vendor: {"ref": "…", "digest": "sha256:…", "notes": "why it is pinned"}.'
+            return 'Documents about the assembly itself: {"ref": "…", "digest": "sha256:…", "notes": "why it is pinned"}.'
         return {
             "parts": 'Each part has role, vendor, part, and documents. A document pin uses {"ref": "…", "digest": "sha256:…"}. Optional: silicon_revision, aliases, notes.',
             "links": 'Declare links between part roles: {"name": "bus", "between": ["mcu.SPI1", "sensor.SPI"], "notes": "why it exists"}.',
@@ -212,7 +212,7 @@ class ConfigApp(NavigationApp):
                 for board, version, role in realized_parts(manifest, feature):
                     lines.append(f"    Realized on: {role} · {board} @ {version}")
                 for selector in feature.get("governed_by", []):
-                    lines.append(f"    Governed by: {selector.get('ref', selector['digest'])}")
+                    lines.append(f"    Governed by: {selector.get('ref') or selector.get('document') or selector.get('digest')}")
                     if selector.get("requirements"):
                         lines.append("    Requirements: " + ", ".join(selector["requirements"]))
                 for relationship in feature.get("related", []):
@@ -223,7 +223,7 @@ class ConfigApp(NavigationApp):
         if self.kind == "board":
             pins += [pin for part in manifest.get("parts", []) for pin in part.get("documents", [])]
         lines.extend(["", "Pinned documents"])
-        lines.extend(f"{pin.get('ref', 'Selected by digest')} [{pin['pod']}]\n  {pin['digest']}" for pin in pins)
+        lines.extend(f"{pin.get('ref') or pin.get('document', 'Selected by digest')} [{pin['pod']}]\n  {pin.get('blob', pin.get('digest'))}" for pin in pins)
         if not pins:
             lines.append("None")
         lines.extend(["", f"Store: {self.store_root.expanduser().absolute()}", f"Manifest digest: {self.prepared.digest}", "", "Register saves this reviewed version locally."])

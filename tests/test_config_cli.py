@@ -20,7 +20,7 @@ def configured(tmp_path):
     source.write_text("# Synthetic manual\n## Serial port\nFictional register.\n")
     doc = store.register(prepare_document(source, {
         "issuer": "example", "part": "mcu", "doc_type": "manual", "version": "Rev 1",
-        "structure": "prose", 'pod': 'public',
+        'pod': 'public',
     }))
     service = ConfigurationService(store)
     board = service.prepare("board", {
@@ -73,7 +73,7 @@ def test_document_catalog_uses_exact_digest(configured, capsys):
     root, board, _ = configured
     assert main(["documents", "--store", str(root)]) == 0
     records = json.loads(capsys.readouterr().out)
-    assert records[0]["digest"] == board.manifest["parts"][0]["documents"][0]["digest"]
+    assert records[0]["manifest"]["document_id"] == board.manifest["parts"][0]["documents"][0]["document"]
     assert records[0]["ref"].endswith("Rev%201")
 
 

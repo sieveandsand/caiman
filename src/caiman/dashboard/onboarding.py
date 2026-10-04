@@ -297,7 +297,7 @@ class LauncherApp(NavigationApp):
             yield Mascot(render_mascot(), id='mascot')
         with VerticalScroll(id='body'):
             with Grid(id='category-grid', classes='dashboard-grid'):
-                yield self.tile('Documents', 'Ingest · browse registered', action='documents')
+                yield self.tile('Documents', 'Add · view · edit', action='documents')
                 yield self.tile('Boards', 'Add · view · edit', action='show-board')
                 yield self.tile('Projects', 'Add · view · edit', action='show-project')
                 yield self.tile('Hooks', 'Claude Code · Codex', action='hooks')

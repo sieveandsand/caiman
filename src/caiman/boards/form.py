@@ -70,12 +70,14 @@ class DocumentRow(Row):
         yield from self.text_field('ref', 'Document Ref')
         yield from self.text_field('pod', 'Pod (optional)')
         yield from self.text_field('digest', 'Manifest Digest (optional)')
+        yield from self.text_field('document', 'Document ID (optional)')
+        yield from self.text_field('blob', 'Pinned Blob (with Document ID)')
         yield from self.text_field('notes', 'Notes (optional)')
         yield from self.actions('Remove document')
 
     def collect(self) -> dict:
-        selector = self.carry('ref', 'digest', 'notes', 'pod')
-        for key in ('ref', 'digest', 'notes', 'pod'):
+        selector = self.carry('ref', 'digest', 'notes', 'pod', 'document', 'blob')
+        for key in ('ref', 'digest', 'notes', 'pod', 'document', 'blob'):
             if self.value(key):
                 selector[key] = self.value(key)
         return selector
@@ -89,11 +91,11 @@ class BoardDocumentCard(CardRow, DocumentRow):
         yield from DocumentRow.compose(self)
 
     def summary_data(self):
-        return {key: self.value(key) for key in ('ref', 'digest', 'notes', 'pod')}
+        return {key: self.value(key) for key in ('ref', 'digest', 'notes', 'pod', 'document', 'blob')}
 
     def summary(self, data):
         label = Text()
-        self.heading(label, data.get('ref') or ('Pinned board document' if data.get('digest') else 'New board document'))
+        self.heading(label, data.get('ref') or data.get('document') or ('Pinned board document' if data.get('digest') else 'New board document'))
         label.append('\n\nBoard document', style='bold #aab69c')
         label.append('\n\n' + self.summary_hint(), style='#aab69c')
         return label

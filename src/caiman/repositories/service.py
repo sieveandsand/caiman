@@ -3,16 +3,13 @@
 Saving data never commits or pushes. Sync commits locally, fetches, merges, and
 pushes with Git's fast-forward protection. Conflicts keep both histories.
 """
-from contextlib import contextmanager
 from dataclasses import dataclass
-import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
-import stat
 import subprocess
 import tempfile
 from urllib.parse import urlsplit
@@ -207,20 +204,8 @@ class RepoManager:
             raise ValueError('Connect Git for this pod first')
         return RepoPlan(action, pod, remote, path, self._state(path))
 
-    @contextmanager
     def _locked(self):
-        self.store._directory(self.store.root, create=True)
-        fd = os.open(self.store.root / '.pods.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise ValueError('Pod lock must be a regular file')
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as error:
-                raise ValueError('Another pod operation is running') from error
-            yield
-        finally:
-            os.close(fd)
+        return self.store.locked()
 
     def _verify_tree(self, path, revision, expected=None):
         header = None
@@ -251,7 +236,7 @@ class RepoManager:
 
             elif name == '.gitattributes':
                 attributes = self._git(path, 'cat-file', 'blob', oid)
-            elif not re.fullmatch(r'(blobs|manifests)/sha256/[0-9a-f]{2}/[0-9a-f]{64}|refs/(documents|boards|projects|collections)/[^\s]+', name):
+            elif not re.fullmatch(r'(blobs|manifests)/sha256/[0-9a-f]{2}/[0-9a-f]{64}|refs/(documents|boards|projects|collections|document-heads)/[^\s]+', name):
                 raise ValueError(f'Unexpected file in pod repository: {name}')
         if (not isinstance(header, dict) or set(header) != {'schema', 'id', 'name'} or
             header['schema'] != 'caiman.pod.v1' or not valid_identifier(header['id']) or

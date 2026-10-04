@@ -81,7 +81,7 @@ async def test_project_catalog_scope_review_and_real_registration(tmp_path):
     for pod in ("synthetic-alpha", "synthetic-beta"):
         store.register(prepare_document(source, {
             "issuer": pod, "program": "demo", "doc_type": "spec", "version": "1",
-            "structure": "prose", 'pod': ('public' if False else ([pod])[0]),
+            'pod': ('public' if False else ([pod])[0]),
         }))
     pin = service.list_documents(pods={"synthetic-alpha"})[0]
     draft = {
@@ -101,9 +101,9 @@ async def test_project_catalog_scope_review_and_real_registration(tmp_path):
         await next_step(pilot)
         assert app.reviewing, str(app.query_one("#status", Static).render())
         assert app.prepared.manifest["boards"][0]["digest"] == board.digest
-        assert app.prepared.manifest["documents"][0]["digest"] == pin["digest"]
+        assert app.prepared.manifest["documents"][0]["document"] == pin["manifest"]["document_id"]
         assert "Pod: synthetic-alpha" in app.review_text()
-        assert "Selected by digest" in app.review_text()
+        assert pin["manifest"]["document_id"] in app.review_text()
         assert "timing: required" in app.review_text()
         assert "precedence" not in app.review_text().lower()
         await next_step(pilot)

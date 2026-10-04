@@ -15,8 +15,8 @@ def document(tmp_path, store, pod='public', name='Manual'):
         'part': 'chip', 'version': 'A',
         'pod': ('public' if pod == 'public' else ([] if pod == 'public' else [pod])[0]),
     })
-    store.register(prepared)
-    return {'digest': prepared.manifest_digest, 'pod': pod}
+    registered = store.register(prepared)
+    return {'digest': registered.manifest_digest, 'pod': pod}
 
 
 def draft(documents, pod='public'):

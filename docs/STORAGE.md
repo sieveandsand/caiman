@@ -5,6 +5,10 @@ compartment, catalog-authorization, and separate-repository-mirror rules below.
 Pods are local folders with optional Git sharing; the Git host owns remote
 permissions. Older sections are retained as design history.
 
+**Current document model:** [DOCUMENT-METADATA.md](DOCUMENT-METADATA.md) supersedes
+the historical document-manifest pin graph and hardware attachment rules below.
+Document references now pin stable IDs and bodies while following current metadata.
+
 **Status:** Accepted. Local storage and Repo Manager repository setup are
 implemented. Team storage (per-compartment Git transport, publication, verified
 fetch, and context snapshots) is adopted (S-35) and not yet implemented; §14 sets
@@ -131,7 +135,7 @@ efficiently. §5 lists the verifiable requirements.
 | R-21 | A published root has a complete retained dependency graph at publication time | R-5 |
 | R-22 | Sessions hold digests; friendly labels never re-resolve during a session | I-4 |
 | R-23 | Local authoring and already-materialized work remain usable without the remote | S-18 |
-| R-24 | Git transport cannot rewrite source Markdown bytes or legacy manifests | S-25, S-11 |
+| R-24 | Git transport cannot rewrite source file bytes or legacy manifests | S-25, S-11 |
 | R-25 | A document-set digest is distinct from a context digest and from a session receipt | §6.7.3 |
 | R-26 | Existing stores migrate without destroying their old objects or pins | S-11 |
 
@@ -143,7 +147,7 @@ efficiently. §5 lists the verifiable requirements.
 | Worktrees may live on a different volume from the store | Must fall back to copying; cross-volume clones and hardlinks are not possible |
 | Separate APFS volumes within one container are distinct filesystems | Volume co-location cannot be assumed from "same disk" |
 | Markdown documents are large — a 2,000-page reference manual is roughly 20 MB | Keep whole files; prefer CoW/link-based materialization to per-session copying |
-| The user supplies already-converted markdown | Source and converter provenance are optional; compute the Markdown digest regardless (S-26) |
+| The user supplies a document in any format | Source and converter provenance are optional; compute the file digest regardless (S-26) |
 | Session harnesses persist plaintext copies of files the agent reads, outside the store | Re-materialization does not fully revoke access; see §9.6 |
 | The initial team is small, with trusted publishers and differing read access | Publisher trust is part of the contract (§9.7); capacity tests use synthetic data |
 | Git offers no transaction across repositories | Publication is dependency-first and root-last, with partial results reported (§7.6.2) |
@@ -160,7 +164,7 @@ mutable and named by a path.
 
 | Object | Mutable | Named by | Contains |
 |---|---|---|---|
-| **Blob** | No | SHA-256 of its bytes | One unchanged Markdown document, or a generated file in a context snapshot |
+| **Blob** | No | SHA-256 of its bytes | One unchanged document, or a generated file in a context snapshot |
 | **Manifest** | No | SHA-256 of its serialized JSON | One version of a document, board, project, document set, or context: its metadata and its references to other objects |
 | **Ref** | Yes | A human-readable path | The digest one name/version currently points to |
 
@@ -179,15 +183,12 @@ manifest sha256:9f3c22de…71        nxp/s32k344 reference-manual rev-4
   └── document.md      → blob sha256:3f9c1a8e…b2 (complete unchanged manual)
 ```
 
-**Pins reference the manifest digest, never a blob digest.** A board version pins
-document manifests; a project version pins board manifests and specification
-document manifests; a session records the project manifest digest.
-
-This satisfies R-4 directly. Correcting a compartment or changing a label
-rewrites the manifest JSON, which changes the manifest digest, while every blob
-digest stays the same. The result is a new document identity over identical
-content — visible to anything holding a pin, and cheap to store because no bytes
-are duplicated.
+**Board/project pins reference configuration manifest digests. Document references
+carry a stable document ID and fixed blob digest.** Every approved metadata edit
+creates a complete manifest pointing to the same body, then advances the document's
+current pointer. Existing consumer snapshots remain unchanged, including old boards;
+normal document views show the current metadata. Exact manifest reads retain history.
+See [DOCUMENT-METADATA.md](DOCUMENT-METADATA.md) for the current authoritative design.
 
 In the local store a ref is a single line holding one manifest digest. In a
 shared repository it is a canonical record with a `generation` counter (§6.6.4).
@@ -272,13 +273,13 @@ that move.
 
 ### 6.3 One document, one content blob
 
-S-25 registers a single Markdown file unchanged. A document manifest references
-exactly one content blob, materialized as `document.md`. There is no splitting,
+S-25 registers a single file of any format unchanged. A document manifest references
+exactly one content blob, materialized at its manifest file path. There is no splitting,
 chunk entity, generated map, or stored navigation index.
 
 A large manual need not be read whole: the agent searches its identifiers and
-headings, then reads a bounded range around the result. Usable source headings
-are required at admission (`ARCHITECTURE.md` §6.4.2).
+headings, then reads a bounded range around the result. Headings are optional; binary formats require suitable readers
+(`ARCHITECTURE.md` §6.4.2).
 
 Identical whole documents deduplicate within a compartment. A changed revision
 has a new whole-file blob even if only a paragraph changed; chapter-level
@@ -312,30 +313,29 @@ unchanged. New schemas for team storage (§6.7) adopt an explicit
 - Every writer, native or Python, must pass the same golden byte/digest vectors.
 
 The existing Python serializer is not assumed to be RFC 8785 compatible. Raw
-Markdown bytes are hashed as SHA-256 with no Unicode or line-ending
+Input bytes are hashed as SHA-256 with no Unicode or line-ending
 normalization.
 
 #### 6.4.1 Document version
 
-New registrations emit `caiman.document.v2`. The document form uses `name` and
-optional `description` instead of a mandatory `doc_type` or `structure` choice.
-An optional `requirements.pattern` enables the same ID validation independently
-of role. Issuer, part/program, version, labels, files, and provenance keep their
-existing meaning. New named document refs use the encoded name in the former
-type path component. Legacy metadata remains supported, including all v1
-manifests and their existing refs; no stored snapshots are rewritten. The
-legacy representation below remains readable.
+New registrations emit `caiman.document.v4` with `document_id` and `previous`. Documents use `name` and optional
+`description`; legacy `doc_type` naming remains accepted. Document `structure`
+and `requirements` metadata have been removed. There is no requirement-ID
+pattern validation. Issuer, exactly one part/program, version, files, and
+optional provenance remain. The owning pod is registration context, not a
+manifest field. Named refs use the encoded document name.
 
-The guided document editor can register metadata revisions using the existing
-blob without the original import file. It validates citation structure and any
-declared ID pattern against the stored bytes. Access labels, file descriptors,
-input filename, pipeline, and ingestion timestamp stay unchanged; the timestamp
-continues to describe ingestion, not a later metadata edit. Changed metadata
-emits the current document schema. Register checks that the original ref still
-names the opened digest, rejects a different target ref that already exists,
-then writes the immutable manifest before publishing its ref. A changed name or
-version creates a separate label; the original label and all old digest pins
-remain available. No-op drafts and cancelled reviews write nothing.
+Read adapters omit retired document fields and translate legacy routing in
+memory; stored snapshots and digest pins are never rewritten. The historical
+representation below remains readable.
+
+Every metadata edit saves a complete immutable manifest revision, linked by
+`previous`. `refs/document-heads/<document_id>` and the named catalog ref point to
+its current manifest. A rename updates only document-owned refs; consumers keep
+their stable ID and blob pins. There are no descriptive metadata overlays.
+Changed file bytes require a new document name or version. No-op edits and
+identical re-imports write nothing. [DOCUMENT-METADATA.md](DOCUMENT-METADATA.md)
+owns current/historical reads, reviewed publication, and recovery.
 
 `public/manifests/sha256/9f/9f3c22de…71`
 
@@ -358,25 +358,17 @@ remain available. No-op drafts and cancelled reviews write nothing.
 }
 ```
 
-A requirement-structured document — a customer specification — differs in two
-fields:
-
-```json
-  "structure": "requirement",
-  "requirements": {
-    "pattern": "^REQ-FLASH-\\d{4}$"
-  },
-```
+The historical `structure` field above and any document `requirements.pattern`
+are ignored by read adapters and are not accepted in new metadata.
 
 | Field | Purpose |
 |---|---|
-| `structure` | All documents require usable headings. `requirement` additionally requires a valid declared ID pattern and matching IDs (I-5); no generated ID index |
 | `labels` | Explicit public access with `compartments: []`, or private access with exactly one name in `compartments`. Empty private labels, mixed public/private labels, multiple entries, and duplicates are rejected on ingestion, registration and read. Included in the manifest digest, per R-4 |
-| `source` | Optional original-source metadata: `sha256` and `pages`, each optional. No source filename is stored. The Markdown digest is separate and always computed |
-| `converter` | Optional provenance: `name`, `version`, and `hosted`, each optional. Missing values mean unknown, including missing `hosted`; see `SECURITY-MODEL.md` §7.2 |
+| `source` | Optional original-source metadata: `sha256` and `pages`, each optional. No source filename is stored. The file digest is separate and always computed |
+| `converter` | Optional provenance: `name` only. Missing values mean unknown; see `SECURITY-MODEL.md` §7.2 |
 | `silicon_revisions` | Which mask revisions this document applies to. Distinct from document version and board version — see `ARCHITECTURE.md`, Data model |
-| `files` | Exactly one entry in the MVP: `document.md`, with the digest and size of the unchanged input. No generated files |
-| `original_filename` | Automatically captured Markdown input basename, the only filename retained. The source basename is assumed to carry over by convention, not verified. Does not determine labels or the materialized path |
+| `files` | Exactly one entry: `document` plus the source's final extension (or `document` without an extension), with the digest and size of the unchanged input. Legacy paths remain unchanged |
+| `original_filename` | Automatically captured input basename, the only filename retained. The source basename is assumed to carry over by convention, not verified. Does not determine labels; its final extension determines the new materialized path |
 
 Classification examples and where each document is published:
 
@@ -394,20 +386,19 @@ optional provenance may add these fields:
 ```json
 {
   "source": { "sha256": "d4e1…", "pages": 2184 },
-  "converter": { "name": "marker", "version": "1.8.2", "hosted": false }
+  "converter": { "name": "marker" }
 }
 ```
 
 Omit unknown subfields and omit an object if it has no supplied fields. Do not
-store empty strings, null placeholders, or a default `hosted: false`. Validate
-supplied values (e.g. a full SHA-256 digest, positive page count, boolean hosted
-flag); the shortened digest above is illustrative. Neither an absent source
+store empty strings or null placeholders. Validate
+supplied values (e.g. a full SHA-256 digest and positive page count); the shortened digest above is illustrative. Neither an absent source
 checksum nor an unknown converter blocks registration. A checksum, when supplied,
 is asserted provenance; the original file is not required to verify it at ingest.
 Matching filenames alone do not prove which source produced the Markdown.
 
 The TUI's optional provenance fields map directly to these objects. The required
-content checksum in `files[0].sha256` always identifies the unchanged Markdown,
+content checksum in `files[0].sha256` always identifies the unchanged input file,
 independently of whether provenance was supplied (S-26).
 
 #### 6.4.1a Document collections
@@ -495,7 +486,7 @@ Authoring writes `caiman.board.v2`.
 | `notes` | Optional unstructured board notes |
 | `documents` | Assembly documents, such as a user guide or schematic |
 | `parts` | Nonempty list with unique `role` values |
-| `parts[].vendor`, `parts[].part` | Separate identity fields, matched to document `issuer` and `part` |
+| `parts[].vendor`, `parts[].part` | Declared hardware identity; does not constrain document attachments |
 | `parts[].documents` | Document selectors; may be empty |
 | `parts[].silicon_revision` | Optional declared revision |
 | `parts[].aliases` | Declared string pairs such as `refdes`, `mpn`, or `devicetree` |
@@ -506,11 +497,9 @@ Authoring writes `caiman.board.v2`.
 
 Roles identify parts. Aliases are cross-reference metadata, never the identity
 or display name (S-12). Link endpoints name a role or `role.PERIPHERAL`.
-A part's documents must match its vendor and part; documents carrying `program`
-instead of `part` cannot be pinned there. Board-level documents match
-`<vendor>/<board>`. When both document applicability and a part's silicon
-revision are supplied, they must agree; missing revisions are not inferred.
-Boards contain no customer or project fields and pin only public documents.
+Document attachments are user declarations. Issuer, part/program, and silicon
+revisions do not restrict attachments to a board or part. Board-level vendor is
+optional even with documents. Boards can reference documents across available pods.
 
 Notes on boards, parts, links, and selectors remain unstructured; Caiman does
 not interpret them as facts or branch on their contents (S-15).
@@ -532,32 +521,12 @@ editor does not author legacy boards; see [editing](../README.md#edit-an-existin
 
 ##### Document selectors
 
-Draft document entries accept `ref` or a full `sha256:…` manifest `digest`, with
-an optional `compartment`. Use the catalog's percent-encoded ref paths so opaque
-labels cannot become filesystem traversal. Ambiguous refs require an explicit
-compartment or digest.
-
-Review stores a resolved digest and storage compartment for every entry. A
-supplied ref remains diagnostic metadata; digest-only entries need not invent
-one. If both are supplied, the digest is authoritative. Loading or registering a
-snapshot never adopts a newer ref target. Feature selectors bind to already
-selected project pins. See the [README workflow](../README.md#json-drafts-and-document-selectors).
-
-Board manifests live under public; project manifests live under their declared
-compartments. Configuration refs use `refs/boards/<name>/<version>` or
-`refs/projects/<name>/<version>`. Components are reversibly percent-encoded,
-including special handling of dot-only labels. Version semantics remain opaque.
-Registering a configuration verifies all pinned manifests and document blobs
-before writing. There is no reliance on current ref targets after review.
-Catalog and version listings omit entries that require additional compartments;
-explicit reads still deny access, and corruption is reported rather than hidden.
-
-`derives_from` and `relation` are declared by a human and are never computed
-(I-8). The stored manifest is a complete snapshot, not a delta against its
-parent: authoring may express a change as "start from 2.0 and modify these three
-parts", but what is written is the full part list (S-11). Deleting the
-`derives_from` edge would cost only the brief's change summary; everything still
-resolves.
+Draft document entries accept an encoded `ref`, a manifest `digest`, or a stable
+`document` ID with a pinned `blob`, routed by `pod`. Saving resolves named/digest
+selections to `{pod, document, blob}`. Normal reads follow the document's current
+approved complete manifest and verify its fixed body. Project feature documents
+must belong to the project's declared document set. See the
+[document manifest workflow](DOCUMENT-METADATA.md).
 
 #### 6.4.3 Project version
 
@@ -826,7 +795,11 @@ placeholders; real digests have an algorithm prefix and 64 lowercase hex digits.
 Changing the manual's bytes produces a new blob and document manifest. Adopting
 that manifest creates a new board digest; adopting the new board creates a new
 project digest. Existing snapshots do not change and stay pinned to the old
-manual.
+manual body. Every metadata edit writes a complete document manifest but leaves
+consumer snapshots unchanged; document references resolve the latest approved
+metadata. The diagram describes the historical digest-only model; current
+references use stable document IDs and blob pins as documented in
+[DOCUMENT-METADATA.md](DOCUMENT-METADATA.md).
 
 ```mermaid
 flowchart LR
@@ -953,13 +926,12 @@ names do not imply matching access.
 
 ### 7.1 Ingest
 
-Input: one UTF-8 Markdown file plus the reviewed TUI manifest draft, with
+Input: one readable file of any format plus the reviewed TUI manifest draft, with
 explicit document labels and optional source/converter provenance.
 Output: one immutable document version manifest reachable by a ref.
 
-1. Validate metadata and explicit labels. Validate usable headings for every
-   document and the declared ID pattern for `requirement` documents, following
-   `ARCHITECTURE.md` §6.4.2. Reject failures without registering a version.
+1. Validate metadata and the selected pod. Check file readability, without
+   decoding or validating content (`ARCHITECTURE.md` §6.4.2).
 2. Compute the digest of the exact input bytes and prepare the registration
    summary for the TUI review step (§6.4.3 of `ARCHITECTURE.md`). No transformation,
    generated map, or AI call occurs.
@@ -968,7 +940,8 @@ Output: one immutable document version manifest reachable by a ref.
    An existing identical blob is a no-op.
 4. `fsync` the blob.
 5. Serialize and write the manifest canonically, with exactly one `files` entry
-   named `document.md`, the original filename, and whole-document metadata.
+   named `document` plus the source final extension, the original filename, and
+   whole-document metadata.
 6. `fsync` the manifest.
 7. Write or repoint `refs/documents/<issuer>/<part>/<doc_type>/<version>`.
 
@@ -1023,7 +996,7 @@ session workspace.
 4. Build the workspace in a sibling staging directory with restrictive
    permissions. Validate every path and verify every byte. For each visible
    document, create its directory under `documents/` and link its single content
-   blob as `document.md`.
+   blob at its manifest file path.
 5. Write `_index.md`, listing what was materialized and **what was omitted and
    why**.
 6. Write `project.json` — the resolved project structure, fully expanded.
@@ -1100,8 +1073,10 @@ document that never contained it.
 
 `documents/nxp/s32k344/reference-manual@rev-4/document.md` encodes issuer, part,
 document type, and version. A `grep` hit therefore yields document identity and
-version directly from the file path; the locator — a heading path or a
-requirement ID — comes from the matched text.
+version directly from the file path. This Markdown example uses a heading path
+or requirement ID from the matched text as its locator. Other formats retain
+their manifest filename and use a source-appropriate locator such as a page or
+sheet/cell.
 
 This satisfies I-5 through the directory layout rather than through a metadata
 lookup. There is no sidecar file to read, nothing that can fall out of sync with
@@ -1623,7 +1598,7 @@ documents in tests or CI.
 | T-12 | Check modes of every materialized file | All `0444` (R-6) |
 | T-13 | Resolve a project name with no version | Returns the version list; does not resolve (R-3) |
 | T-14 | Resolve a project version whose board ref was repointed after pinning | Resolves the originally pinned board digest (I-4) |
-| T-15 | Ingest a `requirement` document with headings but no matching requirement IDs | Rejected at ingest (I-5) |
+| T-15 | Ingest a specification with no headings or requirement IDs | Accepted unchanged; no ID admission checks (I-5) |
 | T-16 | Register and materialize Markdown with CRLF, tables, and code fences | Input and output bytes match exactly; one content blob and no generated map (S-25) |
 | T-17 | Load a stored `caiman.board/1` board after v2 exists | Validates unchanged, pins by its packed identity, keeps its `refdes`, and its declared literal is never rewritten (S-11, S-31) |
 | T-18 | Pin a board-level document whose issuer/part is not `<vendor>/<board>`, and a part document carrying a `program` | Both rejected; the packed v1 identity could express neither (S-31) |
@@ -1644,7 +1619,7 @@ documents in tests or CI.
 | T-33 | Clone a restricted repository as a host identity without access | Refused by the host; tested with distinct users, not Caiman's local filters (R-16) |
 | T-34 | Materialize the same documents in two sessions | Same document-set digest despite different session IDs (R-25) |
 | T-35 | Change precedence only | Project and context digests change; document-set digest does not (R-25) |
-| T-36 | Change a document's metadata over identical bytes | Document-set digest changes (§6.7.3) |
+| T-36 | Change a document's metadata over identical bytes | Complete new manifest; current metadata follows stable references while bodies and consumers stay fixed ([metadata workflow](DOCUMENT-METADATA.md)) |
 | T-37 | Change only the mode | Context digest changes (R-25) |
 | T-38 | Resolve a bare digest with no configured route | Does not resolve (§6.7.2) |
 | T-39 | Reconstruct a shared context on a fresh authorized machine | Byte-for-byte identical (R-15) |
@@ -1653,6 +1628,11 @@ documents in tests or CI.
 | T-42 | Materialize a withdrawn artifact online | Refused, with the advisory nature reported (§8.3) |
 | T-43 | Repoint labels after pinning, then reconstruct old versions | Old pins survive (R-22) |
 | T-44 | Restore from backup onto a clean machine | Includes external dependency compartments (§8.7) |
+| T-45 | Read malformed original filenames or manifest file paths | Controlled store error; no invalid path admitted |
+| T-46 | Sync and clone a binary document, then edit metadata and sync back | Blob bytes and extension survive; old snapshots remain available |
+| T-47 | Interrupt document head/catalog publication between ref writes | Previous refs restored on failure or reopening; immutable snapshots retained |
+| T-48 | Add/change a usage after review or save an older open configuration draft | Stale operation rejected before ref changes |
+| T-49 | Point a document head at another identity or body | Current read rejects it; exact historical read stays intact |
 
 T-14 is the test that directly covers §2.2, and it should exist before the store
 is considered done.
@@ -1736,7 +1716,7 @@ not change the single-compartment rule. The recovery point must be chosen before
 real team rollout.
 
 **Document granularity was resolved by S-25 (2026-09-15).** Each document is one
-unchanged Markdown blob with document-level labels. There are no stored chunks
+unchanged file blob in its owning pod. There are no stored chunks
 or generated maps. A future retrieval design can derive its own index without
 changing the registered source artifact.
 

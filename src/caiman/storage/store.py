@@ -14,8 +14,8 @@ import stat
 import tempfile
 from urllib.parse import quote
 
-from caiman.documents.ingest import PreparedDocument, validate_metadata, verify_prepared
-from caiman.documents.models import canonical_json, is_schema
+from caiman.documents.ingest import PreparedDocument, document_path, validate_metadata, verify_prepared
+from caiman.documents.models import canonical_json, is_schema, valid_identifier
 
 
 class StoreError(ValueError):
@@ -53,12 +53,23 @@ def _component(value: str) -> str:
 def _validate_manifest(manifest: dict) -> None:
     if not isinstance(manifest, dict) or not is_schema("document", manifest.get("schema")):
         raise StoreError("Not a document manifest")
-    generated = {"schema", "original_filename", "pipeline_version", "ingested_at", "files"}
+    generated = {"schema", "original_filename", "pipeline_version", "ingested_at", "files", "document_id", "previous"}
     validate_metadata({key: value for key, value in manifest.items() if key not in generated})
+    if manifest['schema'] == 'caiman.document.v4':
+        if not valid_identifier(manifest.get('document_id')) or 'previous' not in manifest:
+            raise StoreError('Manifest must identify its document and previous revision')
+        if manifest['previous'] is not None:
+            _hex(manifest['previous'])
+    filename = manifest.get("original_filename")
+    if (not isinstance(filename, str) or not filename.strip()
+            or Path(filename).name != filename or filename in {'.', '..'}
+            or any(ord(char) < 32 or ord(char) == 127 for char in filename)):
+        raise StoreError("Manifest must name the original input basename")
     files = manifest.get("files")
     if (not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], dict)
             or set(files[0]) != {"path", "sha256", "size"}
-            or files[0]["path"] != "document.md"
+            or not isinstance(files[0]["path"], str)
+            or files[0]["path"] not in {"document.md", document_path(filename)}
             or type(files[0]["size"]) is not int or files[0]["size"] < 0):
         raise StoreError("Manifest must describe exactly one unchanged document blob")
     _hex("sha256:" + str(files[0]["sha256"]))
@@ -79,6 +90,14 @@ class Store:
         self.root = root.parent.resolve() / root.name
         from caiman.pods.service import PodRegistry
         self.pods = PodRegistry(self)
+        from caiman.storage.transactions import JOURNAL
+        if (self.root / JOURNAL).exists() or (self.root / JOURNAL).is_symlink():
+            with self.locked():
+                pass
+
+    def locked(self):
+        from caiman.storage.transactions import locked
+        return locked(self)
 
     def pod_path(self, pod):
         return self.pods.resolve(pod)["path"]
@@ -125,6 +144,8 @@ class Store:
         return self.pod_path(pod) / kind / "sha256" / value[:2] / value
 
     def _read(self, path: Path) -> bytes:
+        from caiman.storage.transactions import check_read
+        check_read(self)
         self._directory(path.parent)
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -143,6 +164,10 @@ class Store:
 
     def read_blob(self, pod: str, digest: str) -> bytes:
         return self._read_object(pod, "blobs", digest)
+
+    def has_object(self, pod, kind, digest):
+        path = self._path(pod, kind, digest)
+        return path.exists() or path.is_symlink()
 
     def read_manifest(self, pod: str, digest: str) -> dict:
         content = self._read_object(pod, "manifests", digest)
@@ -194,18 +219,44 @@ class Store:
 
     def register(self, prepared: PreparedDocument) -> Registration:
         verify_prepared(prepared)
+        _validate_manifest(prepared.manifest)
+        with self.locked():
+            return self._register(prepared)
+
+    def _register(self, prepared: PreparedDocument) -> Registration:
+        verify_prepared(prepared)
         manifest = prepared.manifest
         _validate_manifest(manifest)
         pod = self.pods.resolve(prepared.pod)["id"]
         content = canonical_json(manifest)
         if _digest(content) != prepared.manifest_digest or _digest(prepared.content) != prepared.blob_digest:
             raise StoreError("Prepared document digest mismatch")
-        if manifest["files"][0] != {"path": "document.md", "sha256": _hex(prepared.blob_digest), "size": len(prepared.content)}:
+        if manifest["files"][0] != {"path": document_path(prepared.source_path.name), "sha256": _hex(prepared.blob_digest), "size": len(prepared.content)}:
             raise StoreError("Manifest does not describe prepared document bytes")
         ref = self.pod_path(pod) / "refs" / "documents" / document_ref(manifest)
+        if ref.exists() or ref.is_symlink():
+            previous_digest = self._read(ref).decode('ascii').strip()
+            previous = self.read_manifest(pod, previous_digest)
+            if previous['files'][0]['sha256'] != _hex(prepared.blob_digest):
+                raise StoreError('This document already contains a different file; use a new document name or version')
+            from caiman.documents.ingest import METADATA_FIELDS
+            current = previous
+            if ({key: value for key, value in current.items() if key in METADATA_FIELDS}
+                    != {key: value for key, value in manifest.items() if key in METADATA_FIELDS}
+                    or current['files'] != manifest['files']):
+                raise StoreError('This document is already registered; edit its metadata or use a new name or version')
+            self.read_blob(pod, prepared.blob_digest)
+            for kind, value in (('blobs', prepared.blob_digest), ('manifests', previous_digest)):
+                if stat.S_IMODE(self._path(pod, kind, value).lstat().st_mode) != 0o444:
+                    raise StoreError('Existing immutable object must have mode 0444')
+            return Registration(previous_digest, prepared.blob_digest, ref, pod)
         # Source verification and all input checks precede the first mkdir.
         self.pods.ensure(pod)
         self._write_object(pod, "blobs", prepared.blob_digest, prepared.content)
         self._write_object(pod, "manifests", prepared.manifest_digest, content)
-        self._atomic_write(ref, (prepared.manifest_digest + "\n").encode(), immutable=False)
+        from caiman.documents.revisions import DocumentRevisions
+        from caiman.storage.transactions import publish
+        current = DocumentRevisions(self).ref(pod, manifest['document_id'])
+        publish(self, [{'path': path.relative_to(self.root).as_posix(), 'before': None,
+                        'after': prepared.manifest_digest + '\n'} for path in (current, ref)])
         return Registration(prepared.manifest_digest, prepared.blob_digest, ref, pod)

@@ -41,6 +41,17 @@ def test_example_graph_and_repeat_import(tmp_path):
     assert len(service.list_configs('project')) == 4
     documents = service.list_documents()
     assert len(documents) == 11
+    # Fixtures must exercise the current model directly, including the editor
+    # entry point that previously failed on documents without a stable ID.
+    from caiman.documents.edit_service import DocumentEditService
+    from caiman.documents.models import current_schema
+    editor = DocumentEditService(service.store)
+    for record in documents:
+        assert record['manifest']['schema'] == current_schema('document')
+        assert record['manifest']['document_id']
+        assert record['manifest']['previous'] is None
+        assert editor.original(record) == record['manifest']
+        assert editor.prepare(record, record['manifest']).mode == 'unchanged'
     assert len(CollectionService(Store(root)).list_collections()) == 2
     # Feature IDs really exist in their pinned governing documents; the generic
     # service validates selector shape but deliberately does not interpret IDs.
@@ -48,14 +59,14 @@ def test_example_graph_and_repeat_import(tmp_path):
     for record in projects:
         for feature in record['manifest']['features']:
             for pin in feature['governed_by']:
-                manifest = store.read_manifest('public', pin['digest'])
+                manifest = service.document_record(pin)['manifest']
                 body = store.read_blob('public', 'sha256:' + manifest['files'][0]['sha256']).decode()
                 for requirement in pin['requirements']:
                     assert re.search(r'^' + re.escape(requirement) + ':', body, re.MULTILINE)
     sound1 = service.load('project', 'microbit-sound', 'R1-v1.3', pods={'demo-microbit'})
     sound2 = service.load('project', 'microbit-sound', 'R2-v2', pods={'demo-microbit'})
     assert sound1['boards'][0]['digest'] != sound2['boards'][0]['digest']
-    assert set(d['digest'] for d in sound1['documents']) < set(d['digest'] for d in sound2['documents'])
+    assert set(d['document'] for d in sound1['documents']) < set(d['document'] for d in sound2['documents'])
     hid = service.load('project', 'macropad-hid', 'R1', pods={'demo-macropad'})
     tone = service.load('project', 'macropad-tone', 'R1', pods={'demo-macropad'})
     assert hid['boards'] == tone['boards']

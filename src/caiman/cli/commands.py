@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     session = commands.add_parser('session', help='Non-interactive harness callbacks')
     session.add_subparsers(dest='session_action', required=True).add_parser('start', help='Introduce Caiman to a session')
     ingest = commands.add_parser("ingest", help="Open the document ingestion TUI")
-    ingest.add_argument("markdown", nargs="?", type=Path, help="Prepared Markdown file")
+    ingest.add_argument("file", nargs="?", type=Path, help="Document file (any format)")
     ingest.add_argument("--store", type=Path, help="Local store path (overrides config.toml)")
     _config_commands(commands)
     little = commands.add_parser("little", help="Little caiman: watch a session's managed-document use")
@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         from caiman.dashboard.workflow import run_workflow
 
-        return run_workflow(root, source_path=getattr(args, 'markdown', None), ingest=args.command == 'ingest')
+        return run_workflow(root, source_path=getattr(args, 'file', None), ingest=args.command == 'ingest')
     except (OSError, ValueError) as error:
         print(f"caiman: {error}", file=sys.stderr)
         return 1

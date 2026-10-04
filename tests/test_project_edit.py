@@ -19,7 +19,7 @@ def project_setup(tmp_path):
     source.write_text('# Specification\n\n## Boot\nREQ-1 Synthetic.\n')
     registered = store.register(prepare_document(source, {
         'issuer': 'synthetic-oem', 'program': 'flight', 'doc_type': 'spec', 'version': '1',
-        'structure': 'prose', 'pod': ('alpha')}))
+        'pod': ('alpha')}))
     ref = registered.ref_path.relative_to(root / 'alpha' / 'refs' / 'documents').as_posix()
     service.register(service.prepare('board', {'board': 'demo', 'version': 'v1', 'parts': [
         {'role': 'mcu', 'vendor': 'synthetic', 'part': 'chip', 'documents': []}], 'links': []}))
@@ -137,15 +137,18 @@ def test_renaming_onto_another_project_is_refused(project_setup):
     assert snapshot(root) == before
 
 
-def test_edit_leaves_a_label_repointed_elsewhere_alone(project_setup):
+def test_edit_rejects_a_label_repointed_elsewhere(project_setup):
     root, service, selection, _ = project_setup
     moved = deepcopy(selection['manifest'])
     moved['spec_set'] = 'release A, deviation 1'
     service.register(service.prepare('project', moved, pod=selection['pod']))
     edited = deepcopy(selection['manifest'])
     edited['version'] = 'B'
-    service.register(service.prepare('project', edited, pod=selection['pod']), replaces=selection)
-    assert {record['version'] for record in service.list_configs('project', pods={'alpha'})} == {'A', 'B'}
+    before = snapshot(root)
+    with pytest.raises(ValueError, match='changed since opening'):
+        service.register(service.prepare('project', edited, pod=selection['pod']), replaces=selection)
+    assert snapshot(root) == before
+    assert {record['version'] for record in service.list_configs('project', pods={'alpha'})} == {'A'}
 
 
 def test_delete_removes_the_project_but_keeps_its_snapshot(project_setup):

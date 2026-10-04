@@ -6,11 +6,11 @@ import json
 from pathlib import Path
 from urllib.parse import unquote
 
-from caiman.configurations.models import (board_is_legacy, project_boards, validate_board, validate_project,
+from caiman.configurations.models import (project_boards, validate_board, validate_project,
                                           validate_project_links)
 from caiman.documents.models import canonical_json, is_schema, valid_identifier
 from caiman.storage.legacy import manifest_view
-from caiman.storage.store import Store, StoreError, _component, _hex
+from caiman.storage.store import Store, StoreError, _component, _hex, document_ref
 
 
 @dataclass(frozen=True)
@@ -61,42 +61,73 @@ class ConfigurationService:
         _hex(digest)
         return digest
 
-    def _document(self, selector: dict, *, pinned: bool = False) -> tuple[dict, dict]:
+    def _document(self, selector: dict, *, pinned: bool = False, historical: bool = False) -> tuple[dict, dict]:
+        selected, _, manifest = self._resolve_document(selector, pinned=pinned, historical=historical)
+        return selected, manifest
+
+    def _resolve_document(self, selector: dict, *, pinned=False, historical=False):
+        """Return the reference, actual stored revision digest, and manifest together."""
+        from caiman.documents.revisions import DocumentRevisions
         result = deepcopy(selector)
-        if pinned and ("digest" not in result or "pod" not in result):
-            raise StoreError("Stored document selectors must contain immutable digest and pod")
-        if "ref" in result:
-            relative = _ref_path(result["ref"])
-        else:
-            relative = None
-        candidates = {self.store.pods.resolve(result["pod"])["id"]} if "pod" in result else self.store.pods.selected()
+        if ('document' in result) != ('blob' in result):
+            raise StoreError('Document references require both document ID and blob')
+        if 'document' in result and ('ref' in result or 'digest' in result):
+            raise StoreError('Use either document ID and blob, or a ref/manifest digest')
+        if pinned and ('pod' not in result or not (
+                {'document', 'blob'} <= result.keys() or 'digest' in result)):
+            raise StoreError('Stored document selectors must contain a document ID, blob and pod')
+        relative = _ref_path(result['ref']) if 'ref' in result else None
+        candidates = {self.store.pods.resolve(result['pod'])['id']} if 'pod' in result else self.store.pods.selected()
         matches = []
         for pod in sorted(candidates):
-            if "digest" in result:
-                digest = result["digest"]
-                path = self.store._path(pod, "manifests", digest)
-            else:
-                if relative is None:
-                    raise StoreError("Document needs a ref or digest")
-                path = self.store.pod_path(pod) / "refs" / "documents" / relative
-                if not path.exists() and not path.is_symlink():
+            if 'document' in result:
+                if 'blob' not in result:
+                    raise StoreError('Document references must pin a blob')
+                _hex(result['blob'])
+                head = DocumentRevisions(self.store).ref(pod, result['document'])
+                if not head.exists() and not head.is_symlink():
                     continue
-                digest = self._read_ref(path)
-            if not path.exists() and not path.is_symlink():
-                continue
-            manifest = self.store.read_manifest(pod, digest)
-            entry = manifest["files"][0]
-            blob = self.store.read_blob(pod, "sha256:" + entry["sha256"])
-            if len(blob) != entry["size"]:
-                raise StoreError("Document blob size does not match its manifest")
-            matches.append((pod, digest, manifest))
+                value, manifest = DocumentRevisions(self.store).current(pod, result['document'], result['blob'])
+            else:
+                if 'digest' in result:
+                    value = result['digest']
+                    if not self.store.has_object(pod, 'manifests', value):
+                        continue
+                else:
+                    if relative is None:
+                        raise StoreError('Document needs a ref, manifest digest or document ID')
+                    path = self.store.pod_path(pod) / 'refs' / 'documents' / relative
+                    if not path.exists() and not path.is_symlink():
+                        continue
+                    value = self._read_ref(path)
+                manifest = self.store.read_manifest(pod, value)
+                if not historical and 'document_id' in manifest:
+                    value, manifest = DocumentRevisions(self.store).current(
+                        pod, manifest['document_id'], 'sha256:' + manifest['files'][0]['sha256'])
+            entry = manifest['files'][0]
+            blob = self.store.read_blob(pod, 'sha256:' + entry['sha256'])
+            if len(blob) != entry['size']:
+                raise StoreError('Document blob size does not match its manifest')
+            matches.append((pod, value, manifest))
         if not matches:
-            raise StoreError("Document dependency is unavailable locally; add its pod or sync it")
-        if len({digest for _, digest, _ in matches}) != 1:
-            raise StoreError("Ambiguous document ref; declare its pod or digest")
-        pod, digest, manifest = matches[0]
-        result.update(digest=digest, pod=pod)
-        return result, manifest
+            raise StoreError('Document dependency is unavailable locally; add its pod or sync it')
+        if len(matches) != 1:
+            raise StoreError('Ambiguous document ref; declare its pod or digest')
+        pod, value, manifest = matches[0]
+        result['pod'] = pod
+        if 'document_id' in manifest:
+            result.pop('digest', None)
+            result.pop('ref', None)
+            result.update(document=manifest['document_id'], blob='sha256:' + manifest['files'][0]['sha256'])
+        else:
+            result['digest'] = value
+        return result, value, manifest
+
+    def document_record(self, selector, *, pinned=False):
+        selected, value, manifest = self._resolve_document(selector, pinned=pinned)
+        return {'pod': selected['pod'], 'digest': value,
+                'ref': document_ref(manifest).as_posix(),
+                'pod_name': self.store.pod_name(selected['pod']), 'manifest': manifest}
 
     def _read_config(self, kind: str, pod: str, digest: str, allowed: set[str]) -> dict:
         content = self.store._read_object(pod, "manifests", digest)
@@ -125,43 +156,17 @@ class ConfigurationService:
                 if 'digest' not in board:
                     raise StoreError('Stored board selector must contain immutable digest')
         for pin in pins:
-            if 'digest' not in pin or 'pod' not in pin:
-                raise StoreError('Stored document selectors must contain immutable digest and pod')
+            if 'pod' not in pin or not ({'document', 'blob'} <= pin.keys() or 'digest' in pin):
+                raise StoreError('Stored document selectors must contain document ID, blob and pod')
         return manifest
 
     def _pin(self, kind: str, manifest: dict, *, pinned: bool = False) -> dict:
         result = deepcopy(manifest)
         if kind == "board":
-            legacy = board_is_legacy(result)
-            if not legacy and "documents" in result:
-                # A board-level document is issued by the board's own vendor and
-                # names the assembly, not a part: the board user guide, stackup
-                # or assembly errata that no part instance can carry.
-                documents = []
-                for selector in result["documents"]:
-                    selected, document = self._document(selector, pinned=pinned)
-                    if (document["issuer"], document.get("part")) != (result.get("vendor"), result["board"]):
-                        raise StoreError("Board document issuer/part does not match this board assembly")
-                    documents.append(selected)
-                result["documents"] = documents
-            for part in result["parts"]:
-                documents = []
-                for selector in part.get("documents", []):
-                    selected, document = self._document(selector, pinned=pinned)
-                    if legacy:
-                        matches = part["part"] == document["issuer"] + "/" + document.get("part", "")
-                    else:
-                        # Two field comparisons, not a rebuilt string: this is
-                        # also where a document carrying a program rather than a
-                        # part is rejected, which the packed form could not say.
-                        matches = (document["issuer"], document.get("part")) == (part["vendor"], part["part"])
-                    if not matches:
-                        raise StoreError("Board document issuer/part does not match its part instance")
-                    revisions = document.get("silicon_revisions", [])
-                    if revisions and "silicon_revision" in part and part["silicon_revision"] not in revisions:
-                        raise StoreError("Board silicon revision is outside document applicability")
-                    documents.append(selected)
-                part["documents"] = documents
+            if 'documents' in result:
+                result['documents'] = [self._document(pin, pinned=pinned)[0] for pin in result['documents']]
+            for part in result['parts']:
+                part['documents'] = [self._document(pin, pinned=pinned)[0] for pin in part.get('documents', [])]
             return result
         allowed = self.store.pods.selected()
         boards = []
@@ -198,20 +203,11 @@ class ConfigurationService:
         for feature in result.get("features", []):
             documents = []
             for selector in feature.get("governed_by", []):
-                # Bind feature declarations to the already selected project set,
-                # never to a newer target of a mutable document ref.
-                matches = [entry for entry in governing
-                           if (("digest" in selector and entry["digest"] == selector["digest"])
-                               or ("digest" not in selector and entry.get("ref") == selector.get("ref")))
-                           and ("pod" not in selector or entry["pod"] == selector["pod"])]
-                if not matches:
+                selected, _ = self._document(selector, pinned=pinned)
+                def identity(pin):
+                    return (pin['pod'], pin.get('document', pin.get('digest')), pin.get('blob'))
+                if not any(identity(selected) == identity(entry) for entry in governing):
                     raise StoreError("Feature governing document must belong to the project's documents")
-                if len({entry["digest"] for entry in matches}) != 1:
-                    raise StoreError("Ambiguous feature governing ref within pinned project documents")
-                selected = deepcopy(selector)
-                if not pinned:
-                    selected.update(digest=matches[0]["digest"], pod=matches[0]["pod"])
-                selected, _ = self._document(selected, pinned=pinned)
                 documents.append(selected)
             if "governed_by" in feature:
                 feature["governed_by"] = documents
@@ -234,6 +230,8 @@ class ConfigurationService:
         location = self.store.pods.resolve(target)["id"]
         manifest = validate_board(data) if kind == "board" else validate_project(data)
         manifest = self._pin(kind, manifest)
+        # Different input refs/revisions may resolve to the same stable document.
+        manifest = validate_board(manifest) if kind == 'board' else validate_project(manifest)
         return PreparedConfig(kind, manifest, _digest(manifest), location)
 
     def register(self, prepared: PreparedConfig, *, replaces: dict | None = None,
@@ -246,6 +244,13 @@ class ConfigurationService:
         ``require_new_label`` preserves the source ref while refusing to repoint
         an existing target label, as when a board edit declares a new version.
         """
+        manifest = validate_board(prepared.manifest) if prepared.kind == 'board' else validate_project(prepared.manifest)
+        if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, pinned=True):
+            raise StoreError('Configuration changed after review; prepare it again')
+        with self.store.locked():
+            return self._register(prepared, replaces=replaces, require_new_label=require_new_label)
+
+    def _register(self, prepared, *, replaces=None, require_new_label=False):
         _kind(prepared.kind)
         manifest = validate_board(prepared.manifest) if prepared.kind == "board" else validate_project(prepared.manifest)
         if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, pinned=True):
@@ -262,6 +267,10 @@ class ConfigurationService:
                 or prepared.pod != replaces.get("pod", prepared.pod)):
                 if any(ref.exists() or ref.is_symlink() for ref in refs):
                     raise StoreError("Another configuration already uses this name and version")
+            opened_ref = self._config_path(prepared.kind, previous[prepared.kind], previous['version'],
+                                           replaces.get('pod', prepared.pod))
+            if not opened_ref.exists() or self._read_ref(opened_ref) != replaces['digest']:
+                raise StoreError('Configuration changed since opening; reopen it before saving')
             old = (replaces.get("pod", prepared.pod),)
             stale = tuple(path for pod in old
                           if (path := self._config_path(prepared.kind, previous[prepared.kind], previous["version"],
@@ -292,6 +301,10 @@ class ConfigurationService:
         digest still resolves (I-4). Refuses if any ref no longer names
         ``digest``: the configuration changed after it was shown.
         """
+        with self.store.locked():
+            return self._unregister(kind, manifest, digest, pod=pod)
+
+    def _unregister(self, kind, manifest, digest, *, pod):
         _kind(kind)
         _hex(digest)
         pods = (pod,)
@@ -404,6 +417,5 @@ class ConfigurationService:
                     self.store._directory(path)
                     continue
                 ref = path.relative_to(directory).as_posix()
-                selector, manifest = self._document({"ref": ref, "pod": pod})
-                records.append({"pod": pod, "digest": selector["digest"], "ref": ref, "pod_name": self.store.pod_name(pod), "manifest": manifest})
+                records.append(self.document_record({"ref": ref, "pod": pod}))
         return records

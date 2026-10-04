@@ -133,7 +133,7 @@ def test_direct_store_blob_reads_are_observed(tmp_path, workspace):
     tracker.poll()
     [usage] = tracker.ranked()
     assert usage.ref.location == 'store' and usage.ref.pod == 'oem-alpha' and usage.ref.version is None
-    assert usage.sections == {'Flash Controller': 1}
+    assert usage.sections == {'Lines 1–4': 1}
     assert tracker.integrity(usage.ref).state == 'intact'
 
 
@@ -261,3 +261,33 @@ async def test_usage_card_collapses_long_section_lists(tmp_path, workspace):
         await pilot.press('enter')
         await pilot.pause()
         assert 'more' not in card.label.plain and 'Top › Section 7' in card.label.plain
+
+
+@pytest.mark.parametrize('filename', ['document.pdf', 'document.docx', 'document'])
+def test_resolver_identifies_arbitrary_document_formats(tmp_path, filename):
+    from caiman.little_caiman.service import Resolver
+
+    path = tmp_path / '.caiman' / 'documents' / 'issuer' / 'manual@v1' / filename
+    ref = Resolver(tmp_path, None).identify(path)
+    assert ref.path == path
+    assert ref.name == 'issuer/manual'
+    assert ref.version == 'v1'
+
+
+@pytest.mark.parametrize('filename,content', [
+    ('document.pdf', b'%PDF-1.7\n# Not a Markdown heading\n'),
+    ('document.docx', b'PK\x00\xff\n# Not a Markdown heading\n'),
+    ('document.md', b'\xff\n# Not valid UTF-8 Markdown\n'),
+    ('document', b'\x00\n# Binary bytes\n'),
+])
+def test_binary_reads_do_not_invent_markdown_sections(tmp_path, filename, content):
+    path = tmp_path / '.caiman' / 'documents' / 'issuer' / 'manual@v1' / filename
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    session = claude_session(tmp_path, tmp_path, [
+        claude_call('Read', {'file_path': str(path), 'offset': 2, 'limit': 1}, tmp_path)])
+    tracker = UsageTracker(session, None)
+    tracker.poll()
+    [usage] = tracker.ranked()
+    assert usage.reads == 1
+    assert usage.sections == {'Lines 2–2': 1}

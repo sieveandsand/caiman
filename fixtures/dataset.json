@@ -1,5 +1,5 @@
 {
-  "format": "caiman.examples.v1",
+  "format": "caiman.examples.v2",
   "documents": [
     {
       "path": "documents/microbit-v1-hardware.md",
@@ -8,14 +8,10 @@
         "issuer": "microbit",
         "version": "v1.3-zephyr-4.2.0",
         "doc_type": "integration-notes",
-        "structure": "prose",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "part": "bbc-microbit",
         "name": "micro:bit v1.3 integration notes"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/microbit-v2-hardware.md",
@@ -24,14 +20,10 @@
         "issuer": "microbit",
         "version": "v2-zephyr-4.2.0",
         "doc_type": "integration-notes",
-        "structure": "prose",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "part": "bbc-microbit",
         "name": "micro:bit v2 integration notes"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/zephyr-sound-guide.md",
@@ -40,14 +32,10 @@
         "issuer": "zephyr",
         "version": "4.2.0",
         "doc_type": "integration-notes",
-        "structure": "prose",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "program": "microbit-sound",
         "name": "Zephyr micro:bit sound application"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/macropad-hardware.md",
@@ -56,14 +44,10 @@
         "issuer": "adafruit",
         "version": "circuitpython-9.2.8",
         "doc_type": "integration-notes",
-        "structure": "prose",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "part": "macropad-rp2040",
         "name": "MacroPad RP2040 integration notes"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/macropad-library.md",
@@ -72,14 +56,10 @@
         "issuer": "adafruit",
         "version": "c3b6a690",
         "doc_type": "integration-notes",
-        "structure": "prose",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "program": "macropad-library",
         "name": "MacroPad helper library reference"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/macropad-hid-guide.md",
@@ -88,14 +68,10 @@
         "issuer": "adafruit",
         "version": "c3b6a690",
         "doc_type": "integration-notes",
-        "structure": "prose",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "program": "macropad-hid",
         "name": "MacroPad keyboard and mouse"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/macropad-tone-guide.md",
@@ -104,14 +80,10 @@
         "issuer": "adafruit",
         "version": "c3b6a690",
         "doc_type": "integration-notes",
-        "structure": "prose",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "program": "macropad-tone",
         "name": "MacroPad tone keypad"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/microbit-sound-r1.md",
@@ -120,17 +92,10 @@
         "issuer": "caiman-examples",
         "version": "R1",
         "doc_type": "acceptance-specification",
-        "structure": "requirement",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "program": "microbit-sound",
-        "requirements": {
-          "pattern": "^REQ-SOUND-\\d{3}$"
-        },
         "name": "micro:bit sound acceptance baseline R1"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/microbit-sound-r2-deviation.md",
@@ -139,17 +104,10 @@
         "issuer": "caiman-examples",
         "version": "R2",
         "doc_type": "acceptance-specification",
-        "structure": "requirement",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "program": "microbit-sound",
-        "requirements": {
-          "pattern": "^REQ-SOUND-\\d{3}$"
-        },
         "name": "micro:bit sound R2 hardware deviation"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/macropad-hid-r1.md",
@@ -158,17 +116,10 @@
         "issuer": "caiman-examples",
         "version": "R1",
         "doc_type": "acceptance-specification",
-        "structure": "requirement",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "program": "macropad-hid",
-        "requirements": {
-          "pattern": "^REQ-HID-\\d{3}$"
-        },
         "name": "MacroPad HID acceptance baseline R1"
-      }
+      },
+      "pod": "public"
     },
     {
       "path": "documents/macropad-tone-r1.md",
@@ -177,17 +128,10 @@
         "issuer": "caiman-examples",
         "version": "R1",
         "doc_type": "acceptance-specification",
-        "structure": "requirement",
-        "labels": {
-          "public": true,
-          "compartments": []
-        },
         "program": "macropad-tone",
-        "requirements": {
-          "pattern": "^REQ-TONE-\\d{3}$"
-        },
         "name": "MacroPad tone acceptance baseline R1"
-      }
+      },
+      "pod": "public"
     }
   ],
   "boards": [

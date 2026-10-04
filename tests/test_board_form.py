@@ -80,10 +80,8 @@ async def test_every_declared_field_is_editable_and_optional_ones_can_be_cleared
     assert draft['parts'][0]['aliases'] == {'refdes': 'U7'}
     assert draft['parts'][1]['notes'] == 'Resets the MCU.'
     assert draft['links'][0]['notes'] == 'Question and answer sequence.'
-    # Clearing the board vendor leaves board documents unresolvable, and the
-    # form does not paper over that: validation still refuses the draft.
-    with pytest.raises(Exception):
-        validate_board(draft)
+    # Attachment is independent of the board vendor.
+    assert validate_board(draft)['documents'] == draft['documents']
 
 
 @pytest.mark.asyncio
@@ -503,3 +501,34 @@ async def test_editor_card_titles_match_gallery_and_preserve_unicode(manifest):
         await pilot.resize_terminal(34, 50)
         await pilot.pause()
         assert titles[0].label.plain.split('\n')[0] == wide(short)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('color_system', ['truecolor', '256', 'standard'])
+async def test_stable_document_reference_roundtrip_and_replacement(manifest, color_system):
+    from rich.console import COLOR_SYSTEMS
+    pin = {'pod': 'manuals', 'document': 'stable-document', 'blob': 'sha256:' + 'a' * 64,
+           'notes': 'Shared across hardware variants'}
+    manifest['documents'] = [pin]
+    manifest['parts'][0]['documents'] = [deepcopy(pin)]
+    app = BoardFormApp(original=manifest)
+    app.console._color_system = COLOR_SYSTEMS[color_system]
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.pause()
+        assert app.collect() == manifest
+        card = app.query_one(BoardDocumentCard)
+        card.query_one('.card-summary', Button).press()
+        await pilot.pause()
+        assert card.query_one('.field-document', Input).value == pin['document']
+        assert card.query_one('.field-blob', Input).value == pin['blob']
+        card.query_one('.field-document', Input).value = 'replacement-document'
+        card.query_one('.field-blob', Input).value = 'sha256:' + 'b' * 64
+        card.query_one('.collapse-card', Button).press()
+        await pilot.pause()
+        app.query_one('#review-changes', Button).focus()
+        await pilot.pause()
+        draft = app.collect()
+        assert draft['documents'][0]['document'] == 'replacement-document'
+        assert draft['documents'][0]['notes'] == pin['notes']
+        assert draft['parts'][0]['documents'] == [pin]
+        assert validate_board(draft)['documents'] == draft['documents']

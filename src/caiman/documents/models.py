@@ -22,7 +22,7 @@ def canonical_json(value: dict) -> bytes:
 # snapshots registered under an older spelling are never rewritten (S-11).
 SCHEMA_LITERALS = {
     'board': ('caiman.board.v3', 'caiman.board.v2', 'caiman.board/1'),
-    'document': ('caiman.document.v3', 'caiman.document.v2', 'caiman.document.v1', 'caiman.document/1'),
+    'document': ('caiman.document.v4', 'caiman.document.v3', 'caiman.document.v2', 'caiman.document.v1', 'caiman.document/1'),
     'collection': ('caiman.collection.v2', 'caiman.collection.v1',),
     'project': ('caiman.project.v3', 'caiman.project.v2', 'caiman.project.v1', 'caiman.project/1'),
 }

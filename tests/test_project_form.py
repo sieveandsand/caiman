@@ -275,3 +275,27 @@ async def test_v1_project_opens_restated_with_its_one_board(manifest):
         {'board': 'falcon-mainboard', 'version': '2.1', 'role': 'application-mcu'}]
     # The stored snapshot the review diffs against is untouched.
     assert app.original == stored
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('color_system', ['truecolor', '256', 'standard'])
+async def test_stable_document_references_preserve_feature_requirements(manifest, color_system):
+    from rich.console import COLOR_SYSTEMS
+    pin = {'pod': 'manuals', 'document': 'stable-document', 'blob': A}
+    manifest['documents'] = [pin]
+    manifest['features'][0]['governed_by'] = [dict(pin, requirements=['REQ-7'])]
+    app = ProjectFormApp(original=manifest)
+    app.console._color_system = COLOR_SYSTEMS[color_system]
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.pause()
+        assert app.collect() == manifest
+        card = app.query_one(ProjectDocumentCard)
+        card.query_one('.card-summary', Button).press()
+        await pilot.pause()
+        assert card.query_one('.field-document', Input).value == pin['document']
+        assert card.query_one('.field-blob', Input).value == A
+        card.query_one('.collapse-card', Button).press()
+        await pilot.pause()
+        app.query_one('#review-changes', Button).focus()
+        await pilot.pause()
+        assert app.collect() == manifest

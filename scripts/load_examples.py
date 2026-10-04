@@ -21,7 +21,6 @@ sys.path.insert(0, str(ROOT / 'src'))
 from caiman.cli.commands import store_path
 from caiman.configurations.service import ConfigurationService
 from caiman.dashboard.workflow import STATE_FILE, load_state
-from caiman.storage.legacy import manifest_view
 from caiman.documents.collections import CollectionService
 from caiman.documents.ingest import prepare_document
 from caiman.documents.models import canonical_json
@@ -64,7 +63,7 @@ def prepare_plan(root, fixtures=ROOT / 'fixtures'):
     """Resolve the whole graph before touching the destination, including on reruns."""
     verify_sources(fixtures)
     dataset = json.loads((fixtures / 'dataset.json').read_text())
-    if dataset['format'] != 'caiman.examples.v1':
+    if dataset['format'] != 'caiman.examples.v2':
         raise StoreError('Unknown example dataset format')
     target = Store(root)
     target_configs = ConfigurationService(target)
@@ -72,21 +71,22 @@ def prepare_plan(root, fixtures=ROOT / 'fixtures'):
     # Validate existing preferences before any registration; retain legacy context verbatim.
     load_state(root)
     state_path = target.root / STATE_FILE
-    state = json.loads(target._read(state_path)) if exists(state_path) else {'authorized_compartments': []}
+    state = json.loads(target._read(state_path)) if exists(state_path) else {}
     plan = Plan([], [], [], state, {'documents': 0, 'boards': 0, 'projects': 0, 'collections': 0})
     with TemporaryDirectory(prefix='caiman-examples-') as temporary:
         staging = Store(Path(temporary) / 'store')
         configs = ConfigurationService(staging)
         collection_members = {'microbit': [], 'macropad': []}
         for entry in dataset['documents']:
-            if entry['metadata'].get('labels') != {'public': True, 'compartments': []}:
+            if entry.get('pod') != 'public':
                 raise StoreError('This example dataset only imports explicitly public documents')
-            prepared = prepare_document(fixtures / entry['path'], manifest_view(entry['metadata']))
+            prepared = prepare_document(fixtures / entry['path'], entry['metadata'], pod=entry['pod'])
             ref = document_ref(target, prepared.manifest)
             if exists(ref):
                 value = target_configs._read_ref(ref)
                 previous = target.read_manifest('public', value)
-                expected = dict(prepared.manifest, ingested_at=previous.get('ingested_at'))
+                expected = dict(prepared.manifest, ingested_at=previous.get('ingested_at'),
+                                document_id=previous.get('document_id'))
                 if previous != expected or target.read_blob('public', prepared.blob_digest) != prepared.content:
                     raise StoreError(f'Existing document differs; refusing to repoint {ref}')
                 # Reuse the original ingestion timestamp and digest so every dependent pin stays stable.
@@ -101,17 +101,17 @@ def prepare_plan(root, fixtures=ROOT / 'fixtures'):
             for path in paths:
                 draft = json.loads((fixtures / path).read_text())
                 prepared = configs.prepare(kind, draft)
-                refs = [target_configs._config_path(kind, draft[kind], draft['version'], compartment)
-                        for compartment in (prepared.pod,)]
+                refs = [target_configs._config_path(kind, draft[kind], draft['version'], location)
+                        for location in (prepared.pod,)]
                 present = [exists(ref) for ref in refs]
                 for ref, found in zip(refs, present):
                     if found and target_configs._read_ref(ref) != prepared.digest:
                         raise StoreError(f'Existing configuration differs; refusing to repoint {ref}')
                 if any(present):
                     # Verify existing objects and pinned documents, not just ref text.
-                    compartment = prepared.pod
-                    target_configs._read_config(kind, compartment, prepared.digest,
-                                                set(draft.get('compartments', [])))
+                    location = prepared.pod
+                    target_configs._read_config(kind, location, prepared.digest,
+                                                {prepared.pod})
                 if not all(present):
                     plan.configurations.append(prepared)
                 configs.register(prepared)

@@ -4,14 +4,14 @@ from dataclasses import replace
 import pytest
 
 from caiman.documents.ingest import ValidationError, prepare_document, verify_prepared
-from caiman.documents.ingest import digest
+from caiman.documents.ingest import digest, heading_outline
 from caiman.documents.models import canonical_json, current_schema, is_schema
 
 
 @pytest.fixture
 def metadata():
     return dict(issuer='synthetic', part='demo', doc_type='manual', version='Release / A',
-                structure='prose', pod='public')
+                pod='public')
 
 
 @pytest.fixture
@@ -46,43 +46,24 @@ def test_unchanged_bytes_and_optional_provenance(document, metadata):
     verify_prepared(prepared)
 
 
-def test_named_document_has_optional_requirement_validation_without_a_role(document, metadata):
+def test_named_document_needs_no_type_or_structure(document, metadata):
     metadata.pop('doc_type')
-    metadata.pop('structure')
     metadata.update(name='Customer specification', description='Requirements for startup')
     prepared = prepare_document(document, metadata)
     assert 'structure' not in prepared.manifest and 'doc_type' not in prepared.manifest
-    verify_prepared(prepared)
-    metadata['requirements'] = {'pattern': r'^REQ-\d+$'}
-    with pytest.raises(ValidationError, match='No matching requirement IDs'):
-        prepare_document(document, metadata)
-    document.write_text('# Synthetic specification\nREQ-123: Start correctly.\n')
-    prepared = prepare_document(document, metadata)
-    assert prepared.manifest['requirements'] == metadata['requirements']
     verify_prepared(prepared)
 
 
 @pytest.mark.parametrize('text', ['', 'Body\n# Title', '```\n# Fake\n```', '# \ntext',
                                   '# Title\n## Repeat\n## Repeat'])
-def test_invalid_heading_structure(document, metadata, text):
+def test_unstructured_documents_are_accepted(document, metadata, text):
     document.write_text(text)
-    with pytest.raises(ValidationError) as error:
-        prepare_document(document, metadata)
-    assert 'headings' in error.value.errors
+    assert prepare_document(document, metadata).content == document.read_bytes()
 
 
 def test_setext_skips_and_distinct_ancestors(document, metadata):
     document.write_text('Title\n=====\n### Registers\n## Other\n### Registers\n')
-    assert len(prepare_document(document, metadata).headings) == 4
-
-
-def test_inline_requirements(document, metadata):
-    document.write_text('# Spec\n**REQ-FLASH-0100**: shall work.\n')
-    metadata.update(structure='requirement', requirements={'pattern': r'^REQ-FLASH-\d{4}$'})
-    prepare_document(document, metadata)
-    document.write_text('# Spec\nNo IDs.\n')
-    with pytest.raises(ValidationError):
-        prepare_document(document, metadata)
+    assert len(heading_outline(document.read_text())[0]) == 4
 
 
 def test_review_is_invalidated_by_file_or_payload_change(document, metadata):
@@ -112,12 +93,6 @@ def test_partial_provenance(document, metadata):
     assert result.manifest['converter'] == {'name': 'external'}
 
 
-def test_requirement_pattern_can_include_brackets(document, metadata):
-    document.write_text('# Spec\n**R[123]**: The synthetic device shall reply.\n')
-    metadata.update(structure='requirement', requirements={'pattern': r'^R\[\d+\]$'})
-    prepare_document(document, metadata)
-
-
 def test_lost_pod_never_becomes_public(document, metadata):
     prepared = prepare_document(document, metadata, pod='alpha')
     with pytest.raises(ValidationError):
@@ -127,22 +102,14 @@ def test_lost_pod_never_becomes_public(document, metadata):
 
 def test_invalid_utf8_and_unreadable_file(document, metadata):
     document.write_bytes(b'# Title\n\xff')
-    with pytest.raises(ValidationError):
-        prepare_document(document, metadata)
+    assert prepare_document(document, metadata).content == document.read_bytes()
     with pytest.raises(ValidationError):
         prepare_document(document.parent / 'missing.md', metadata)
 
 
 def test_fake_duplicate_headings_in_fence_ignored(document, metadata):
     document.write_text('# Title\n```md\n# Title\n```\n')
-    assert len(prepare_document(document, metadata).headings) == 1
-
-
-@pytest.mark.parametrize('pattern', ['[', '^$'])
-def test_invalid_requirement_patterns(document, metadata, pattern):
-    metadata.update(structure='requirement', requirements={'pattern': pattern})
-    with pytest.raises(ValidationError):
-        prepare_document(document, metadata)
+    assert len(heading_outline(document.read_text())[0]) == 1
 
 
 @pytest.mark.parametrize('field,value', [
@@ -165,9 +132,38 @@ def test_document_schema_literal_is_current_and_older_spellings_still_read(tmp_p
     path.write_text('# Manual\n\n## Registers\nSynthetic text\n')
     prepared = prepare_document(path, {
         'issuer': 'synthetic', 'part': 'chip', 'doc_type': 'manual', 'version': 'v1',
-        'structure': 'prose', 'pod': 'public'})
-    assert prepared.manifest['schema'] == current_schema('document') == 'caiman.document.v3'
+        'pod': 'public'})
+    assert prepared.manifest['schema'] == current_schema('document') == 'caiman.document.v4'
     assert is_schema('document', 'caiman.document/1')
     assert is_schema('document', 'caiman.document.v1')
     assert not is_schema('document', 'caiman.document.v99')
     assert not is_schema('document', current_schema('board'))
+
+
+@pytest.mark.parametrize('filename,content', [
+    ('manual.pdf', b'%PDF-1.7\n\x00\xff'),
+    ('spec.docx', b'PK\x03\x04\x00\xff'),
+    ('notes.txt', b'No heading.\n'),
+    ('data.bin', bytes(range(256))),
+    ('README', b''),
+    ('manual.MD', b'---\ntitle: Manual\n---\nBody'),
+])
+def test_any_file_registers_and_metadata_edits_preserve_bytes(tmp_path, metadata, filename, content):
+    from caiman.storage.store import Store
+    from caiman.configurations.service import ConfigurationService
+    from caiman.documents.edit_service import DocumentEditService
+
+    source = tmp_path / filename
+    source.write_bytes(content)
+    prepared = prepare_document(source, metadata)
+    assert prepared.manifest['files'][0]['path'] == 'document' + source.suffix
+    store = Store(tmp_path / 'store')
+    registered = store.register(prepared)
+    assert store.read_blob('public', registered.blob_digest) == content
+    selection = ConfigurationService(store).list_documents()[0]
+    service = DocumentEditService(store)
+    draft = copy.deepcopy(selection['manifest'])
+    draft.update(description='Updated')
+    result = service.register(selection, service.prepare(selection, draft))
+    assert result['manifest']['files'] == prepared.manifest['files']
+    assert source.read_bytes() == content

@@ -1,5 +1,5 @@
 {
-  "schema": "caiman.board.v2",
+  "schema": "caiman.board.v3",
   "board": "macropad-rp2040",
   "version": "circuitpython-9.2.8",
   "vendor": "adafruit",
@@ -7,7 +7,7 @@
   "documents": [
     {
       "ref": "adafruit/macropad-rp2040/MacroPad%20RP2040%20integration%20notes/circuitpython-9.2.8",
-      "compartment": "public"
+      "pod": "public"
     }
   ],
   "parts": [

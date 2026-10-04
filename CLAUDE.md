@@ -48,8 +48,9 @@ owns the current model and supersedes older compartment policy sections.
 
 ### I-2. Stable routes and immutable identities
 
-Each artifact lives in one pod. Cross-pod pins carry a stable pod ID and immutable
-manifest digest. Folder/display-name changes must not retarget references. Old
+Each artifact lives in one pod. Cross-pod board/project pins carry a stable pod ID and immutable
+manifest digest. Document references carry a stable pod ID, document ID, and
+fixed blob digest; they resolve current approved metadata. Folder/display-name changes must not retarget references. Old
 snapshots keep their original bytes and hashes; legacy adapters operate in memory.
 Missing dependencies must be reported, never silently substituted or copied.
 
@@ -64,26 +65,30 @@ to this source repository; licensed examples retain their provenance and notices
 
 ### I-4. Pin digests, not tags
 
-Board versions, project versions, and document references resolve to immutable
-content digests. Tags are mutable — and a human-facing version name like `2.1` or
-`B-sample` **is a tag**: you add a deviation to it a month after cutting it. Any
-code path that resolves a name at consumption time rather than at pin time is a
-reproducibility bug. A session resolves once, at sync, and holds the digest.
+Board and project versions resolve to immutable manifest digests. Human-facing
+version labels are mutable and must resolve at pin time, not consumption time.
+Document references pin a stable document ID and fixed blob digest. All editable
+document metadata lives in complete immutable manifests; every approved edit
+publishes a new current manifest. Even old boards show current document metadata
+while preserving their document bodies. Exact manifest reads retain history.
+Document metadata never restricts attachment to a board or part. Missing or
+changed bodies are errors. [DOCUMENT-METADATA.md](docs/DOCUMENT-METADATA.md) owns
+this model; no separate descriptive metadata overlay or consumer adoption exists.
 
 ### I-5. Never guess a hardware or requirement fact
 
 Every returned fact carries `(document identity, document version, locator)`.
 All three are required.
 
-- **Requirement-structured documents** (customer specs): the requirement ID.
-- **Everything else**: a heading path, which is the floor.
-- A page number rides alongside when the conversion supplied one, never instead
-  of a locator.
+Use a locator appropriate to the source: requirement ID, heading path, page,
+sheet/cell, line range, or another precise location. Do not invent a locator
+that the source does not provide.
 
-Corollary at ingest: every document must have usable Markdown headings, as
-defined in `ARCHITECTURE.md` §6.4.2. Reject missing or ambiguous heading paths;
-do not repair the input or fall back to line-only citations. A document declared
-requirement-structured must also contain IDs matching its declared pattern.
+Ingest accepts any readable file byte-for-byte, including binary, empty, and
+non-UTF-8 files. No extension, heading, front-matter, or requirement-ID checks
+may block registration. Documents have no `structure` or `requirements` metadata.
+Acceptance does not certify readability, searchability, conversion fidelity, or
+technical correctness.
 
 Registration stores one input file byte-for-byte as one content blob (S-25).
 The destination pod is chosen by the user. No splitting,
@@ -130,10 +135,10 @@ naming the requirement IDs, and `grep` surfaces both together.
 
 A destination pod is chosen at registration, never inferred from document content.
 
-### I-9. The document set must be complete and greppable
+### I-9. The document set must be complete
 
-Everything downstream depends on `grep` over the materialized documents returning
-the whole truth.
+Materialize every pinned document. Text files must remain searchable with `grep`;
+binary formats require suitable readers and must never be silently omitted.
 
 - **Never symlink a directory into the documents tree.** Ripgrep does not follow
   symlinks without `-L`, and `grep -r` does not follow symlinked directories. The

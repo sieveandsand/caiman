@@ -1,11 +1,8 @@
 {
-  "schema": "caiman.project.v2",
+  "schema": "caiman.project.v3",
   "project": "microbit-sound",
   "version": "R2-v2",
   "customer": "Caiman",
-  "compartments": [
-    "demo-microbit"
-  ],
   "boards": [
     {
       "name": "bbc-microbit",
@@ -16,15 +13,15 @@
   "documents": [
     {
       "ref": "zephyr/microbit-sound/Zephyr%20micro%3Abit%20sound%20application/4.2.0",
-      "compartment": "public"
+      "pod": "public"
     },
     {
       "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20acceptance%20baseline%20R1/R1",
-      "compartment": "public"
+      "pod": "public"
     },
     {
       "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20R2%20hardware%20deviation/R2",
-      "compartment": "public"
+      "pod": "public"
     }
   ],
   "features": [
@@ -34,7 +31,7 @@
       "governed_by": [
         {
           "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20acceptance%20baseline%20R1/R1",
-          "compartment": "public",
+          "pod": "public",
           "requirements": [
             "REQ-SOUND-002",
             "REQ-SOUND-003"
@@ -70,7 +67,7 @@
       "governed_by": [
         {
           "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20R2%20hardware%20deviation/R2",
-          "compartment": "public",
+          "pod": "public",
           "requirements": [
             "REQ-SOUND-001",
             "REQ-SOUND-004"
@@ -91,7 +88,7 @@
       "governed_by": [
         {
           "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20R2%20hardware%20deviation/R2",
-          "compartment": "public",
+          "pod": "public",
           "requirements": [
             "REQ-SOUND-004"
           ]
@@ -111,7 +108,7 @@
       "governed_by": [
         {
           "ref": "caiman-examples/microbit-sound/micro%3Abit%20sound%20R2%20hardware%20deviation/R2",
-          "compartment": "public",
+          "pod": "public",
           "requirements": [
             "REQ-SOUND-004"
           ]
@@ -127,5 +124,6 @@
     }
   ],
   "derives_from": "microbit-sound@R1-v1.3",
-  "relation": "Caiman R2 explicitly amends hardware/accessory requirements 001 and 004; period and beep behavior remain pinned to the same Zephyr source."
+  "relation": "Caiman R2 explicitly amends hardware/accessory requirements 001 and 004; period and beep behavior remain pinned to the same Zephyr source.",
+  "pod": "demo-microbit"
 }

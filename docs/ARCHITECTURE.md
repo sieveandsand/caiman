@@ -5,6 +5,11 @@ compartment, catalog-authorization, and separate-repository-mirror rules below.
 Pods are local folders with optional Git sharing; the Git host owns remote
 permissions. Older sections are retained as design history.
 
+**Current document model:** [DOCUMENT-METADATA.md](DOCUMENT-METADATA.md) supersedes
+the historical document-manifest pin semantics and hardware attachment restrictions.
+All metadata edits create complete manifests; references keep bodies fixed and
+show current approved metadata.
+
 **Status:** Design reference; local ingestion and authoring are implemented.
 Session materialization, hooks, and Git transport remain planned. Provisioning
 local and Docker worktrees (§6.11) is proposed and awaits a `DECISIONS.md` entry.
@@ -101,8 +106,8 @@ workspace, and integrate through the CLI without owning the agent session.
 |---|---|---|
 | Agent orchestration, session or worktree management | Commodity, and where the platforms compete | S-01 |
 | Hardware-in-the-loop test execution or scheduling | A real problem; not the context layer | S-01 |
-| PDF to markdown conversion | Supplied externally; Caiman accepts prepared Markdown | S-08 |
-| Splitting, generated maps, summaries, or AI processing at ingest | Register one unchanged file with usable headings and document-level labels; evaluate navigation on real tasks | S-25 |
+| PDF to markdown conversion | Supplied externally; Caiman accepts any file format | S-08 |
+| Splitting, generated maps, summaries, or AI processing at ingest | Register one unchanged file of any format and document-level labels; evaluate navigation on real tasks | S-25 |
 | Requirements or compliance management | Caiman cites a requirement; it does not track whether you met it | S-14 |
 | Conflict detection between specifications | Precedence is declared, not computed. Inferring it means interpreting contracts | S-15 |
 | Hosting licensed standards (ISO, AUTOSAR, MISRA) | Licensing, and customer specifications are largely self-contained | S-17 |
@@ -123,7 +128,7 @@ The MVP also has no retrieval server (S-18) or repository-side lockfile (S-07).
 
 | ID | Requirement | Source |
 |---|---|---|
-| R-1 | Every document has usable heading paths; requirement-structured documents also contain declared requirement IDs; invalid input is rejected unchanged | I-5 |
+| R-1 | Register readable files unchanged; document structure and requirement-pattern metadata are retired | I-5 |
 | R-2 | Labels are supplied at ingest from provenance and never derived from content | I-8, S-03 |
 | R-3 | Content that is neither public nor compartmented is materialized nowhere | I-1 |
 | R-4 | A project version resolves to a complete pin set, including everything its board version pins | S-07 |
@@ -196,7 +201,7 @@ observe the subsequent session.
               <worktree>/.caiman/
                 project.md      brief, loaded into agent context
                 project.json    resolved structure, machine-readable
-                documents/      unchanged Markdown files
+                documents/      unchanged document files
                            │
                            ▼
               harness → coding agent (reads, greps, cites)
@@ -212,7 +217,7 @@ observe the subsequent session.
 
 | Component | Owns | Does not own |
 |---|---|---|
-| **Ingest** | Metadata validation, heading validation, hashing, unchanged-file registration | Conversion, splitting, maps, AI processing, classification decisions |
+| **Ingest** | Metadata validation, hashing, unchanged-file registration | Conversion, splitting, maps, AI processing, classification decisions |
 | **Register** | Board and project models, features, precedence, lineage | Inferring any of them |
 | **Store** | Immutability, content addressing, compartment separation | Query, search, ranking |
 | **Resolve** | Name→digest, transitive pin set, version listing | Choosing a version on the user's behalf |
@@ -239,7 +244,7 @@ Missing amendment IDs break this correlation; see §10.2 and D-12.
 
 #### 6.4.1 Inputs and responsibilities
 
-Input is **one UTF-8 Markdown file**, already prepared outside Caiman, plus
+Input is **one file of any format**, already prepared outside Caiman, plus
 human-supplied metadata: name, description, issuer, part or program, and version,
 applicable silicon revisions, and access labels. Original-source and converter
 information are optional. The ingestion TUI collects these fields; §6.4.3
@@ -248,8 +253,7 @@ defines the form and `STORAGE.md` §6.4.1 defines their stored representation.
 Ingest is registration, not document processing (S-25). It owns:
 
 1. Validating required metadata and explicit whole-document access labels.
-2. Validating usable headings and, for requirement-structured documents, the
-   declared requirement-ID pattern (§6.4.2).
+2. Reading the selected file without content admission checks (§6.4.2).
 3. Computing a digest of the exact input bytes and registering one content blob
    and its immutable document manifest. No newline normalization or text edits.
 
@@ -263,45 +267,26 @@ without it that history is unknown. Do not require the source PDF to ingest. Com
 must be prepared with tools authorized for that material; ingest cannot undo an
 earlier disclosure (`SECURITY-MODEL.md` §7.2).
 
-#### 6.4.2 Usable headings and citations
+#### 6.4.2 File admission and citations
 
-Every document, including a requirement-structured specification, must have
-usable headings. Admission is a deterministic Markdown-structure check:
+Ingest accepts any readable file, including binary, empty, extensionless, and
+non-UTF-8 files. There are no heading, heading-path uniqueness, front-matter,
+or requirement-ID admission checks. Documents have no `structure` or `requirements` metadata.
 
-- The first nonblank block must be a nonempty heading, so all content has a
-  heading path. A document title can supply the initial path.
-- Recognize Markdown headings through a parser, including ATX and Setext forms;
-  heading-like text inside code blocks is not a heading.
-- Each heading must have nonempty text and an unambiguous full ancestor path.
-  Repeated names under different parent paths are allowed; duplicate full paths
-  are rejected with source line numbers so the author can repair them externally.
-- Heading levels may skip numbers; the ancestor is the preceding heading of a
-  lower level. Caiman does not infer missing headings or semantic chapters.
+Each input is preserved byte-for-byte. Registration does not convert, repair,
+or certify content. Reading and searching depend on tools that support the
+source format; binary registration does not provide automatic text extraction.
 
-Reject documents that fail these checks without registering a version or
-changing the input. Report the relevant locations and reasons. A title-only
-structure may pass mechanically but provide poor navigation: admission does not
-certify useful granularity, conversion fidelity, or technical correctness.
-
-A citation remains `(document identity, document version, locator)`:
-
-| Document kind | Locator |
-|---|---|
-| Reference manuals, datasheets, errata, other prose | Heading path in the unchanged source |
-| Requirement-structured specifications | Requirement ID, with headings still required for navigation |
-| Any | Source page number when preserved, alongside rather than instead of the locator |
-
-A document declared `requirement` must additionally supply a valid ID pattern
-and contain matching IDs. This is syntactic validation, not extraction of a
-requirements model or proof that every requirement survived conversion. No
-line-range-only citation fallback is introduced: line numbers help retrieve
-text, while headings and requirement IDs remain the citation locators (I-5).
+Citations still identify the document and immutable version, with a locator
+appropriate to the source: requirement ID, heading path, page, sheet/cell,
+line range, or another precise location. Never invent missing source structure.
+Markdown headings can aid navigation when present but are not required.
 
 #### 6.4.3 Registration and reading workflow
 
 **Select file → supply metadata → review → register.** The engineer reviews the
 document identity, version, applicability, and explicit access labels before
-local registration in a terminal UI (TUI), launched by `caiman ingest [markdown]`.
+local registration in a terminal UI (TUI), launched by `caiman ingest [file]`.
 The file argument is optional; without it the TUI asks for a file. Bare `caiman`
 opens the dashboard. Ingestion allows manual metadata entry, selection of an
 existing board/project, or creation of one without leaving the flow. Setup is
@@ -310,7 +295,7 @@ may start empty. Push remains a separate act with its own label review.
 
 The form has four steps:
 
-1. **File.** Select one Markdown file. Show its basename and heading-validation
+1. **File.** Select one file of any format. Show its basename and file-read
    results; do not ask for a second original-source filename.
 2. **Document.** Pick an existing project or board part to populate declared
    metadata, or enter document identity manually. Offer creation of a new board
@@ -321,14 +306,12 @@ The form has four steps:
    not applicable or unknown; display that absence honestly. Choose public
    access or named compartments explicitly, with no preselected access label.
 3. **Optional provenance.** A skippable section for original-source checksum and
-   page count, and converter name, version, and hosted/local information. Each
+   page count, and converter name. Each
    may be left unknown. Never infer these from the filename or missing fields.
-   An optional Requirement IDs section enables deterministic ID-pattern validation
-   without choosing a document role or structure.
 4. **Review and register.** Show entered metadata and labels, unknown optional
-   fields, and the computed Markdown digest and size. Allow back/edit or cancel.
+   fields, and the computed file digest and size. Allow back/edit or cancel.
    Register only on explicit submit; cancellation creates no document version
-   and does not repoint a ref. Report field errors inline and heading errors
+   and does not repoint a ref. Report field errors inline and file errors
    with source locations, retaining entered values for correction.
 
 The Documents gallery shows single document cards and stacked collection cards,
@@ -338,20 +321,26 @@ do not enter collection versions. See `STORAGE.md` §6.4.1a for pin and access r
 
 Opening a document card launches the guided metadata editor, using the same
 top-level fields, collapsible card grids, inline fields, and separate review/save
-flow as boards and projects. Applicability, requirement IDs, source provenance,
-and converter provenance are fixed detail groups. File bytes and access labels
+flow as boards and projects. Applicability, source provenance, and converter
+provenance are fixed detail groups. File bytes and pod location
 are read-only. Registration details remain available in a collapsed read-only
-section. Cancellation and unchanged drafts write nothing; a reviewed save
-creates an immutable metadata snapshot that reuses the existing blob. The editor
-validates requirement patterns against that stored blob and rejects stale saves
-or renaming onto an existing document label. Existing digest pins remain valid.
+section. Cancellation and unchanged drafts write nothing. Every metadata edit
+saves a complete immutable manifest under a stable document ID. Existing references
+show its current approved metadata without rewriting consumer snapshots. File
+bytes remain fixed. The review lists known local usages, reports incomplete scans,
+and rejects stale reviews and name collisions. Attachment to boards/parts is a
+user declaration: issuer, part/program, and silicon applicability do not gate it.
+The editor also lazily loads a read-only Metadata History section, ordered by
+manifest lineage, with complete saved fields and JSON. Browsing revisions keeps
+the working draft intact; unavailable history is reported within that section.
+[DOCUMENT-METADATA.md](DOCUMENT-METADATA.md) owns this workflow.
 
 The TUI fills a manifest draft. Caiman supplies `original_filename` (the input
-Markdown basename), content digest and size, schema and pipeline versions, and
+basename), content digest and size, schema and pipeline versions, and
 ingestion timestamp. Source and converter fields are optional individually and
 as groups; omitted values stay absent, not invented or encoded as safe defaults.
-The input convention is that the Markdown retains the source basename; it is
-not proof of source identity and no separate source filename is stored.
+When importing a converted file, matching basenames are not proof of source
+identity. No separate original-source filename is stored.
 
 The TUI calls shared validation and registration logic rather than writing blobs
 or manifests itself. A future native macOS app will use the same operations and
@@ -362,10 +351,12 @@ nothing. Board/project creation uses the shared authoring workflow
 ingestion does not change its immutable document pins; adoption is an explicit
 configuration edit.
 
-The stored content is materialized as `document.md` under the versioned document
-directory. Preserve the original input filename as metadata. Agents search for
-identifiers, phrases, or existing headings and read bounded ranges around hits,
-including relevant qualifications. A several-hundred-page manual stays one file;
+The stored content is materialized at its manifest file path under the versioned
+document directory: `document` plus the input extension for new registrations.
+Preserve legacy paths and the original input filename metadata. Agents search
+text documents for identifiers, phrases, or existing headings and read bounded
+ranges around hits, including relevant qualifications. Other formats require
+a suitable reader. A several-hundred-page manual stays one file;
 its full contents need not enter the context window.
 
 No `_map.md` or other navigation artifact is generated. Concept-known,
@@ -408,10 +399,11 @@ snapshot, with no inheritance at read time (S-10, S-11, S-15).
 
 ### 6.6 Store
 
-The store holds immutable blobs and manifests plus mutable refs. Pins identify
-manifests, so changing metadata or labels changes the pinned identity even when
-content bytes are unchanged. [STORAGE.md](STORAGE.md) owns layout, schemas, write
-ordering, and Git transport (adopted by S-35, not yet implemented).
+The store holds immutable blobs and complete manifests plus mutable refs. Board
+and project pins identify exact configuration manifests. Document references carry
+a stable pod ID, document ID, and fixed blob digest; normal reads follow the
+current approved manifest. Exact revision reads retain original metadata.
+[STORAGE.md](STORAGE.md) owns layout, schemas, write ordering, and Git transport.
 
 S-33 resolves repository isolation: one private Git repository per compartment,
 with a separate private public-material repository. Each document is public or
@@ -546,9 +538,10 @@ This mode does not verify which model is running or whether it is authorized.
 
 ## Where things are
 Documents: .caiman/documents/ — each document directory contains one unchanged
-`document.md`. Search identifiers or headings, then read the relevant line range
-and surrounding qualifications. Paths identify the document and version; cite
-the heading path or requirement ID as the locator. Do not read a whole manual
+file at its manifest path, preserving its extension. For text, search identifiers
+or headings and read the relevant range with surrounding qualifications.
+Use a suitable reader for other formats. Paths identify the document and version; cite
+a source-appropriate locator. Do not read a whole manual
 into context. There are no generated maps.
 Resolved structure: .caiman/project.json
 
@@ -942,8 +935,8 @@ lifetimes change three things:
 ```
 Issuer ──< Part ──────< Document ──< DocumentVersion ───> Blob
    │                        │              │               │
- vendor              issued_by        document labels    unchanged Markdown
- or OEM              part | program   silicon revs       headings and IDs
+ vendor              issued_by        document labels    unchanged file
+ or OEM              part | program   silicon revs       source locators
                                       manifest digest   content digest
 
 BoardVersion ──> assembly DocumentVersions
@@ -1104,7 +1097,7 @@ for arguments and examples:
 
 ```text
 caiman
-caiman ingest [markdown]
+caiman ingest [file]
 caiman documents [--compartment NAME]
 caiman board   configure | template | validate | show | export | new-version
 caiman project configure | template | validate | show | export | new-version
@@ -1184,7 +1177,7 @@ interface rather than an implementation detail. It is specified in `STORAGE.md`
 - `project.md` exists and is loadable as agent context
 - `project.json` carries resolved structure; its schema and visibility are pending G16/G17
 - `documents/` paths identify the document and version; citations also need a
-  heading path or requirement ID from the source (§6.4.2)
+  source-appropriate locator (§6.4.2)
 - `documents/_index.md` states what was omitted and why
 
 The final path format must identify both part- and program-scoped documents and
@@ -1206,7 +1199,7 @@ the layers above it.
 | `--mode` omitted | `sync` fails; nothing written | Fail closed. A default would let an unconsidered session silently receive whatever that default was (R-7) |
 | Bare project or board name | Return the version list; do not resolve | Resolving to "latest" against a frozen program is a compliance failure (R-5) |
 | Document produces no resolvable locator | Reject at ingest | Uncitable content creates a path to uncitable answers (R-1) |
-| Requirement-structured document lacks requirement IDs | Reject at ingest | The declared structure is part of the contract |
+| Retired document `structure` or `requirements` metadata supplied | Reject new metadata | Existing snapshots are adapted in memory |
 | Any pinned file cannot be materialized | `sync` fails and names the file | A document set missing one manual is indistinguishable, to an agent, from a document that never had it (R-11) |
 | Project pins a digest no longer in the store | `sync` fails and names the digest | Broken pin. See `STORAGE.md` §8.5 for why this should be impossible |
 | `push` to a remote that is not private | Hard error; nothing sent | Prevent publishing store contents publicly; repository boundaries follow S-33 (`STORAGE.md` §7.6) |
@@ -1316,7 +1309,7 @@ as a supported local configuration is open (§15.1).
 
 | Operation | Cost driver | Notes |
 |---|---|---|
-| Ingest | Validating headings, hashing, and writing unchanged Markdown | I/O bound, proportional to document size. Runs once per document version |
+| Ingest | Reading, hashing, and writing unchanged files | I/O bound, proportional to document size. Runs once per document version |
 | Resolve | Reading one ref and tens of small JSON manifests | Negligible at the stated volume; this is why no index exists (D-10) |
 | Materialize | Number of files linked, not their size | CoW clones and hardlinks copy no bytes. One content file per document; cross-volume copying still scales with bytes |
 | Agent retrieval | `ripgrep` over the documents | No network hop, no embedding call, no ranking |
@@ -1336,8 +1329,8 @@ Storage-level tests are in `STORAGE.md` §11. The security negative tests are in
 
 | ID | Test | Asserts |
 |---|---|---|
-| A-1 | Ingest headingless content, content before the first heading, empty headings, duplicate full heading paths, and headings only inside code blocks | Invalid documents rejected with actionable locations (§6.4.2) |
-| A-2 | Ingest a `requirement` document with valid headings but missing or invalid ID pattern, or no matching IDs | Rejected (R-1) |
+| A-1 | Ingest headingless content, content before the first heading, empty headings, duplicate full heading paths, and headings only inside code blocks | Accepted byte-for-byte without structural checks (§6.4.2) |
+| A-2 | Supply retired document `structure` or `requirements` metadata; read and edit older snapshots containing them | New metadata rejected; old bytes and pins preserved; changed snapshots omit retired fields |
 | A-3 | Resolve a project version; compare against its manifest | Includes board assembly and part documents plus project document pins, transitively (R-4) |
 | A-4 | Resolve a bare project name | Returns the version list; resolves nothing (R-5) |
 | A-5 | `sync` without `--mode` | Fails; workspace not created (R-7) |
@@ -1461,7 +1454,7 @@ semantic retrieval deferred.
 |---|---|---|
 | A deviation document without requirement IDs (§10.2) | Search may miss an amendment | D-12/G06 must decide representation and warnings; ingest lint is proposed |
 | Hand-declared features drift from the program | The brief asserts something false, with authority | Author-by-delta means a new project version starts from its predecessor (S-11); the brief is regenerated per session and never hand-edited |
-| A converter silently drops content | Wrong facts that look right, with valid citations | Converter provenance, when supplied, helps identify affected artifacts; heading and ID checks only validate structure, not completeness. Spot-check against the source outside ingest |
+| A converter silently drops content | Wrong facts that look right, with valid citations | Converter provenance, when supplied, helps identify affected artifacts; ingest does not validate content or completeness. Spot-check against the source outside ingest |
 | Source-document navigation proves inadequate and the miss log is not implemented | The trigger in §15.2 cannot fire; the decision reverts to intuition | Implement the miss log with the rest of phase 3 |
 | Harness residue (§11.4) | Materialization is not reversible | Out of scope here. Tracked in `harness.md`; the policy question belongs to `SECURITY-MODEL.md` |
 | Hook latency on every tool call (§12) | Perceptible slowdown across a whole session; pressure to remove the hooks | Constrain `session record` to string parsing and an append. Measure before shipping; fall back to transcript-derived logging at `Stop` if needed |

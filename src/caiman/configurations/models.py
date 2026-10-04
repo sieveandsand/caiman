@@ -62,10 +62,17 @@ class _Validator:
                 self.string(data[key], key)
 
     def selector(self, value, path, pods, extra=()):
-        if not self.object(value, path, {'ref', 'digest', 'pod', *extra}):
+        if not self.object(value, path, {'ref', 'digest', 'pod', 'document', 'blob', *extra}):
             return
-        if not {'ref', 'digest'} & value.keys():
-            self.error(path, 'Supply a document ref or digest')
+        if not {'ref', 'digest', 'document'} & value.keys():
+            self.error(path, 'Supply a document ref, manifest digest, or document ID and blob')
+        if 'document' in value:
+            if 'ref' in value or 'digest' in value:
+                self.error(path, 'Use either document ID and blob, or a ref/manifest digest')
+            self.string(value['document'], path + '.document', True)
+            self.digest(value.get('blob'), path + '.blob')
+        elif 'blob' in value:
+            self.error(path + '.document', 'A blob pin requires a document ID')
         if 'ref' in value:
             ref = value['ref']
             if self.string(ref, path + '.ref'):
@@ -91,7 +98,7 @@ class _Validator:
             if not isinstance(selector, dict):
                 continue
             # Duplicate refs or pinned digests in the same pod are ambiguous.
-            for key in ('ref', 'digest'):
+            for key in ('ref', 'digest', 'document'):
                 item = selector.get(key)
                 pod = selector.get('pod')
                 if isinstance(item, str) and (pod is None or isinstance(pod, str)):
@@ -206,10 +213,6 @@ def validate_board(data: dict) -> dict:
             validator.string(data['vendor'], 'vendor', True)
         if 'notes' in data:
             validator.string(data['notes'], 'notes')
-        # Board-level documents resolve against <vendor>/<board>, mirroring the
-        # per-part rule, so the board's own vendor becomes required with them.
-        if data.get('documents') and 'vendor' not in data:
-            validator.error('vendor', 'Board-level documents need the vendor that issues them')
         validator.selectors(data.get('documents', []), 'documents', {'public'}, ('notes',), board=True)
     part_fields = {'role', 'part', 'silicon_revision', 'documents'}
     part_fields |= {'refdes'} if legacy else {'vendor', 'aliases', 'notes'}
@@ -342,6 +345,8 @@ def _same_pin(selector, documents) -> bool:
     for document in documents:
         if not isinstance(document, dict) or document.get('pod') != selector.get('pod'):
             continue
+        if 'document' in selector and (document.get('document'), document.get('blob')) == (selector['document'], selector.get('blob')):
+            return True
         if 'digest' in selector and document.get('digest') == selector['digest']:
             return True
         if 'digest' not in selector and 'ref' in selector and document.get('ref') == selector['ref']:

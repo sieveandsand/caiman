@@ -7,7 +7,7 @@ gets out of the way.
 
 ## Status
 
-Pre-MVP. Local Markdown ingestion and board/project authoring are implemented,
+Pre-MVP. Local document ingestion and board/project authoring are implemented,
 with TUIs, JSON drafts, validation, and immutable digest pins. Session
 materialization, brief generation, and access-log hooks are planned.
 Pods support local folders and optional Git clone/sync.
@@ -73,23 +73,30 @@ ingestion is:
 
 Documents has separate **+ Add document** and **+ Add collection** cards. Give
 each document a name and description; manuals, design notes, and requirements
-all use the same document form. Requirement-ID validation is optional under
-the provenance step, without a document-type selector. Existing registrations
-remain readable.
+all use the same document form. Any readable file is accepted, including PDF,
+Office documents, plain text, binary, empty, and non-UTF-8 files. There are no
+heading or requirement-ID checks. Bytes and file extensions are preserved;
+registration does not add conversion or text extraction.
 
-Open a document card to edit its name, version, description, applicability,
-requirement-ID pattern, and optional provenance. The guided page follows the
-board/project editor: expandable detail cards, **Review changes**, then
-**Register changes**. Stored file bytes, pod location, and registration details are
-read-only. Edits reuse the stored file, so the original import path is not
-needed. Existing digest pins retain their old snapshots; a changed name/version
-creates a separate catalog label, and an existing label cannot be overwritten
-by renaming another document onto it.
+Documents have no `structure` or
+`requirements` metadata fields. Existing registrations remain readable.
+
+Open a document card to edit any metadata, review changed fields and known local
+usages, then **Save metadata**. Every edit saves a complete immutable manifest.
+All references, including older boards, show the latest approved metadata while
+keeping the same file bytes. Document metadata does not restrict attachment to
+boards or parts. Existing board/project/collection snapshots remain unchanged.
+Changed file content requires a new document name or version.
+Expand **Metadata History** in the document editor to browse earlier saved
+metadata, including each revision's complete manifest JSON. History is read-only
+and does not change your draft.
+[Document manifest workflow](docs/DOCUMENT-METADATA.md) explains stable document
+IDs, current views, immutable history, and interrupted-save recovery.
 
 A collection appears as a stack of cards. Name it, describe it, choose its
 pod, and select documents already in the catalog. Review and save; opening
 the stack lets you edit its membership. Collections have no version field:
-each save retains an immutable snapshot of the exact selected document revisions.
+each save retains an immutable snapshot of the selected document IDs and bodies.
 Re-registering a document does not update collection membership automatically.
 Collections contain documents directly, without nested collections, and may
 reference documents from any available pod. Their owning pod is fixed after
@@ -258,7 +265,9 @@ List all local document selectors with `caiman documents`, or filter with `--pod
 ```
 
 Use the catalog's encoded ref, or a full `sha256:…` manifest digest. A supplied
-digest is authoritative even if the ref moves. See [board fields](docs/STORAGE.md#board-fields),
+digest selects that document even if the ref moves. Saving stores its stable
+document ID and fixed blob hash; normal reads show its latest approved metadata.
+A stored selector has the form `{"pod": "public", "document": "stable-id", "blob": "sha256:…"}`. See [board fields](docs/STORAGE.md#board-fields),
 [project fields](docs/STORAGE.md#project-fields), and
 [selector rules](docs/STORAGE.md#document-selectors) for the field contract.
 
@@ -289,7 +298,7 @@ These operations register locally and never commit or push.
 
 The shared preparation and registration code is separate from Textual widgets so
 the future native macOS app can use the same rules. Tests cover metadata and
-heading admission, byte preservation, storage integrity, and the interactive
+arbitrary-file admission, byte preservation, storage integrity, and the interactive
 workflow. Most unit tests construct small synthetic inputs. `tests/test_examples.py`
 validates the public demo dataset and its repeatable import. Reviewed open-source
 excerpts in `fixtures/` retain pinned provenance and license notices; never add

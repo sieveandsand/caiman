@@ -27,9 +27,11 @@ class CollectionService:
         if not isinstance(data['documents'], list) or not data['documents']:
             raise StoreError('Choose at least one existing document')
         for pin in data['documents']:
-            if not isinstance(pin, dict) or set(pin) != {'digest', 'pod'} or not valid_identifier(pin['pod']):
-                raise StoreError('Collection members must pin a document digest and pod')
-            _hex(pin['digest'])
+            if not isinstance(pin, dict) or set(pin) not in ({'digest', 'pod'}, {'document', 'blob', 'pod'}) or not valid_identifier(pin['pod']):
+                raise StoreError('Collection members must identify a document and fixed blob in a pod')
+            if 'document' in pin and not valid_identifier(pin['document']):
+                raise StoreError('Invalid document ID')
+            _hex(pin.get('blob', pin.get('digest')))
 
     def prepare(self, data, *, pod=None, pods=None):
         if not isinstance(data, dict):
@@ -44,8 +46,8 @@ class CollectionService:
         members = []
         for pin in manifest['documents']:
             selected, _ = self.documents._document(pin, pinned=True)
-            members.append((selected['pod'], selected['digest']))
-        manifest['documents'] = [dict(pod=p, digest=d) for p, d in sorted(set(members))]
+            members.append(selected)
+        manifest['documents'] = [json.loads(value) for value in sorted({canonical_json(pin) for pin in members})]
         return {'manifest': manifest, 'digest': digest(canonical_json(manifest)),
                 'pod': self.store.pods.resolve(target)['id']}
 
@@ -53,6 +55,13 @@ class CollectionService:
         return self.store.pod_path(pod) / 'refs' / 'collections' / _component(identity)
 
     def register(self, prepared, *, pods=None, expected_digest=None):
+        verified = self.prepare(prepared['manifest'], pod=prepared['pod'])
+        if verified != prepared:
+            raise StoreError('Collection changed; review again')
+        with self.store.locked():
+            return self._register(prepared, expected_digest=expected_digest)
+
+    def _register(self, prepared, *, expected_digest=None):
         verified = self.prepare(prepared['manifest'], pod=prepared['pod'])
         if verified != prepared:
             raise StoreError('Collection changed; review again')
@@ -93,5 +102,4 @@ class CollectionService:
 
     def members(self, record, *, pods=None):
         manifest = self.load_digest(record['pod'], record['digest'])
-        return [{'manifest': self.documents._document(pin, pinned=True)[1], **pin}
-                for pin in manifest['documents']]
+        return [self.documents.document_record(pin, pinned=True) for pin in manifest['documents']]

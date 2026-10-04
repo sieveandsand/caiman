@@ -1,5 +1,26 @@
 # Decisions
 
+## Complete document manifests and flexible attachments (2026-10-03)
+
+User-approved: every editable metadata field uses one complete immutable manifest
+revision. A stable document ID and fixed blob identify the document; all references,
+including old boards, resolve its latest approved metadata. Preserve earlier
+manifests for explicit history. Metadata edits do not rewrite consumer snapshots.
+Remove issuer/part/vendor/silicon matching restrictions on board attachments.
+Known local usages are informational; incomplete enumeration does not block edits.
+Existing test data and overlays require no migration. This supersedes the prior
+split between shared description/provenance and identity/applicability adoption.
+[DOCUMENT-METADATA.md](DOCUMENT-METADATA.md) owns the design and publication rules.
+
+## Document structure and requirement-pattern metadata removed (2026-10-03)
+
+User-approved: remove document `structure` and `requirements` fields from
+authoring, editing, and validation. Requirement IDs remain ordinary source
+content; project feature `governed_by[].requirements` references are unchanged.
+Existing document snapshots retain their bytes and digests; read adapters omit
+the retired fields in memory. This supersedes the requirement-pattern admission
+rules in S-25 and I-5. [PODS.md](PODS.md) describes compatibility.
+
 ## Pods replace access labels and compartments (2026-10-01)
 
 User-approved: one local folder per pod, optionally one Git repository per pod.
@@ -51,15 +72,13 @@ possible fallback under S-18.
 Missing or unreadable labels exclude content from resolution and materialization;
 they never imply public access. This is I-1.
 
-### S-06. Citations are mandatory; requirement IDs where available, heading path as the floor
+### S-06. Citations identify the document, version, and source location
 
-Require document identity, version, and a locator: a requirement ID for structured
-requirements, otherwise a heading path. Page numbers and line numbers may help
-navigation but cannot replace that locator. Page anchors were relaxed because
-external conversion often loses page boundaries.
-[Architecture §6.4.2](ARCHITECTURE.md#642-usable-headings-and-citations) owns admission.
+Use a source-appropriate locator: requirement ID, heading path, page, sheet/cell,
+line range, or another precise location. Ingest does not require source structure.
+[Architecture §6.4.2](ARCHITECTURE.md#642-file-admission-and-citations) owns admission.
 
-Settled 2026-08-20; heading admission clarified 2026-09-15 by S-25.
+Updated 2026-10-03 by user choice to accept documents of any format.
 
 ### S-07. A project version is the complete pin set; there is no repo-side lockfile
 
@@ -72,7 +91,8 @@ Settled 2026-08-20; amended for S-13.
 
 ### S-08. PDF → markdown conversion is out of scope
 
-Accept externally prepared Markdown. Maintaining a converter would expand the
+Accept files as supplied, including externally converted Markdown. Maintaining a
+converter would expand the
 project beyond context assembly. Optional conversion provenance supports tracing
 errors; conversion confidentiality remains the user's responsibility.
 
@@ -228,26 +248,27 @@ non-access. Both logs contain sensitive metadata and stay outside repositories.
 
 Settled 2026-09-14.
 
-### S-25. Ingest registers one unchanged Markdown file
+### S-25. Ingest registers one unchanged file of any format
 
-Register one prepared Markdown file byte-for-byte with whole-document labels.
-Validate headings and declared requirement IDs; reject invalid input without
-repair. Do not split, rewrite, summarize, generate maps, or call AI during ingest.
-[Architecture §6.4](ARCHITECTURE.md#64-ingest) owns admission and workflow.
+Register one readable file byte-for-byte, including binary, empty, extensionless,
+and non-UTF-8 inputs. Do not enforce headings, unique heading paths, front matter,
+or requirement IDs. Documents have no structure or requirement-pattern metadata.
+Do not split, rewrite, summarize, generate maps, or call AI during ingest.
+Preserve the extension in the manifest file path (`document` plus the source's
+final extension), and keep the original basename in `original_filename`.
+Existing snapshots and their paths remain unchanged.
 
-Generated outlines, heading-based splitting, and prepared chapter bundles were
-considered. Whole-file registration keeps ingestion small, at the cost of larger
-blobs, no chapter deduplication, and dependence on source headings. It does not
-establish conversion fidelity (G08) or retrieval quality (G09).
+Acceptance does not establish conversion fidelity, retrieval quality, or support
+for reading a format. [Architecture §6.4](ARCHITECTURE.md#64-ingest) owns workflow.
 
-Settled 2026-09-15 by user choice.
+Updated 2026-10-03 by user choice.
 
 ### S-26. Original-source and converter provenance are optional
 
-The Markdown file and document metadata are required; original-source and
+The document file and metadata are required; original-source and
 converter provenance are optional, including individual fields. Unknown values
 stay absent and never imply public access or local conversion. Record only the
-input Markdown basename as `original_filename`, plus its computed digest/size.
+input file basename as `original_filename`, plus its computed digest/size.
 This trades missing provenance for a simpler registration workflow.
 [Storage §6.4.1](STORAGE.md#641-document-version) owns the fields.
 

@@ -1,11 +1,8 @@
 {
-  "schema": "caiman.project.v2",
+  "schema": "caiman.project.v3",
   "project": "macropad-hid",
   "version": "R1",
   "customer": "Caiman",
-  "compartments": [
-    "demo-macropad"
-  ],
   "boards": [
     {
       "name": "macropad-rp2040",
@@ -16,15 +13,15 @@
   "documents": [
     {
       "ref": "adafruit/macropad-library/MacroPad%20helper%20library%20reference/c3b6a690",
-      "compartment": "public"
+      "pod": "public"
     },
     {
       "ref": "adafruit/macropad-hid/MacroPad%20keyboard%20and%20mouse/c3b6a690",
-      "compartment": "public"
+      "pod": "public"
     },
     {
       "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
-      "compartment": "public"
+      "pod": "public"
     }
   ],
   "features": [
@@ -34,7 +31,7 @@
       "governed_by": [
         {
           "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
-          "compartment": "public",
+          "pod": "public",
           "requirements": [
             "REQ-HID-001"
           ]
@@ -59,7 +56,7 @@
       "governed_by": [
         {
           "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
-          "compartment": "public",
+          "pod": "public",
           "requirements": [
             "REQ-HID-002"
           ]
@@ -84,7 +81,7 @@
       "governed_by": [
         {
           "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
-          "compartment": "public",
+          "pod": "public",
           "requirements": [
             "REQ-HID-003"
           ]
@@ -104,7 +101,7 @@
       "governed_by": [
         {
           "ref": "caiman-examples/macropad-hid/MacroPad%20HID%20acceptance%20baseline%20R1/R1",
-          "compartment": "public",
+          "pod": "public",
           "requirements": [
             "REQ-HID-003"
           ]
@@ -118,5 +115,6 @@
         }
       ]
     }
-  ]
+  ],
+  "pod": "demo-macropad"
 }

@@ -1,6 +1,16 @@
 """Read adapters only. Historical object bytes and their digests never change."""
 from copy import deepcopy
-from caiman.documents.models import valid_identifier
+from caiman.documents.models import is_schema, valid_identifier
+
+
+def retire_converter_fields(manifest):
+    """Hide retired provenance in a copied view, preserving stored object bytes."""
+    converter = manifest.get('converter')
+    if isinstance(converter, dict):
+        converter.pop('version', None)
+        converter.pop('hosted', None)
+        if not converter:
+            manifest.pop('converter', None)
 
 
 def manifest_view(data):
@@ -8,6 +18,11 @@ def manifest_view(data):
     result = deepcopy(data)
     if not isinstance(result, dict):
         return result
+    if is_schema('document', result.get('schema')):
+        # Retired document metadata is hidden in memory; stored bytes and pins stay intact.
+        result.pop('structure', None)
+        result.pop('requirements', None)
+        retire_converter_fields(result)
     if 'labels' in result:
         labels = result.pop('labels')
         if (not isinstance(labels, dict) or set(labels) != {'public', 'compartments'} or

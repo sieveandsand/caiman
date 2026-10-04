@@ -1,5 +1,5 @@
 {
-  "schema": "caiman.board.v2",
+  "schema": "caiman.board.v3",
   "board": "bbc-microbit",
   "version": "v1.3",
   "vendor": "microbit",
@@ -7,7 +7,7 @@
   "documents": [
     {
       "ref": "microbit/bbc-microbit/micro%3Abit%20v1.3%20integration%20notes/v1.3-zephyr-4.2.0",
-      "compartment": "public"
+      "pod": "public"
     }
   ],
   "parts": [

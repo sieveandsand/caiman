@@ -13,7 +13,7 @@ def document(tmp_path, store, *, pods=(), version="v1", text="# Manual\n\n## Reg
     path.write_text(text)
     prepared = prepare_document(path, {
         "issuer": "synthetic", "part": part, "doc_type": "manual", "version": version,
-        "structure": "prose", 'pod': ('public' if not pods else (list(pods))[0]),
+        'pod': ('public' if not pods else (list(pods))[0]),
         "silicon_revisions": list(silicon_revisions),
     })
     registered = store.register(prepared)
@@ -44,11 +44,14 @@ def setup(tmp_path):
 def test_board_pins_survive_document_ref_repoint(tmp_path, setup):
     store, service, ref = setup
     first = service.load("board", "demo", "v/one")
-    digest = first["parts"][0]["documents"][0]["digest"]
-    document(tmp_path, store, text="# Replacement\nNew bytes\n")
+    digest = first["parts"][0]["documents"][0]["blob"]
+    replacement = document(tmp_path, store, version='replacement', text="# Replacement\nNew bytes\n")
+    # A historical/external ref move must never retarget an existing digest pin.
+    directory = store.root / 'public/refs/documents'
+    store._atomic_write(directory / ref['ref'], store._read(directory / replacement['ref']), immutable=False)
     assert service.load("board", "demo", "v/one") == first
     prepared = service.prepare("board", board(ref))
-    assert prepared.manifest["parts"][0]["documents"][0]["digest"] != digest
+    assert prepared.manifest["parts"][0]["documents"][0]["blob"] != digest
     assert service.list_versions("board", "demo") == ["v/one"]
 
 
@@ -64,7 +67,7 @@ def test_project_whole_snapshot_and_pins(tmp_path, setup):
     assert service.list_versions("project", "flight") == ["sample/A"]
     assert "precedence" not in snapshot
     for location in (snapshot["documents"][0], snapshot["features"][0]["governed_by"][0]):
-        assert location["digest"].startswith("sha256:")
+        assert location["blob"].startswith("sha256:")
         assert location["pod"] == "alpha"
     assert snapshot["boards"][0]["digest"].startswith("sha256:")
     assert service.load("project", "flight", "sample/A") == prepared.manifest
@@ -116,28 +119,29 @@ def test_every_pinned_board_must_exist(tmp_path, setup):
         service.prepare("project", data)
 
 
-def test_feature_ref_uses_project_pin_even_after_ref_repoint(tmp_path, setup):
+def test_feature_pin_uses_project_document_after_catalog_ref_repoint(tmp_path, setup):
     store, service, _ = setup
     selector = document(tmp_path, store, pods=("alpha",), part="spec")
     earlier = service.prepare("project", project(selector)).manifest["documents"][0]
-    document(tmp_path, store, pods=("alpha",), part="spec", text="# Replacement\nDifferent\n")
+    replacement = document(tmp_path, store, pods=('alpha',), part='spec', version='replacement', text="# Replacement\nDifferent\n")
+    directory = store.root / 'alpha/refs/documents'
+    store._atomic_write(directory / selector['ref'], store._read(directory / replacement['ref']), immutable=False)
     data = project(selector)
     data["documents"] = [earlier]
+    data['features'][0]['governed_by'] = [dict(earlier, requirements=['REQ-1'])]
     prepared = service.prepare("project", data)
-    assert prepared.manifest["features"][0]["governed_by"][0]["digest"] == earlier["digest"]
-    document(tmp_path, store, pods=("alpha",), part="spec", text="# Again\nDifferent again\n")
+    assert prepared.manifest['features'][0]['governed_by'][0]['document'] == earlier['document']
     service.register(prepared)
-    assert service.load("project", "flight", "sample/A", pods={"alpha"})["documents"][0]["digest"] == earlier["digest"]
+    assert service.load('project', 'flight', 'sample/A')['documents'][0] == earlier
 
 
-def test_cross_customer_and_public_board_rejected(tmp_path, setup):
+def test_documents_attach_across_pods_without_part_matching(tmp_path, setup):
     store, service, _ = setup
     selector = document(tmp_path, store, pods=('beta',), part='spec')
     prepared = service.prepare('project', project({**selector, 'pod': 'beta'}))
     assert prepared.manifest['documents'][0]['pod'] == 'beta'
-    # Board applicability still checks hardware identity, independent of pod.
-    with pytest.raises(ValueError, match='part'):
-        service.prepare('board', board({**selector, 'pod': 'beta'}))
+    attached = service.prepare('board', board({**selector, 'pod': 'beta'}))
+    assert attached.manifest['parts'][0]['documents'][0]['pod'] == 'beta'
 
 
 def test_multi_pod_project_requires_all_labels(tmp_path, setup):
@@ -194,25 +198,22 @@ def test_list_documents_default_public_only(tmp_path, setup):
     assert {entry["pod"] for entry in service.list_documents(pods={"alpha"})} == {"alpha"}
 
 
-def test_board_document_applicability(tmp_path, setup):
+def test_board_document_metadata_does_not_restrict_attachment(tmp_path, setup):
     _, service, ref = setup
     data = board(ref)
     data["parts"][0]["part"] = "other"
-    with pytest.raises(StoreError, match="part"):
-        service.prepare("board", data)
+    assert service.prepare("board", data).manifest["parts"][0]["documents"]
     data = board(ref)
     data["parts"][0]["vendor"] = "another"
-    with pytest.raises(StoreError, match="part"):
-        service.prepare("board", data)
+    assert service.prepare("board", data).manifest["parts"][0]["documents"]
 
 
-def test_board_revision_must_be_declared_applicable(tmp_path, setup):
+def test_board_revision_need_not_match_document_applicability(tmp_path, setup):
     store, service, _ = setup
-    ref = document(tmp_path, store, silicon_revisions=("A",))
+    ref = document(tmp_path, store, version="applicability", silicon_revisions=("A",))
     data = board(ref)
     data["parts"][0]["silicon_revision"] = "B"
-    with pytest.raises(StoreError, match="revision"):
-        service.prepare("board", data)
+    assert service.prepare("board", data).manifest["parts"][0]["documents"]
 
 
 def test_dropped_project_labels_never_register(tmp_path, setup):
@@ -355,37 +356,34 @@ def test_board_level_document_pins_the_assembly(tmp_path, setup):
     data = board(document(tmp_path, store))
     data.update(vendor="synthetic", documents=[dict(guide, notes="Connector pinout and jumper defaults.")])
     prepared = service.prepare("board", data)
-    assert prepared.manifest["documents"][0]["digest"].startswith("sha256:")
+    assert prepared.manifest["documents"][0]["blob"].startswith("sha256:")
     assert prepared.manifest["documents"][0]["notes"] == "Connector pinout and jumper defaults."
     service.register(prepared)
     assert service.load("board", "demo", "v/one")["documents"][0] == prepared.manifest["documents"][0]
 
 
-def test_board_level_document_must_match_the_board_vendor_and_name(tmp_path, setup):
+def test_board_level_document_need_not_match_vendor_or_name(tmp_path, setup):
     store, service, _ = setup
     guide = document(tmp_path, store, part="demo")
     data = board(document(tmp_path, store))
     data.update(vendor="elsewhere", documents=[guide])
-    with pytest.raises(StoreError, match="assembly"):
-        service.prepare("board", data)
-    # A document about a part is not a document about the board that carries it.
+    assert service.prepare("board", data).manifest["documents"]
+    # A part document may also be attached to the whole board.
     data.update(vendor="synthetic", documents=[document(tmp_path, store)])
-    with pytest.raises(StoreError, match="assembly"):
-        service.prepare("board", data)
+    assert service.prepare("board", data).manifest["documents"]
 
 
-def test_board_part_document_cannot_be_a_program_document(tmp_path, setup):
-    """The packed v1 identity could not say this; two field comparisons can."""
+def test_board_part_document_can_be_a_program_document(tmp_path, setup):
+    """Attachment is a user declaration, independent of document metadata."""
     store, service, _ = setup
     path = tmp_path / "program.md"
     path.write_text("# Spec\n\n## Boot\nSynthetic text\n")
     prepared = prepare_document(path, {
         "issuer": "synthetic", "program": "flight", "doc_type": "spec", "version": "v1",
-        "structure": "prose", 'pod': 'public'})
+        'pod': 'public'})
     registered = store.register(prepared)
     ref = registered.ref_path.relative_to(store.root / "public" / "refs" / "documents").as_posix()
-    with pytest.raises(StoreError, match="part"):
-        service.prepare("board", board({"ref": ref}))
+    assert service.prepare("board", board({"ref": ref})).manifest["parts"][0]["documents"]
 
 
 def test_legacy_board_snapshot_keeps_resolving_after_v2(tmp_path, setup):

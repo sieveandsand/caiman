@@ -22,6 +22,7 @@ store/
     blobs/sha256/<prefix>/<digest>
     manifests/sha256/<prefix>/<digest>
     refs/documents/...
+    refs/document-heads/...     current complete manifest per stable document ID
     refs/collections/...
     refs/boards/...
     refs/projects/...
@@ -50,10 +51,27 @@ not in its manifest. Boards, projects, and collections likewise have one owning
 pod. A draft may include `pod` to choose its destination; preparation removes it
 from the stored manifest.
 
+## Document metadata
+
+Registration accepts one readable file of any format without content validation.
+Bytes are preserved unchanged; new manifest file paths use `document` plus the
+input’s final extension (or `document` for extensionless inputs). Old paths stay
+unchanged. Registration does not convert files or make binary content searchable.
+
+Documents no longer have `structure` or `requirements` fields. New ingestion
+and metadata edits reject them as unknown fields; there is no requirement-ID
+pattern control or validation. Existing snapshots containing those fields are
+adapted in memory, preserving original stored bytes and digest pins. Unchanged
+edits preserve the original digest. All metadata edits create complete manifest
+revisions. Old references follow the current approved metadata while their bodies
+stay fixed; no consumer snapshots are rewritten. Document metadata never gates
+board/part attachment. See [DOCUMENT-METADATA.md](DOCUMENT-METADATA.md).
+
 ## References
 
-Pins use `{ "pod": "alpha", "digest": "sha256:…" }`. A document selector may
-also carry its encoded `ref`; a board selector carries its name and version.
+Board pins use `{ "pod": "alpha", "digest": "sha256:…" }` with name/version.
+Document references use `{ "pod": "alpha", "document": "stable-id", "blob": "sha256:…" }`.
+Named refs or manifest digests are resolved at authoring time.
 References can cross any locally available pods. An unqualified ambiguous name
 requires an explicit pod; Caiman never substitutes a different version.
 
@@ -142,7 +160,9 @@ local folders are adapted without contacting a remote.
 
 `tests/test_pods.py` covers local availability, one owner, cross-pod dependencies,
 legacy byte preservation, renamed clone folders, two-writer Git sync, conflicts,
-failed publication, document tabs, and default selection. Repository tests cover
+failed publication, binary document round-trips, document tabs, and default selection.
+`tests/test_document_metadata_retirement.py` covers retired-field rejection and
+legacy snapshot compatibility, including cross-pod pins after metadata edits. Repository tests cover
 invalid URLs, unsafe paths, remote format admission, review invalidation, and
 credential handling. Existing document/configuration tests continue to cover
 hash integrity, immutable pins, applicability, and review/save behavior.

@@ -7,6 +7,8 @@ from dataclasses import replace
 import pytest
 
 from caiman.documents.ingest import prepare_document
+from caiman.documents.edit_service import DocumentEditService
+from caiman.configurations.service import ConfigurationService
 from caiman.documents.models import canonical_json
 from caiman.storage.store import Store, StoreError
 
@@ -16,7 +18,7 @@ def prepared(tmp_path, *, public=True, pods=(), version="rev/one"):
     source.write_bytes(b"# Synthetic manual\r\n\r\n## Registers\r\n| Name | Value |\r\n| --- | --- |\r\n| CTRL | 0 |\r\n")
     return prepare_document(source, {
         "issuer": "synthetic", "part": "chip", "doc_type": "manual",
-        "version": version, "structure": "prose",
+        "version": version,
         'pod': ('public' if public else (list(pods))[0]),
     })
 
@@ -165,9 +167,9 @@ def test_ref_hardlink_does_not_overwrite_other_file(tmp_path):
     outside = tmp_path / "other-ref"
     os.link(first.ref_path, outside)
     original = outside.read_bytes()
-    document.source_path.write_bytes(b"# Different\nChanged\n")
-    metadata = {key: document.manifest[key] for key in ("issuer", "part", "doc_type", "version", "structure")}
-    store.register(prepare_document(document.source_path, metadata))
+    selected = ConfigurationService(store).list_documents()[0]
+    edits = DocumentEditService(store)
+    edits.register(selected, edits.prepare(selected, dict(selected['manifest'], silicon_revisions=['1'])))
     assert outside.read_bytes() == original
     assert first.ref_path.read_bytes() != original
 
@@ -176,12 +178,11 @@ def test_ref_repoint_preserves_previous_digest(tmp_path):
     first = prepared(tmp_path)
     store = Store(tmp_path / "store")
     a = store.register(first)
-    first.source_path.write_bytes(b"# Synthetic manual\n\n## Changed\nDifferent content\n")
-    metadata = {key: first.manifest[key] for key in ("issuer", "part", "doc_type", "version", "structure")}
-    second = prepare_document(first.source_path, metadata)
-    b = store.register(second)
-    assert a.ref_path == b.ref_path
-    assert a.ref_path.read_text().strip() == b.manifest_digest
+    selected = ConfigurationService(store).list_documents()[0]
+    edits = DocumentEditService(store)
+    updated = edits.register(selected, edits.prepare(selected, dict(selected['manifest'], silicon_revisions=['1'])))
+    assert a.ref_path.read_text().strip() == updated['digest']
+    assert updated['digest'] != a.manifest_digest
     assert store.read_blob("public", a.blob_digest) == first.content
     assert store.read_manifest("public", a.manifest_digest) == first.manifest
 
@@ -200,3 +201,36 @@ def test_dot_version_encoded_as_opaque_label(tmp_path, version):
 def test_invalid_digest_rejected(tmp_path, digest):
     with pytest.raises(StoreError):
         Store(tmp_path / "store").read_blob("public", digest)
+
+
+@pytest.mark.parametrize('field,value', [
+    ('original_filename', None), ('original_filename', []),
+    ('original_filename', 'manual.\x00pdf'),
+    ('path', []), ('path', '../document.pdf'),
+])
+def test_invalid_stored_file_metadata_raises_store_error(tmp_path, field, value):
+    document = prepared(tmp_path)
+    store = Store(tmp_path / 'store')
+    store.register(document)
+    manifest = copy.deepcopy(document.manifest)
+    if field == 'path':
+        manifest['files'][0]['path'] = value
+    else:
+        manifest[field] = value
+    content = canonical_json(manifest)
+    digest = 'sha256:' + hashlib.sha256(content).hexdigest()
+    store._write_object('public', 'manifests', digest, content)
+    with pytest.raises(StoreError):
+        store.read_manifest('public', digest)
+
+
+def test_legacy_markdown_extension_preserves_stored_path(tmp_path):
+    document = prepared(tmp_path)
+    store = Store(tmp_path / 'store')
+    store.register(document)
+    manifest = copy.deepcopy(document.manifest)
+    manifest['original_filename'] = 'manual.markdown'
+    content = canonical_json(manifest)
+    digest = 'sha256:' + hashlib.sha256(content).hexdigest()
+    store._write_object('public', 'manifests', digest, content)
+    assert store.read_manifest('public', digest)['files'][0]['path'] == 'document.md'
