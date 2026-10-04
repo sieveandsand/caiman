@@ -56,13 +56,17 @@ class RepoPlan:
     @property
     def preview(self):
         verbs = {'create': 'Create local pod', 'add': 'Clone pod', 'initialize': 'Connect Git',
-                 'remove': 'Disconnect Git remote', 'sync': 'Sync pod', 'default': 'Set default pod'}
+                 'unregister': 'Remove pod', 'remove': 'Disconnect Git remote', 'sync': 'Sync pod', 'default': 'Set default pod'}
         lines = [verbs[self.action], f'Pod: {self.pod}', f'Folder: {self.local_path}',
                  f'Remote: {self.remote or "Local only"}']
         if self.action == 'sync':
             lines.append('Commit local changes, fetch team changes, merge, and push. Conflicts preserve both versions.')
         elif self.action == 'initialize':
             lines.append('Enable Git in this pod folder. Existing data stays local until Sync.')
+        elif self.action == 'unregister':
+            lines.append('Remove from Caiman. Keep all files and Git history in .removed-pods under the store folder.')
+            lines.append('Historical snapshots remain unchanged; their removed dependencies become unavailable.')
+            lines.append('If this is the default pod, use another available pod, or clear the default if none remain.')
         elif self.action == 'remove':
             lines.append('Keep local data and Git history; remove the remote connection.')
         return '\n'.join(lines)
@@ -184,9 +188,13 @@ class RepoManager:
         return hashlib.sha256(canonical_json({'files': entries})).hexdigest()
 
     def prepare(self, action, pod, remote='', push=False):
-        if action not in {'create', 'add', 'initialize', 'remove', 'sync', 'default'}:
+        if action not in {'create', 'add', 'initialize', 'remove', 'sync', 'default', 'unregister'}:
             raise ValueError('Unknown pod operation')
         path = self.local_path(pod)
+        if action == 'unregister':
+            from caiman.pods.removal import check_removal
+            pod = check_removal(self.store, pod)
+            return RepoPlan(action, pod, None, path, self._state(path))
         if push:
             raise ValueError('Use Sync after connecting Git')
         remote = _remote(remote) if remote else None
@@ -366,9 +374,31 @@ class RepoManager:
                         pass  # Preserve the original failure if Git itself is broken.
                     raise
                 self._git(plan.local_path, 'config', '--local', 'caiman.syncFailed', 'false')
+            elif plan.action == 'unregister':
+                self._unregister(plan)
             elif plan.action == 'remove':
                 self._git(plan.local_path, 'remote', 'remove', 'origin')
         return self.store.pods.resolve(plan.pod)['id']
+
+    def _unregister(self, plan):
+        from uuid import uuid4
+        archive = self.store.root / '.removed-pods' / plan.pod
+        self.store._directory(archive, create=True)
+        destination = archive / uuid4().hex
+        existed = plan.local_path.exists()
+        if existed:
+            plan.local_path.rename(destination)
+        try:
+            if self.store.pods.configured_default == plan.pod:
+                remaining = self.store.pods.list()
+                replacement = next((r['id'] for r in remaining if r['id'] == 'public'),
+                                   remaining[0]['id'] if remaining else None)
+                self.store._atomic_write(self.store.root / '.pods.json',
+                                         canonical_json({'default': replacement}), immutable=False)
+        except (OSError, ValueError):
+            if existed:
+                destination.rename(plan.local_path)
+            raise
 
     def _git(self, path, *args, allow_missing=False, raw=False):
         env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}

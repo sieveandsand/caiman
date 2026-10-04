@@ -88,7 +88,7 @@ Documents, Projects, and Boards have one tab per pod, including empty pods.
 New records use the active tab. Press `/` anywhere in a gallery for the next pod, or `[` and `]` for the
 previous and next pods. On the tab bar, use Left/Right or `h` / `l` to switch and `j` to enter the
 cards. Tab and Shift+Tab move between controls. Forms show a single Pod field. The Pods page offers local
-creation, cloning, Git connection, sync, default selection, and disconnection.
+creation, cloning, Git connection, sync, default selection, disconnection, and removal.
 New pod asks for a pod name and an optional Git remote. Back cancels; Create
 creates the pod and returns to the pod list without a review step. Supplying a
 remote enables Git locally; use Sync to commit and share the pod.
@@ -166,3 +166,22 @@ legacy snapshot compatibility, including cross-pod pins after metadata edits. Re
 invalid URLs, unsafe paths, remote format admission, review invalidation, and
 credential handling. Existing document/configuration tests continue to cover
 hash integrity, immutable pins, applicability, and review/save behavior.
+
+## Removing a pod
+
+**Remove pod** checks current boards, projects, and collections in the remaining
+pods. Current means every named version, not a guessed latest version. A board
+snapshot pinned by a current project is still current for dependency checks,
+even if its own named ref is gone. References entirely within the removed pod
+leave with it. Unreferenced historical snapshots do not block removal.
+Unreadable catalogs or pinned boards block removal because the check is incomplete.
+The check runs again under the store lock when applying the reviewed operation.
+
+Removal moves the folder, including all content and Git history, into
+`store/.removed-pods/<stable-id>/<unique-id>/`; no files or remote repositories
+are deleted. Historical snapshots remain unchanged but may have unavailable
+dependencies. Move the archived folder back under the store root to restore it.
+Removing the default selects `public` if available, otherwise another remaining
+pod, and clears the preference if none remain. Create a pod and use **Set default**
+to establish a default again. `caiman pod remove <pod>` uses the same checks;
+`caiman pod disconnect <pod>` continues to disconnect only Git.

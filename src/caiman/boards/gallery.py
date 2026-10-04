@@ -84,7 +84,7 @@ class BoardGalleryApp(PodTabsMixin, NavigationApp):
         self.store_root = store_root
         self.service = ConfigurationService(Store(store_root))
         self.records = []
-        self.active_pod = pod or self.service.store.pods.default
+        self.active_pod = pod or self.service.store.pods.configured_default
         self.tab_pods = {}
         self.render_lock = asyncio.Lock()
         self.busy = False

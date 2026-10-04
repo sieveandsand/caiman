@@ -1633,6 +1633,7 @@ documents in tests or CI.
 | T-47 | Interrupt document head/catalog publication between ref writes | Previous refs restored on failure or reopening; immutable snapshots retained |
 | T-48 | Add/change a usage after review or save an older open configuration draft | Stale operation rejected before ref changes |
 | T-49 | Point a document head at another identity or body | Current read rejects it; exact historical read stays intact |
+| T-50 | Remove a pod with current, transitive, historical-only, or newly added references | Current external dependencies block removal at review and apply; orphaned history does not; archived bytes and Git history remain intact |
 
 T-14 is the test that directly covers §2.2, and it should exist before the store
 is considered done.

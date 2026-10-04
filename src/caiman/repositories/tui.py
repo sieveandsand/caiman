@@ -11,7 +11,7 @@ from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
 OPERATIONS = {'create': 'New local pod', 'add': 'Clone pod', 'initialize': 'Connect Git',
-              'sync': 'Sync pod', 'default': 'Set default pod', 'remove': 'Disconnect Git'}
+              'sync': 'Sync pod', 'default': 'Set default pod', 'remove': 'Disconnect Git', 'unregister': 'Remove pod'}
 
 
 class RepoManagerApp(NavigationApp):
@@ -19,6 +19,7 @@ class RepoManagerApp(NavigationApp):
     CSS = TERMINAL_CSS + '''
     #preview { height: auto; margin-top: 1; }
     #operation-title { height: auto; color: #7fdc4f; text-style: bold; }
+    #navigation Button { height: 3; }
     '''
 
     def __init__(self, *, store_root, action='create', pod=None):
@@ -39,7 +40,7 @@ class RepoManagerApp(NavigationApp):
             with VerticalScroll(id='remove-fields', classes='step'):
                 yield Label('Pod')
                 yield Select([], prompt='Choose a pod', id='repository')
-                yield Static('Local files remain available.', classes='hint')
+                yield Static('Files and Git history are preserved in the local archive.' if self.operation == 'unregister' else 'Local files remain available.', classes='hint')
             with VerticalScroll(id='repository-fields', classes='step'):
                 yield Label('Pod')
                 yield Input(value=self.selected_pod or '', placeholder='pod name', id='pod', disabled=bool(self.selected_pod))
@@ -67,7 +68,7 @@ class RepoManagerApp(NavigationApp):
 
     def show_action(self):
         action = self.operation
-        choose = action in {'remove', 'sync', 'default'}
+        choose = action in {'remove', 'sync', 'default', 'unregister'}
         self.query_one('#remove-fields').display = choose
         self.query_one('#repository-fields').display = not choose
         self.query_one('#remote').display = action in {'create', 'add', 'initialize'}
@@ -131,10 +132,10 @@ class RepoManagerApp(NavigationApp):
             if event.button.id in {'review', 'create', 'clone'}:
                 self.invalidate()
                 action = self.operation
-                pod = (self.query_one('#repository', Select).value if action in {'remove', 'sync', 'default'}
+                pod = (self.query_one('#repository', Select).value if action in {'remove', 'sync', 'default', 'unregister'}
                                else self.query_one('#pod', Input).value.strip())
                 if not isinstance(pod, str) or not pod:
-                    raise ValueError('Choose a pod' if action in {'remove', 'sync', 'default'} else 'Enter a pod')
+                    raise ValueError('Choose a pod' if action in {'remove', 'sync', 'default', 'unregister'} else 'Enter a pod')
                 remote = self.query_one('#remote', Input).value.strip()
                 push = False
                 self.plan = await asyncio.to_thread(self.manager.prepare, action, pod, remote, push)
@@ -149,8 +150,11 @@ class RepoManagerApp(NavigationApp):
                 self.query_one('#status', Static).update('Review the operation above, then apply it.')
             elif event.button.id == 'apply' and self.plan is not None:
                 plan = self.plan
-                self.query_one('#status', Static).update('Checking remote and applying repository operation…')
+                self.query_one('#status', Static).update('Checking and applying pod operation…')
                 await asyncio.to_thread(self.manager.apply, plan)
+                if plan.action == 'unregister':
+                    self.exit(None)
+                    return
                 self.invalidate()
                 await self.refresh_catalog()
                 message = OPERATIONS[plan.action] + ' complete.'

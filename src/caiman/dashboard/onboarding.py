@@ -408,6 +408,7 @@ class CategoryApp(NavigationApp):
                     yield Button('Set default', id='repo-default', disabled=True)
                     yield Button('Connect Git', id='repo-initialize', disabled=True)
                     yield Button('Disconnect Git', id='repo-remove', disabled=True)
+                    yield Button('Remove pod', id='repo-unregister', disabled=True)
             else:
                 with Grid(id='category-grid', classes='dashboard-grid'):
                     for title, description, action in self.actions:
@@ -478,6 +479,7 @@ class CategoryApp(NavigationApp):
         self.query_one('#repo-initialize', Button).disabled = not record
         self.query_one('#repo-remove', Button).display = remote
         self.query_one('#repo-remove', Button).disabled = not remote
+        self.query_one('#repo-unregister', Button).disabled = not record
 
     async def on_event(self, event):
         # ListView consumes arrows itself, so route them before forwarding to
@@ -523,7 +525,7 @@ class CategoryApp(NavigationApp):
         if event.button.id == 'refresh-status':
             await self.refresh_status()
             return
-        if event.button.id in {'repo-sync', 'repo-default', 'repo-initialize', 'repo-remove'}:
+        if event.button.id in {'repo-sync', 'repo-default', 'repo-initialize', 'repo-remove', 'repo-unregister'}:
             if self.selected_pod and not event.button.disabled:
                 self.exit({'action': event.button.id, 'pod': self.selected_pod})
             return

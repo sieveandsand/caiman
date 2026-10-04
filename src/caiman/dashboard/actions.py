@@ -123,7 +123,7 @@ class DocumentCatalogApp(PodTabsMixin, ActionApp):
         self.service = ConfigurationService(Store(root))
         self.collections = CollectionService(self.service.store)
         self.pods = pods
-        self.active_pod = pod or self.service.store.pods.default
+        self.active_pod = pod or self.service.store.pods.configured_default
         self.records = []
         self.collection_records = []
         self.tab_pods = {}

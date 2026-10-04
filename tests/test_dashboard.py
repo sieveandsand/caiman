@@ -61,9 +61,11 @@ async def test_pod_keyboard_navigation_reaches_all_controls(tmp_path, width, up,
         await pilot.press(right)
         assert app.focused.id == 'repo-initialize'
         await pilot.press(right)
+        assert app.focused.id == 'repo-unregister'
+        await pilot.press(right)
         assert app.focused.id == 'repo-sync'
         await pilot.press(left)
-        assert app.focused.id == 'repo-initialize'
+        assert app.focused.id == 'repo-unregister'
         await pilot.press('q')
         assert app.is_running and app.focused.id == 'pod-list'
         assert app.selected_pod == 'alpha'
@@ -72,7 +74,7 @@ async def test_pod_keyboard_navigation_reaches_all_controls(tmp_path, width, up,
 
 
 @pytest.mark.parametrize('width', [45, 100])
-@pytest.mark.parametrize('action', ['sync', 'default', 'initialize', 'remove', 'create', 'add'])
+@pytest.mark.parametrize('action', ['sync', 'default', 'initialize', 'remove', 'unregister', 'create', 'add'])
 async def test_pod_buttons_target_selection(tmp_path, width, action):
     from caiman.dashboard.onboarding import CategoryApp
     from caiman.repositories.service import RepoManager

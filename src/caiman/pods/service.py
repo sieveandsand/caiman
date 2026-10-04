@@ -38,7 +38,8 @@ class PodRegistry:
                 records.append({'id': data['id'], 'name': data['name'], 'path': path})
         if len({r['id'] for r in records}) != len(records):
             raise ValueError('Duplicate pod ID; register only one local copy of each pod')
-        if not any(r['id'] == 'public' for r in records):
+        if (not any(r['id'] == 'public' for r in records)
+                and not (self.store.root / '.removed-pods' / 'public').exists()):
             records.insert(0, {'id': 'public', 'name': 'public', 'path': self.store.root / 'public'})
         return records
 
@@ -63,13 +64,13 @@ class PodRegistry:
         data = json.loads(self.store._read(path))
         if not isinstance(data, dict) or set(data) != {'default'}:
             raise ValueError('Invalid pod preferences')
-        return self.resolve(data['default'])['id']
+        return self.resolve(data['default'])['id'] if data['default'] is not None else None
 
     @property
     def default(self):
         pod = self.configured_default
         if pod not in {r['id'] for r in self.list()}:
-            raise ValueError('Default pod is unavailable')
+            raise ValueError('Default pod is unavailable; create a pod or choose Set default')
         return pod
 
     def set_default(self, pod):

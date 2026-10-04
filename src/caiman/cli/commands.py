@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
                            help="Filter by pod; defaults to all local pods")
     pod = commands.add_parser('pod', help='Manage local pods and optional Git sharing')
     pod_actions = pod.add_subparsers(dest='action', required=True)
-    for name in ('list', 'create', 'clone', 'connect', 'sync', 'disconnect', 'default'):
+    for name in ('list', 'create', 'clone', 'connect', 'sync', 'disconnect', 'default', 'remove'):
         command = pod_actions.add_parser(name)
         command.add_argument('--store', type=Path)
         if name != 'list':
@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.action == 'list':
                 print(json.dumps(manager.list_repos(), indent=2))
             else:
-                action = {'clone': 'add', 'connect': 'initialize', 'disconnect': 'remove'}.get(args.action, args.action)
+                action = {'clone': 'add', 'connect': 'initialize', 'disconnect': 'remove', 'remove': 'unregister'}.get(args.action, args.action)
                 plan = manager.prepare(action, args.name, getattr(args, 'remote', None) or '')
                 manager.apply(plan)
                 print(plan.preview)
