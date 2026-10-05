@@ -345,6 +345,9 @@ class ProjectFormApp(EditorFormApp):
     """Edit a project field by field. Exits with ('review'|'raw'|'delete', draft), or None."""
 
     TITLE = 'Caiman · Edit project'
+    CSS = EDITOR_CSS + '''
+    #project-pod { margin-bottom: 1; }
+    '''
 
     def __init__(self, *, original: dict, draft: dict | None = None, message: str = '', root: Path | None = None):
         super().__init__()
@@ -358,6 +361,8 @@ class ProjectFormApp(EditorFormApp):
             self.draft = restate_project_draft(self.draft)
         self.message = message
         self.root = root
+        self.service = ConfigurationService(Store(root)) if root is not None else None
+        self.pod = self.draft.get('pod') or 'public'
         pods = [r['id'] for r in Store(root).pods.list()] if root else ['public']
         self.suggestions = Suggestions(pods)
 
@@ -389,8 +394,10 @@ class ProjectFormApp(EditorFormApp):
                 yield from self.field('project', 'Program Codename', draft.get('project', ''))
                 yield from self.field('version', 'Version', draft.get('version', ''))
                 yield from self.field('customer', 'Customer', draft.get('customer', ''))
-                yield from self.field('pod', 'Pod', draft.get('pod', 'public'), placeholder='public')
                 yield from self.field('spec_set', 'Specification Set', draft.get('spec_set', ''))
+                yield Label('Pod', classes='field-label')
+                yield Static(self.service.store.pod_name(self.pod) if self.service else self.pod,
+                             id='project-pod', markup=False)
                 s = self.suggestions
                 yield from self.section('Boards', 'boards',
                                         [PinnedBoardCard(board, suggestions=s) for board in draft.get('boards', [])],
@@ -442,8 +449,6 @@ class ProjectFormApp(EditorFormApp):
         data = deepcopy(self.draft)
         for key in ('project', 'version', 'customer', 'spec_set'):
             data[key] = self.value(key)
-        if 'pod' in data or self.value('pod') != 'public':
-            data['pod'] = self.value('pod')
         data['boards'] = [card.collect() for card in self.query_one('#boards').query_children(PinnedBoardCard)]
         data['documents'] = [card.collect() for card in self.query_one('#documents').query_children(ProjectDocumentCard)]
         data['features'] = [card.collect() for card in self.query_one('#features').query_children(FeatureCard)]

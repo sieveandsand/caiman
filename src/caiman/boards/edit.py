@@ -178,7 +178,7 @@ def edit_board(root: Path, service: ConfigurationService, selection: dict) -> di
     # the same editable context, without treating that supplied field as an edit.
     form_original = dict(original, pod=selection.get('pod', service.store.pods.default))
     while True:
-        outcome = BoardFormApp(original=form_original, draft=draft, message=message).run()
+        outcome = BoardFormApp(original=form_original, draft=draft, message=message, service=service).run()
         if outcome is None:
             return None
         action, draft = outcome

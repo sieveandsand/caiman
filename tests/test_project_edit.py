@@ -231,19 +231,15 @@ def test_gallery_edit_starts_disabled_and_tracks_real_changes(project_setup, mon
             review = app.query_one('#review-changes', Button)
             assert review.disabled
             disabled_style = review.rich_style
-            pod = app.query_one('#project-pod', Input)
-            assert pod.value == selection['pod']
-            pod.value = 'another-pod'
-            await pilot.pause()
-            assert not review.disabled
-            assert review.rich_style != disabled_style
-            pod.value = selection['pod']
-            await pilot.pause()
-            assert review.disabled
+            pod = app.query_one('#project-pod')
+            assert not pod.can_focus
+            assert str(pod.content) == service.store.pod_name(selection['pod'])
+            assert app.collect()['pod'] == selection['pod']
             version = app.query_one('#project-version', Input)
             version.value = 'changed'
             await pilot.pause()
             assert not review.disabled
+            assert review.rich_style != disabled_style
             review.focus()
             await pilot.pause()
             assert app.focused is review

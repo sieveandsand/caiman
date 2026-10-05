@@ -66,7 +66,6 @@ async def test_fields_edit_and_optional_values_clear(manifest):
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.pause()
         app.query_one('#project-version', Input).value = 'C-sample'
-        app.query_one('#project-pod', Input).value = 'oem-beta'
         board = app.query_one(PinnedBoardCard)
         board.query_one('.field-digest', Input).value = ''
         board.query_one('.field-version', Input).value = '2.2'
@@ -76,7 +75,7 @@ async def test_fields_edit_and_optional_values_clear(manifest):
         part.query_one('.field-role', Input).value = 'modem'
         draft = app.collect()
     assert draft['version'] == 'C-sample'
-    assert draft['pod'] == 'oem-beta'
+    assert draft['pod'] == manifest['pod']
     assert draft['boards'] == [{'name': 'falcon-mainboard', 'version': '2.2'}, {'name': 'falcon-io', 'version': 'A'}]
     assert draft['features'][0]['governed_by'][0] == {'ref': 'oem/falcon/spec/3', 'digest': A,
                                                       'pod': 'oem-alpha'}

@@ -198,12 +198,13 @@ class BoardFormApp(EditorFormApp):
 
     TITLE = 'Caiman · Edit board'
     CSS = BOARD_FORM_CSS + '''
+    #board-pod { margin-bottom: 1; }
     #navigation { layout: grid; grid-size: 2; grid-columns: 1fr; grid-rows: 3; height: auto; }
     #navigation Button { width: 100%; min-width: 0; margin: 0; }
     #navigation Button:focus { border: double #7fdc4f; }
     '''
 
-    def __init__(self, *, original: dict, draft: dict | None = None, message: str = ''):
+    def __init__(self, *, original: dict, draft: dict | None = None, message: str = '', service=None):
         super().__init__()
         apply_theme(self)
         self.original = deepcopy(original)
@@ -216,6 +217,8 @@ class BoardFormApp(EditorFormApp):
         self.read_only = self.legacy or self.directed
         self.message = message
         self.vendors = vendor_suggester(self.draft)
+        self.service = service
+        self.pod = self.draft.get('pod') or 'public'
 
     def on_resize(self, event):
         self.query_one('#navigation').styles.grid_size_columns = 4 if event.size.width >= 100 else 2
@@ -231,11 +234,13 @@ class BoardFormApp(EditorFormApp):
                 yield Static(self.read_only_reason(), classes='hint', markup=False)
                 yield Static(json.dumps(self.draft, indent=2, ensure_ascii=False), markup=False)
             else:
-                yield from self.field('pod', 'Pod')
                 yield from self.field('board', 'Board Name')
                 yield from self.field('version', 'Version')
+                yield from self.field('notes', 'Description')
                 yield from self.field('vendor', 'Board Vendor', suggester=self.vendors)
-                yield from self.field('notes', 'Notes (optional)')
+                yield Label('Pod', classes='field-label')
+                yield Static(self.service.store.pod_name(self.pod) if self.service else self.pod,
+                             id='board-pod', markup=False)
                 with Collapsible(title=f"Board Documents · {len(self.draft.get('documents', []) or [])} declared", collapsed=False):
                     with Grid(id='board-documents', classes='card-grid'):
                         for pin in self.draft.get('documents', []) or []:
@@ -274,10 +279,8 @@ class BoardFormApp(EditorFormApp):
         # Lineage is not a form field. `derives_from` and `relation` ride through
         # untouched from the snapshot, like every other value the form does not
         # render, so a board that declares lineage keeps it.
-        for key in ('board', 'version', 'vendor', 'notes', 'pod'):
+        for key in ('board', 'version', 'vendor', 'notes'):
             value = self.query_one(f'#board-{key}', Input).value.strip()
-            if key == 'pod' and not value:
-                continue
             if value or key in {'board', 'version'}:
                 data[key] = value
             else:
