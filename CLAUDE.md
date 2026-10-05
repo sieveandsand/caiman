@@ -242,6 +242,7 @@ src/caiman/
   dashboard/      # home screen, setup, workflow state, and dashboard actions
   repositories/   # Repo Manager service and TUI
   hooks/          # harness hook installation, callbacks, and TUI
+  sessions/       # per-session context folders: registration, resolution, installation
   little_caiman/  # read-only sidecar: a session's managed-document use, from its transcript
   storage/        # immutable blobs, manifests, refs, and resolution
   ui/             # shared navigation, theme, mascot, and fullwidth headings
@@ -249,9 +250,10 @@ src/caiman/
 
 Tests live under `tests/`, public example datasets under `fixtures/`, and design
 documentation under `docs/`. S-39 and `docs/CONTAINER-CONTEXT.md` own the accepted
-host-provisioned, per-session workflow for local and container agents. Session
-materialization and the portable workspace adapter remain planned; create
-new feature packages when their implementation arrives. The default pod is permanently `public`; no board or project is a remembered default.
+host-provisioned, per-session workflow; S-40 amends it for host agents, which
+load context through the start hook and `caiman session` commands (implemented).
+The container workspace adapter remains planned; create new feature packages
+when their implementation arrives. The default pod is permanently `public`; no board or project is a remembered default.
 
 No `server/`. If semantic fallback is ever built (S-18) it arrives as one tool
 behind one server, and not before search and selective reading of the source documents have

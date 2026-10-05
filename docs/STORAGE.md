@@ -12,7 +12,8 @@ Document references now pin stable IDs and bodies while following current metada
 **Status:** Accepted. Local storage and Repo Manager repository setup are
 implemented. Team storage (per-compartment Git transport, publication, verified
 fetch, and context snapshots) is adopted (S-35) and not yet implemented; §14 sets
-the implementation order. Session materialization is planned under S-39;
+the implementation order. Session materialization for host agents is implemented
+(S-40, `caiman session load`); the container path is planned under S-39;
 [CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md) owns its accepted lifecycle and workspace layout.
 **Scope:** The on-disk representation of documents, boards, and projects; how
 they are shared between teammates through Git; and the procedure that builds a
@@ -991,7 +992,9 @@ by [Session context §6](CONTAINER-CONTEXT.md#6-changing-context-during-a-sessio
 
 Input: a resolved complete pin set, a registered workspace/session identity, and
 a validated context choice. Output: one installed session context revision.
-This host-side operation is planned; its final CLI and schema remain unspecified.
+For host agents this is `caiman session load` (S-40), which takes the same steps
+without a request, result, or acknowledgement; the container path remains planned.
+Documents are copied, not cloned or hardlinked, in the current implementation.
 There is no open/sealed mode or agent-side store access.
 
 1. Validate the session, host-authorized selection, expected revision, and safe

@@ -488,7 +488,25 @@ This supports multiple selections in one worktree without putting the store or
 full Caiman installation inside containers. Session folders are not permission
 boundaries. Worktree/container creation and harness interruption stay external.
 The detailed design and remaining implementation choices have one owner:
-[CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md). Implementation remains planned.
+[CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md). Amended for host agents by S-40.
+
+### S-40. Host agents load context through the start hook and the Caiman CLI
+
+When the coding agent runs on the host, it uses Caiman directly instead of the
+S-39 request-file protocol. The start hook registers the session, creating the
+worktree's `.caiman/` folder on first use (no separate initialization step), and
+tells the agent what is loaded or that it must ask. The agent asks the user,
+then runs `caiman session list` and `caiman session load`; a bare name lists
+versions and never loads one (I-7). The load returns only after the complete
+context is installed, so there is no acknowledgement step. A per-session lock
+serializes changes. Little caiman lists only sessions the hook registered.
+
+This removes the listener, catalog, and adapter for the common local case. The
+agent can run any Caiman command against any local pod; session folders were
+never permission boundaries (S-19). Agents in containers still need the S-39
+protocol, which remains planned.
+
+Settled 2026-10-05 by user instruction; amends S-39 for host agents.
 
 ## Open
 

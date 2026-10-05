@@ -1,10 +1,11 @@
-"""Reviewed, additive harness setup and a content-free startup orientation."""
+"""Reviewed, additive harness setup and the session start hook."""
 
 from dataclasses import dataclass
 import difflib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import stat
 import sys
@@ -12,11 +13,13 @@ import tempfile
 
 
 HARNESS_NAMES = {'claude': 'Claude Code', 'codex': 'Codex'}
+CAIMAN_HANDLER = re.compile(r'-m caiman\b.*\bsession (?:start|hook)\b')
 
 
 def settings_path(harness: str, directory: Path) -> Path:
     if harness == 'claude':
-        return directory / '.claude' / 'settings.json'
+        # Local settings: the command embeds this machine's paths, so it is never committed.
+        return directory / '.claude' / 'settings.local.json'
     if harness == 'codex':
         return directory / '.codex' / 'hooks.json'
     raise ValueError('Choose Claude Code or Codex')
@@ -71,13 +74,26 @@ def prepare_hook(harness: str, directory: Path, store_root: Path) -> HookPlan:
     if not isinstance(groups, list) or any(not isinstance(g, dict) or not isinstance(g.get('hooks'), list)
                                          or any(not isinstance(h, dict) for h in g['hooks']) for g in groups):
         raise ValueError('SessionStart must contain hook groups')
-    command = shlex.join([sys.executable, '-m', 'caiman', '--store', str(store_root.absolute()),
-                          'session', 'start']) + ' 2>/dev/null || true'
+    command = _cli(store_root) + f' session hook --harness {harness} 2>/dev/null || true'
     handler = {'type': 'command', 'command': command, 'timeout': 5}
-    if any(g.get('matcher', '') in ('', '*') and handler in g['hooks'] for g in groups):
+    # Upgrade an earlier Caiman handler in place rather than running two.
+    placed = False
+    for group in groups:
+        kept = []
+        for entry in group['hooks']:
+            if not CAIMAN_HANDLER.search(str(entry.get('command', ''))):
+                kept.append(entry)
+            elif not placed and group.get('matcher', '') in ('', '*'):
+                kept.append(handler)
+                placed = True
+        group['hooks'] = kept
+    groups[:] = [group for group in groups if group['hooks']]
+    if not placed:
+        groups.append({'hooks': [handler]})
+    after = (json.dumps(data, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+    if before is not None and json.loads(before) == data:
         return HookPlan(path, before, before)
-    groups.append({'hooks': [handler]})
-    return HookPlan(path, before, (json.dumps(data, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
+    return HookPlan(path, before, after)
 
 
 def install_hook(plan: HookPlan) -> bool:
@@ -101,17 +117,49 @@ def install_hook(plan: HookPlan) -> bool:
     return True
 
 
-def session_start(root: Path) -> int:
-    """No store contents, event payload, or document bodies enter hook output."""
-    if not root.is_dir():
-        return 0
-    cli = shlex.join([sys.executable, '-m', 'caiman', '--store', str(root.absolute())])
-    context = (
-        'Caiman manages versioned firmware documents, boards, and projects. '
-        f'Use `{cli} --help` for commands and `{cli} documents` for the local document catalog. '
-        'Ask the engineer which board or project and version is relevant before selecting context. '
-        'Local pods are available directly; Git hosts control repository sharing. '
-        'Automatic workspace sync and access logging are not available in this version.'
-    )
-    print(json.dumps({'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': context}}))
-    return 0
+def _cli(store_root: Path) -> str:
+    return shlex.join([sys.executable, '-m', 'caiman', '--store', str(store_root.absolute())])
+
+
+def session_context(store_root: Path, folder: Path, state: dict | None) -> str:
+    """What the agent is told at start; identities and paths only, never content (I-6)."""
+    cli, name = _cli(store_root), folder.name
+    load = f'{cli} session load <board|project> <name> --version <version> --session {name}'
+    if state is None or not (folder / 'context').is_dir():
+        return ('Caiman manages versioned firmware documents, boards, and projects. '
+                f'No board or project is loaded for this session ({name}). '
+                'Ask the user which board or project to load before answering hardware or '
+                f'requirement questions. List choices with `{cli} session list` (add a name '
+                'to see its versions). Never choose a version yourself; ask the user. '
+                f'Then load it with `{load}`.')
+    brief = folder / 'context' / 'project.md'
+    return (f"Caiman: this session ({name}) has {state['kind']} {state['name']} @ "
+            f"{state['version']} loaded (revision {state['revision']}). Read {brief} before "
+            'answering hardware or requirement questions; its documents are under '
+            f"{folder / 'context' / 'documents'}. To switch, ask the user which board or "
+            f'project and version, then run `{load}` and reread the brief.')
+
+
+def session_hook(store_root: Path, harness: str, event: dict, env=os.environ) -> str | None:
+    """Register the session, creating `.caiman/` on first use, and orient the agent.
+
+    Returns the hook's stdout, or None when there is nothing to say. Never prompts,
+    never provisions, never reads document content (S-23, I-10).
+    """
+    from caiman.sessions.service import find_workspace, read_state, register_session
+
+    if not store_root.is_dir() or not isinstance(event, dict):
+        return None
+    cwd = event.get('cwd') if isinstance(event.get('cwd'), str) else os.getcwd()
+    project = env.get('CLAUDE_PROJECT_DIR') or cwd
+    root = find_workspace(Path(project)) or Path(project)
+    folder = register_session(root, harness, event.get('session_id'),
+                              source=event.get('source', ''), transcript=event.get('transcript_path'))
+    if env_file := env.get('CLAUDE_ENV_FILE'):
+        # Later Bash commands in this session find their own folder without guessing.
+        with open(env_file, 'a', encoding='utf-8') as stream:
+            stream.write(f'export CAIMAN_SESSION={shlex.quote(folder.name)}\n'
+                         f'export CAIMAN_WORKSPACE={shlex.quote(str(root))}\n')
+    return json.dumps({'hookSpecificOutput': {
+        'hookEventName': 'SessionStart',
+        'additionalContext': session_context(store_root, folder, read_state(folder))}})

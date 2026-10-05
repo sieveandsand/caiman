@@ -25,9 +25,10 @@ class HooksApp(NavigationApp):
     def compose(self):
         yield Static(f'caiman  /  hooks  /  {HARNESS_NAMES[self.harness]}', id='brand')
         with VerticalScroll(id='body'):
-            yield Static('Add Caiman startup guidance to this project.', id='step-title')
-            yield Static('Introduces Caiman commands when a session starts or resumes.\n'
-                         'Document syncing and access logging are not available yet.', classes='hint')
+            yield Static('Add the Caiman start hook to this project.', id='step-title')
+            yield Static('Each session gets its own folder under .caiman/sessions/, created on first use.\n'
+                         'The agent asks which board or project to load, then loads it with the Caiman CLI.\n'
+                         'Access logging is not available yet.', classes='hint')
             yield Label('Project directory')
             yield Input(str(self.directory), id='directory')
             yield Static('Preview the exact settings change, then choose Install. Existing hooks are preserved.', classes='hint')

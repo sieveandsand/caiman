@@ -1,8 +1,9 @@
 """Little caiman: a narrow, one-column sidecar beside a Claude Code or Codex session.
 
-The picker lists recent sessions; the usage view tails the chosen transcript
-and shows which managed documents were read, searched, or edited, and whether
-the bytes on disk still match the store. Nothing here writes a file.
+The picker lists recent sessions that Caiman's start hook registered; the usage
+view tails the chosen transcript and shows which managed documents were read,
+searched, or edited, and whether the bytes on disk still match the store.
+Nothing here writes a file.
 """
 
 import asyncio
@@ -134,7 +135,7 @@ class SessionSummaryCard(OverviewCard):
         if modified:
             details.append((f'{modified} modified on disk', '#e69a89'))
         if not tracker.has_workspace:
-            details.append(('No .caiman/documents here; only store reads can appear', '#8d9982'))
+            details.append(('No context loaded in this session; only store reads can appear', '#8d9982'))
         if details:
             card.gap()
             for value, style in details:
@@ -261,7 +262,7 @@ class SessionPickerApp(LittleApp):
         await grid.mount_all([CardFrame(SessionCard(session, index=index))
                               for index, session in enumerate(self.sessions)])
         status.update('Pick the session you are working in.' if self.sessions else
-                      'No Claude Code or Codex sessions found.')
+                      'No Caiman sessions yet. Sessions appear once the Caiman start hook runs in them.')
         self.resize_cards()
         if self.sessions:
             self.query_one('#session-0', Button).focus()

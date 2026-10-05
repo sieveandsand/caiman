@@ -6,6 +6,15 @@ provisioning and session switching, for both local agents and agents in containe
 Architecture, storage, and hook documentation refer here for the lifecycle and
 protocol rather than defining alternative workflows.
 
+**Host agents (S-40, implemented):** when the agent runs on the host, the start
+hook (`caiman session hook`) registers the session and creates `.caiman/` on
+first use, and the agent loads context itself with `caiman session list` and
+`caiman session load`. There is no listener, catalog, request/result exchange,
+or acknowledgement in that path. The session layout in §3 (`session.json`,
+`state.json`, `context/`) is shared; `src/caiman/sessions/service.py` is the
+implementation. The request-file protocol below remains the planned design for
+agents in containers.
+
 The current [pod model](PODS.md) and [document model](DOCUMENT-METADATA.md)
 apply. There is no open/sealed mode or application authorization layer. Every
 selected project resolves its complete pinned document set from its owning pod

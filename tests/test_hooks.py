@@ -1,4 +1,6 @@
+import io
 import json
+import os
 import subprocess
 
 import pytest
@@ -56,24 +58,52 @@ def test_stale_preview_and_symlink_rejected(tmp_path):
     assert target.read_text() == '{}'
 
 
-def test_session_callback_no_private_contents_and_missing_store(tmp_path, capsys):
+def test_upgrades_an_earlier_caiman_handler_in_place(tmp_path):
+    path = settings_path('claude', tmp_path)
+    path.parent.mkdir()
+    old = '/old/python -m caiman --store /old/store session start 2>/dev/null || true'
+    path.write_text(json.dumps({'hooks': {'SessionStart': [
+        {'hooks': [{'type': 'command', 'command': 'echo keep'}, {'type': 'command', 'command': old}]}]}}))
+    assert install_hook(prepare_hook('claude', tmp_path, tmp_path / 'store'))
+    [group] = json.loads(path.read_text())['hooks']['SessionStart']
+    assert group['hooks'][0]['command'] == 'echo keep'
+    assert group['hooks'][1]['command'].endswith('session hook --harness claude 2>/dev/null || true')
+    assert len(group['hooks']) == 2
+
+
+def test_claude_hook_goes_to_uncommitted_local_settings(tmp_path):
+    assert settings_path('claude', tmp_path) == tmp_path / '.claude' / 'settings.local.json'
+
+
+def test_session_callback_no_private_contents_and_missing_store(tmp_path, monkeypatch, capsys):
     (tmp_path / 'private').write_text('PRIVATE CONTENT')
-    assert main(['--store', str(tmp_path), 'session', 'start']) == 0
+    worktree = tmp_path / 'firmware'
+    worktree.mkdir()
+    event = json.dumps({'session_id': 's1', 'cwd': str(worktree), 'source': 'startup'})
+    monkeypatch.setattr('sys.stdin', io.StringIO(event))
+    assert main(['--store', str(tmp_path), 'session', 'hook']) == 0
     output = capsys.readouterr().out
     assert 'PRIVATE CONTENT' not in output
     assert json.loads(output)['hookSpecificOutput']['hookEventName'] == 'SessionStart'
-    assert main(['--store', str(tmp_path / 'missing'), 'session', 'start']) == 0
+    monkeypatch.setattr('sys.stdin', io.StringIO(event))
+    assert main(['--store', str(tmp_path / 'missing'), 'session', 'hook']) == 0
     assert capsys.readouterr().out == ''
 
 
-def test_generated_command_runs_with_quoted_path(tmp_path):
+@pytest.mark.parametrize('harness', ['claude', 'codex'])
+def test_generated_command_runs_with_quoted_path(tmp_path, harness):
     root = tmp_path / "store ' with spaces"
     root.mkdir()
-    plan = prepare_hook('claude', tmp_path, root)
+    worktree = tmp_path / 'firmware'
+    worktree.mkdir()
+    plan = prepare_hook(harness, worktree, root)
     command = json.loads(plan.after)['hooks']['SessionStart'][0]['hooks'][0]['command']
-    result = subprocess.run(command, shell=True, input='{}', text=True, capture_output=True)
+    event = json.dumps({'session_id': 's1', 'cwd': str(worktree)})
+    result = subprocess.run(command, shell=True, input=event, text=True, capture_output=True,
+                            env={k: v for k, v in os.environ.items() if not k.startswith('CLAUDE_')})
     assert result.returncode == 0
     assert json.loads(result.stdout)['hookSpecificOutput']['hookEventName'] == 'SessionStart'
+    assert (worktree / '.caiman' / 'sessions' / f'{harness}-s1' / 'session.json').is_file()
 
 
 @pytest.mark.asyncio

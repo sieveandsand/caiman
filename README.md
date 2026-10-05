@@ -8,10 +8,11 @@ gets out of the way.
 ## Status
 
 Pre-MVP. Local document ingestion and board/project authoring are implemented,
-with TUIs, JSON drafts, validation, and immutable digest pins. Session
-materialization, brief generation, and access-log hooks are planned.
+with TUIs, JSON drafts, validation, and immutable digest pins. A session start
+hook for Claude Code and Codex registers each session, and `caiman session load`
+installs a board or project into that session's folder with a metadata-only
+brief. Access logging and container agents are planned.
 Pods support local folders and optional Git clone/sync.
-Startup guidance hooks can be installed for Claude Code and Codex from the home menu.
 
 Caiman models hardware as boards and customer programs as projects. Each project
 pins one or more boards and its documents, with collections available to group
@@ -134,17 +135,33 @@ Teammates use `caiman pod clone alpha URL`. Git host permissions control fetchin
 and pushing; local copies remain usable offline. Each command accepts `--store`.
 [Pods](docs/PODS.md) documents references, migration, and conflict behavior.
 
-Use **Hooks → Claude Code** or **Hooks → Codex** to add a startup hook to a
+Use **Hooks → Claude Code** or **Hooks → Codex** to add the start hook to a
 project directory. Choose **Preview** to review the exact settings diff, then
 **Install**. Existing settings and hooks are preserved; repeated installation
-does not add duplicates. Claude Code uses `.claude/settings.json`; Codex uses
+does not add duplicates, and an earlier Caiman hook is upgraded in place. Claude
+Code uses the uncommitted `.claude/settings.local.json`; Codex uses
 `.codex/hooks.json`. Restart the harness after installation. In Codex, open
 `/hooks` to review and trust the hook (the project must also be trusted).
 See the official [Claude Code hook reference](https://code.claude.com/docs/en/hooks)
 and [Codex hook reference](https://learn.chatgpt.com/docs/hooks).
 
-The hook introduces available Caiman commands without reading document bodies
-or private catalogs. It does not yet sync a workspace or log document access.
+At each session start the hook creates `.caiman/` in the project on first use
+(ignored by Git through its own `.gitignore`), registers the session under
+`.caiman/sessions/<harness>-<session id>/`, and tells the agent what is loaded.
+When nothing is, the agent asks you which board or project and version to load:
+
+```bash
+caiman session list                     # every board and project version
+caiman session list kestrel             # one name's versions; never resolves one
+caiman session load project kestrel --version dvt-1   # session from $CAIMAN_SESSION or --session
+caiman session status
+```
+
+`load` installs the complete pinned document set read-only under the session's
+`context/documents/`, with `project.md` (a metadata-only brief) and
+`documents/_index.md`. A failed load keeps the previous context. Sessions are
+independent, so two agents in one worktree can load different contexts. The hook
+reads no document bodies and does not log document access.
 It uses the Python installation running Caiman and the selected store, so
 reinstall it if that Python environment moves. A missing store produces no
 context, and a missing installation or callback error leaves the session running.

@@ -104,6 +104,87 @@ def _run_config(args, root: Path) -> int:
     return 0
 
 
+def _session_commands(commands) -> None:
+    session = commands.add_parser('session', help='Load boards and projects into an agent session')
+    actions = session.add_subparsers(dest='action', required=True)
+    for name in ('hook', 'start'):
+        hook = actions.add_parser(name, help='Harness start hook: register the session (reads JSON on stdin)'
+                                  if name == 'hook' else argparse.SUPPRESS)
+        hook.add_argument('--harness', choices=('claude', 'codex'), default='claude')
+    listing = actions.add_parser('list', help='List loadable boards and projects; a name lists its versions')
+    listing.add_argument('name', nargs='?')
+    listing.add_argument('--kind', choices=('board', 'project'))
+    load = actions.add_parser('load', help="Install a board or project version into this session's folder")
+    load.add_argument('kind', choices=('board', 'project'))
+    load.add_argument('name')
+    load.add_argument('--version', help='Exact version label; omitted, the versions are listed')
+    status = actions.add_parser('status', help="Show this session's loaded context")
+    for action in (listing, load):
+        action.add_argument('--pod', action='append', default=[], help='Limit to a pod; repeat for several')
+    for action in (listing, load, status):
+        action.add_argument('--store', type=Path)
+    for action in (load, status):
+        action.add_argument('--session', help='Session folder name (default: $CAIMAN_SESSION)')
+        action.add_argument('--workspace', type=Path,
+                            help='Worktree holding .caiman/ (default: $CAIMAN_WORKSPACE, then search upward)')
+
+
+def _session_hook(args) -> int:
+    from caiman.hooks.service import session_hook
+
+    try:
+        output = session_hook(store_path(args.launcher_store), args.harness, json.load(sys.stdin))
+    except Exception:
+        # Harness callbacks must never prevent a session from starting (I-10).
+        return 0
+    if output:
+        print(output)
+    return 0
+
+
+def _session_target(args) -> Path:
+    from caiman.sessions.service import find_workspace, session_folder
+
+    name = args.session or os.environ.get('CAIMAN_SESSION')
+    if not name:
+        raise ValueError('No session given; pass --session (the hook prints it) or set CAIMAN_SESSION')
+    workspace = args.workspace or os.environ.get('CAIMAN_WORKSPACE')
+    root = Path(workspace) if workspace else find_workspace(Path.cwd())
+    if root is None:
+        raise ValueError('No .caiman/ folder here or above; pass --workspace')
+    return session_folder(root, name)
+
+
+def _run_session(args, root: Path) -> int:
+    from caiman.sessions.service import count, list_choices, load_context, read_state
+
+    pods = set(getattr(args, 'pod', []))
+    if args.action == 'list':
+        print(json.dumps(list_choices(root, args.name, kind=args.kind, pods=pods),
+                         ensure_ascii=False, indent=2))
+        return 0
+    folder = _session_target(args)
+    if args.action == 'status':
+        state = read_state(folder)
+        print(json.dumps({'session': folder.name, 'folder': str(folder), 'loaded': state,
+                          'brief': str(folder / 'context' / 'project.md') if state else None},
+                         ensure_ascii=False, indent=2))
+        return 0
+    if args.version is None:
+        # A bare name never resolves to a version (I-7).
+        versions = list_choices(root, args.name, kind=args.kind, pods=pods)
+        print(json.dumps(versions, ensure_ascii=False, indent=2))
+        print('caiman: choose one version with --version; versions are not ordered', file=sys.stderr)
+        return 1
+    if len(pods) > 1:
+        raise ValueError('Load from one pod at a time')
+    state = load_context(root, folder, args.kind, args.name, args.version, next(iter(pods), None))
+    brief = folder / 'context' / 'project.md'
+    print(f"Loaded {state['kind']} {state['name']} @ {state['version']} into {folder.name} "
+          f"(revision {state['revision']}, {count(state['documents'])}).\nRead {brief}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="caiman", description="Configure versioned firmware documents, boards, and projects. Run without a command for guided setup and the home screen."
@@ -111,8 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"caiman {__version__}")
     parser.add_argument('--store', dest='launcher_store', metavar='PATH', type=Path, help='Local store (overrides config.toml)')
     commands = parser.add_subparsers(dest="command")
-    session = commands.add_parser('session', help='Non-interactive harness callbacks')
-    session.add_subparsers(dest='session_action', required=True).add_parser('start', help='Introduce Caiman to a session')
+    _session_commands(commands)
     ingest = commands.add_parser("ingest", help="Open the document ingestion TUI")
     ingest.add_argument("file", nargs="?", type=Path, help="Document file (any format)")
     ingest.add_argument("--store", type=Path, help="Local store path (overrides config.toml)")
@@ -134,14 +214,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument('remote', nargs='?' if name == 'connect' else None)
     args = parser.parse_args(argv)
 
-    if args.command == 'session':
-        from caiman.hooks.service import session_start
-
-        try:
-            return session_start(store_path(args.launcher_store))
-        except Exception:
-            # Harness callbacks must never prevent a session from starting.
-            return 0
+    if args.command == 'session' and args.action in {'hook', 'start'}:
+        return _session_hook(args)
 
     interactive = args.command in (None, "ingest", "little") or getattr(args, "action", None) in {"configure", "new-version"}
     if interactive and (not sys.stdin.isatty() or not sys.stdout.isatty()):
@@ -173,6 +247,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command in {"board", "project"}:
             return _run_config(args, root)
+        if args.command == 'session':
+            return _run_session(args, root)
         if args.command == "little":
             from caiman.little_caiman.tui import run_little_caiman
 

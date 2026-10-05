@@ -11,7 +11,7 @@ outside the harness are invisible here.
 """
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import os
@@ -21,6 +21,7 @@ import shlex
 import sqlite3
 
 from caiman.documents.ingest import heading_outline
+from caiman.sessions.service import CAIMAN, find_workspace, is_registered, session_name
 
 
 HARNESS_NAMES = {'claude': 'Claude Code', 'codex': 'Codex'}
@@ -56,6 +57,8 @@ class Session:
     cwd: Path | None
     title: str
     updated: float
+    # This session's installed documents, `<worktree>/.caiman/sessions/<id>/context/documents`.
+    documents: Path | None = None
 
     def transcripts(self) -> list[Path]:
         """The main transcript first, then any subagent transcripts beside it."""
@@ -125,26 +128,40 @@ def _codex_session(path: Path, updated: float, titles: dict[str, str]) -> Sessio
     return Session('codex', path, session_id, cwd, titles.get(str(path), ''), updated)
 
 
-def list_sessions(home: Path | None = None, limit: int = 30) -> list[Session]:
-    """Most recently active Claude Code and Codex sessions, newest first."""
-    home = Path.home() if home is None else home
+def registered(session: Session) -> Session | None:
+    """The session with its documents folder if Caiman's start hook registered it."""
+    if session.cwd is None or (root := find_workspace(session.cwd)) is None:
+        return None
+    try:
+        folder = root / CAIMAN / 'sessions' / session_name(session.harness, session.session_id)
+    except ValueError:
+        return None
+    return replace(session, documents=folder / 'context' / 'documents') if is_registered(folder) else None
 
-    def recent(paths):
-        stamped = []
+
+def list_sessions(home: Path | None = None, limit: int = 30) -> list[Session]:
+    """Most recently active sessions Caiman registered, newest first, across harnesses."""
+    home = Path.home() if home is None else home
+    candidates = []
+    for harness, paths in (('claude', (home / '.claude' / 'projects').glob('*/*.jsonl')),
+                           ('codex', (home / '.codex' / 'sessions').rglob('rollout-*.jsonl'))):
         for path in paths:
             try:
-                stamped.append((path.stat().st_mtime, path))
+                candidates.append((path.stat().st_mtime, harness, path))
             except OSError:
                 continue
-        return sorted(stamped, reverse=True)[:limit]
-
-    sessions = [_claude_session(path, updated)
-                for updated, path in recent((home / '.claude' / 'projects').glob('*/*.jsonl'))]
-    codex = recent((home / '.codex' / 'sessions').rglob('rollout-*.jsonl'))
-    if codex:
-        titles = _codex_titles(home)
-        sessions += [_codex_session(path, updated, titles) for updated, path in codex]
-    return sorted(sessions, key=lambda session: session.updated, reverse=True)[:limit]
+    sessions, titles = [], None
+    for updated, harness, path in sorted(candidates, reverse=True):
+        if harness == 'claude':
+            session = _claude_session(path, updated)
+        else:
+            titles = _codex_titles(home) if titles is None else titles
+            session = _codex_session(path, updated, titles)
+        if (found := registered(session)) is not None:
+            sessions.append(found)
+            if len(sessions) == limit:
+                break
+    return sessions
 
 
 # ── Managed documents ───────────────────────────────────────────────────────
@@ -169,8 +186,8 @@ class DocumentRef:
 
 
 class Resolver:
-    def __init__(self, cwd: Path | None, store_root: Path | None):
-        self.workspace = Path(os.path.abspath(cwd / '.caiman' / 'documents')) if cwd else None
+    def __init__(self, documents: Path | None, store_root: Path | None):
+        self.workspace = Path(os.path.abspath(documents)) if documents else None
         self.store = Path(os.path.abspath(store_root)) if store_root else None
 
     @staticmethod
@@ -191,7 +208,7 @@ class Resolver:
             if root is None:
                 continue
             if path != root and not path.is_relative_to(root):
-                # `.caiman` holds only the workspace; broader parents are too noisy to count.
+                # The session's `context/` holds only its documents and brief; broader parents are too noisy to count.
                 if location == 'workspace' and path == root.parent:
                     return TREE
                 continue
@@ -235,7 +252,7 @@ class UsageTracker:
     def __init__(self, session: Session, store_root: Path | None):
         self.session = session
         self.store_root = Path(os.path.abspath(store_root)) if store_root else None
-        self.resolver = Resolver(session.cwd, store_root)
+        self.resolver = Resolver(session.documents, store_root)
         self.documents: dict[Path, DocumentUsage] = {}
         self.tree_searches = 0
         self._offsets: dict[Path, int] = {}

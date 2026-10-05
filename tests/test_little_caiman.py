@@ -10,6 +10,7 @@ from textual.widgets import Button, Static
 
 from caiman.little_caiman.service import ABSENCE_NOTICE, Session, UsageTracker, list_sessions
 from caiman.little_caiman.tui import DocumentUsageCard, SessionPickerApp, UsageApp
+from caiman.sessions.service import register_session
 
 
 DOCUMENT = '''# Flash Controller
@@ -26,12 +27,13 @@ Line seven.
 Line eleven.
 '''
 SECRET = 'REQ-FLASH-SECRET-0142'
+DOCUMENTS = '.caiman/sessions/claude-abc12345/context/documents'
 
 
 @pytest.fixture
 def workspace(tmp_path):
     cwd = tmp_path / 'firmware'
-    document = cwd / '.caiman' / 'documents' / 'oem-alpha' / 'flash-spec@3.2' / 'document.md'
+    document = cwd / DOCUMENTS / 'oem-alpha' / 'flash-spec@3.2' / 'document.md'
     document.parent.mkdir(parents=True)
     document.write_text(DOCUMENT)
     document.chmod(0o444)
@@ -57,19 +59,19 @@ def write_lines(path, entries, mode='w'):
 def claude_session(tmp_path, cwd, entries):
     transcript = tmp_path / 'session.jsonl'
     write_lines(transcript, entries)
-    return Session('claude', transcript, 'abc12345', cwd, 'Fix flash erase', 0)
+    return Session('claude', transcript, 'abc12345', cwd, 'Fix flash erase', 0, cwd / DOCUMENTS)
 
 
 def test_claude_reads_searches_and_edits_are_attributed_to_sections(tmp_path, workspace):
     cwd, document, store = workspace
-    relative = '.caiman/documents/oem-alpha/flash-spec@3.2/document.md'
+    relative = f'{DOCUMENTS}/oem-alpha/flash-spec@3.2/document.md'
     session = claude_session(tmp_path, cwd, [
         claude_call('Read', {'file_path': str(document), 'offset': 5, 'limit': 3}, cwd),
         claude_call('Read', {'file_path': str(document)}, cwd),
         claude_call('Grep', {'pattern': SECRET, 'path': str(document)}, cwd),
         claude_call('Bash', {'command': f'sed -n 10,12p {relative}'}, cwd),
-        claude_call('Bash', {'command': f"rg -n '{SECRET}' .caiman/documents/"}, cwd),
-        claude_call('Bash', {'command': 'ls .caiman/documents'}, cwd),
+        claude_call('Bash', {'command': f"rg -n '{SECRET}' {DOCUMENTS}/"}, cwd),
+        claude_call('Bash', {'command': f'ls {DOCUMENTS}'}, cwd),
         claude_call('Bash', {'command': 'cat README.md'}, cwd),
         claude_call('Edit', {'file_path': str(document), 'old_string': SECRET, 'new_string': 'x'}, cwd),
     ])
@@ -101,7 +103,8 @@ def test_absent_workspace_or_unrelated_paths_record_nothing(tmp_path, workspace)
     cwd, document, store = workspace
     elsewhere = tmp_path / 'other'
     elsewhere.mkdir()
-    session = claude_session(tmp_path, elsewhere, [
+    session = Session('claude', tmp_path / 'session.jsonl', 'abc12345', elsewhere, '', 0)
+    write_lines(session.transcript, [
         claude_call('Read', {'file_path': str(elsewhere / 'document.md')}, elsewhere),
         claude_call('Grep', {'pattern': 'x', 'path': str(elsewhere)}, elsewhere)])
     tracker = UsageTracker(session, store)
@@ -166,7 +169,7 @@ def test_claude_subagent_transcripts_count_toward_the_session(tmp_path, workspac
 
 def test_codex_code_mode_commands_and_patches(tmp_path, workspace):
     cwd, document, store = workspace
-    relative = '.caiman/documents/oem-alpha/flash-spec@3.2/document.md'
+    relative = f'{DOCUMENTS}/oem-alpha/flash-spec@3.2/document.md'
     transcript = tmp_path / 'rollout.jsonl'
     exec_input = f'text(await tools.exec_command({{cmd:{json.dumps("nl -ba " + relative + " | sed -n 5,7p")}, workdir:{json.dumps(str(cwd))}}}));'
     write_lines(transcript, [
@@ -178,27 +181,42 @@ def test_codex_code_mode_commands_and_patches(tmp_path, workspace):
         {'type': 'response_item', 'payload': {'type': 'function_call', 'name': 'shell',
                                               'arguments': json.dumps({'command': ['rg', SECRET, relative], 'workdir': str(cwd)})}},
     ])
-    tracker = UsageTracker(Session('codex', transcript, 'codex-1', cwd, '', 0), store)
+    tracker = UsageTracker(Session('codex', transcript, 'codex-1', cwd, '', 0, cwd / DOCUMENTS), store)
     tracker.poll()
     [usage] = tracker.ranked()
     assert (usage.reads, usage.searches, usage.edits) == (1, 1, 1)
     assert usage.sections == {'Flash Controller › Erase': 1}
 
 
-def test_sessions_are_listed_newest_first_across_harnesses(tmp_path):
+def register(cwd, harness, session_id):
+    cwd.mkdir(parents=True, exist_ok=True)
+    register_session(cwd, harness, session_id)
+
+
+def test_only_registered_sessions_are_listed_newest_first_across_harnesses(tmp_path):
     home = tmp_path / 'home'
+    work = tmp_path / 'work'
     claude = home / '.claude' / 'projects' / '-work-firmware' / 'abc.jsonl'
     claude.parent.mkdir(parents=True)
-    write_lines(claude, [{'type': 'user', 'cwd': '/work/firmware'}, {'type': 'ai-title', 'aiTitle': 'Erase timing'}])
+    write_lines(claude, [{'type': 'user', 'cwd': str(work / 'firmware' / 'src')},
+                         {'type': 'ai-title', 'aiTitle': 'Erase timing'}])
     codex = home / '.codex' / 'sessions' / '2026' / '09' / '25' / 'rollout-x.jsonl'
     codex.parent.mkdir(parents=True)
-    write_lines(codex, [{'type': 'session_meta', 'payload': {'id': 'codex-1', 'cwd': '/work/bootloader'}}])
+    write_lines(codex, [{'type': 'session_meta', 'payload': {'id': 'codex-1', 'cwd': str(work / 'bootloader')}}])
+    unregistered = home / '.claude' / 'projects' / '-work-other' / 'zzz.jsonl'
+    unregistered.parent.mkdir(parents=True)
+    write_lines(unregistered, [{'type': 'user', 'cwd': str(work / 'bootloader')}])
+    register(work / 'firmware', 'claude', 'abc')
+    (work / 'firmware' / 'src').mkdir()
+    register(work / 'bootloader', 'codex', 'codex-1')
     os.utime(claude, (1000, 1000))
     os.utime(codex, (2000, 2000))
+    os.utime(unregistered, (3000, 3000))
     sessions = list_sessions(home)
     assert [(s.harness, s.cwd, s.session_id, s.title) for s in sessions] == [
-        ('codex', Path('/work/bootloader'), 'codex-1', ''),
-        ('claude', Path('/work/firmware'), 'abc', 'Erase timing')]
+        ('codex', work / 'bootloader', 'codex-1', ''),
+        ('claude', work / 'firmware' / 'src', 'abc', 'Erase timing')]
+    assert sessions[1].documents == work / 'firmware' / '.caiman' / 'sessions' / 'claude-abc' / 'context' / 'documents'
     assert list_sessions(tmp_path / 'empty') == []
 
 
@@ -208,7 +226,8 @@ async def test_picker_is_one_column_in_a_narrow_pane_and_returns_the_session(tmp
     for name in ('a', 'b'):
         path = home / '.claude' / 'projects' / f'-work-{name}' / f'{name}.jsonl'
         path.parent.mkdir(parents=True)
-        write_lines(path, [{'type': 'user', 'cwd': f'/work/{name}'}])
+        write_lines(path, [{'type': 'user', 'cwd': str(tmp_path / 'work' / name)}])
+        register(tmp_path / 'work' / name, 'claude', name)
     app = SessionPickerApp(home=home)
     async with app.run_test(size=(36, 50)) as pilot:
         await pilot.pause()
@@ -267,8 +286,8 @@ async def test_usage_card_collapses_long_section_lists(tmp_path, workspace):
 def test_resolver_identifies_arbitrary_document_formats(tmp_path, filename):
     from caiman.little_caiman.service import Resolver
 
-    path = tmp_path / '.caiman' / 'documents' / 'issuer' / 'manual@v1' / filename
-    ref = Resolver(tmp_path, None).identify(path)
+    path = tmp_path / 'documents' / 'issuer' / 'manual@v1' / filename
+    ref = Resolver(tmp_path / 'documents', None).identify(path)
     assert ref.path == path
     assert ref.name == 'issuer/manual'
     assert ref.version == 'v1'
@@ -281,7 +300,7 @@ def test_resolver_identifies_arbitrary_document_formats(tmp_path, filename):
     ('document', b'\x00\n# Binary bytes\n'),
 ])
 def test_binary_reads_do_not_invent_markdown_sections(tmp_path, filename, content):
-    path = tmp_path / '.caiman' / 'documents' / 'issuer' / 'manual@v1' / filename
+    path = tmp_path / DOCUMENTS / 'issuer' / 'manual@v1' / filename
     path.parent.mkdir(parents=True)
     path.write_bytes(content)
     session = claude_session(tmp_path, tmp_path, [
