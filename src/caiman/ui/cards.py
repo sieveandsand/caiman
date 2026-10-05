@@ -121,7 +121,8 @@ class EditorFrame(Widget):
         self.add_class('selected')
 
     def on_descendant_blur(self, event):
-        self.remove_class('selected')
+        # A blur can arrive after another descendant has received focus.
+        self.set_class(self.has_focus_within, 'selected')
 
 
 class AddCardFrame(EditorFrame):

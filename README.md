@@ -100,12 +100,15 @@ and does not change your draft.
 IDs, current views, immutable history, and interrupted-save recovery.
 
 A collection appears as a stack of cards. Name it, describe it, choose its
-pod, and select documents already in the catalog. Review and save; opening
+pod, and select documents already in the catalog. **Choose documents** opens
+the searchable picker with individual documents only. The editor shows only included
+documents. Use the **+ Choose documents** tile to add more, or expand a document
+card to access **Remove from collection**. Review and save; opening
 the stack lets you edit its membership. Collections have no version field:
 each save retains an immutable snapshot of the selected document IDs and bodies.
 Re-registering a document does not update collection membership automatically.
 Collections contain documents directly, without nested collections, and may
-reference documents from any available pod. Their owning pod is fixed after
+reference documents from their own pod or public. Their owning pod is fixed after
 creation. References do not copy document contents between pods.
 
 Documents, Projects, and Boards have **pod tabs** at the top. Press `/` for the next pod, or use

@@ -3,38 +3,61 @@
 import asyncio
 from copy import deepcopy
 
+from rich.text import Text
+
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, Label, Select, Static
+from textual.widgets import Button, Collapsible, Input, Label, Select, Static
 
-from caiman.documents.cards import DocumentCard, document_name
+from caiman.documents.cards import document_name
 from caiman.documents.collections import CollectionService
+from caiman.documents.picker import DocumentPicker, document_pin
 from caiman.storage.store import Store
-from caiman.ui.cards import CARD_CSS, CardFrame, resize_card_grid
-from caiman.ui.navigation import NavigationApp
-from caiman.ui.theme import TERMINAL_CSS, apply_theme
+from caiman.ui.editor import EDITOR_CSS, CardRow, EditorFormApp, add_card
+from caiman.ui.theme import apply_theme
 
 
-class MemberCard(DocumentCard):
-    def __init__(self, record, *, index, chosen=False):
-        super().__init__(record, index=index)
-        self.chosen = chosen
+class MemberCard(CardRow):
+    """An included document with explicit actions inside its expanded card."""
 
-    def format_card(self, width):
-        super().format_card(width)
-        self.label = self.label.append_text('\n\n' + ('✓ Included' if self.chosen else 'Include document'), style='bold #7fdc4f')
-        height = len(self.label.plain.splitlines()) + 2
-        self.styles.height = height
-        return height
+    kind = 'member'
+
+    def __init__(self, record, *, index):
+        self.record = record
+        super().__init__(record)
+        self.id = f'document-{index}'
+
+    def summary_data(self):
+        return self.record
+
+    def summary(self, record):
+        manifest = record['manifest']
+        label = Text()
+        self.heading(label, document_name(manifest))
+        label.append(f"\n\n  [ {manifest['version']} ]", style='#7fdc4f')
+        if manifest.get('description'):
+            label.append('\n\n' + manifest['description'], style='bold #aab69c')
+        return label
+
+    def editor_fields(self):
+        yield Label('Pod', classes='field-label')
+        yield Static(self.record.get('pod_name', self.record['pod']), markup=False)
+        manifest = self.record['manifest']
+        if manifest.get('original_filename'):
+            yield Label('Stored File', classes='field-label')
+            yield Static(manifest['original_filename'], markup=False)
+        with Horizontal(classes='row-actions'):
+            yield Button('Remove from collection', classes='remove-member')
 
 
-class CollectionApp(NavigationApp):
+class CollectionApp(EditorFormApp):
     TITLE = 'Caiman · Collection'
-    CSS = TERMINAL_CSS + CARD_CSS + '''
+    CSS = EDITOR_CSS + '''
     #fields { height: auto; }
-    .document-grid { height: auto; grid-size: 2; grid-columns: 1fr; grid-gutter: 1 1; }
-    Label { color: #eef3e6; text-style: bold; }
+    #pod { margin-bottom: 1; }
+    .remove-member { border: solid #33422e; }
+    .remove-member:focus { border: double #7fdc4f; }
     #selection-count { height: auto; margin: 1 0; color: #7fdc4f; }
-    Button { width: auto; }
+    #choose-documents:focus { border: double #7fdc4f; }
     '''
 
     def __init__(self, *, root, pods=(), record=None, pod=None):
@@ -42,10 +65,10 @@ class CollectionApp(NavigationApp):
         apply_theme(self)
         self.service = CollectionService(Store(root))
         self.pods = set(pods)
-        self.pod = pod or self.service.store.pods.default
+        self.pod = record['pod'] if record else pod or self.service.store.pods.default
         self.original = deepcopy(record)
         self.draft = deepcopy(record['manifest']) if record else {}
-        self.records = []
+        self.next_member_index = 0
         self.prepared = None
         self.busy = False
         self.loaded = False
@@ -55,60 +78,61 @@ class CollectionApp(NavigationApp):
         yield Static('caiman  /  ' + ('edit collection' if self.original else 'add collection'), id='brand')
         with VerticalScroll(id='body'):
             with Vertical(id='fields'):
-                yield Label('Collection Name')
+                yield Label('Collection Name', classes='field-label')
                 yield Input(self.draft.get('name', ''), id='name')
-                yield Label('Description')
+                yield Label('Description', classes='field-label')
                 yield Input(self.draft.get('description', ''), id='description')
-                yield Label('Pod')
-                yield Select([(r['name'], r['id']) for r in self.service.store.pods.list()],
-                             value=self.original['pod'] if self.original else self.pod,
-                             prompt='Choose pod', id='pod', disabled=bool(self.original))
-                yield Static('Select documents from any available pod.', classes='hint')
-                yield Static('Choose from existing documents', id='selection-count')
-                yield Grid(classes='document-grid', id='documents')
+                yield Label('Pod', classes='field-label')
+                if self.original:
+                    yield Static(self.service.store.pod_name(self.pod), id='pod', markup=False)
+                else:
+                    yield Select([(r['name'], r['id']) for r in self.service.store.pods.list()],
+                                 value=self.pod, prompt='Choose pod', id='pod')
+                with Collapsible(title='Documents', collapsed=False):
+                    yield Static('Choose from existing documents', id='selection-count')
+                    with Grid(classes='card-grid', id='documents'):
+                        yield add_card('Choose documents', id='choose-documents')
             yield Static('', id='review', markup=False)
         yield Static('', id='status', markup=False)
-        yield self.navigation_hint()
         with Horizontal(id='navigation'):
             yield Button('Review changes', id='review-save', variant='primary', disabled=True)
             yield Button('Edit selection', id='edit-selection')
             yield Button('Back to documents', id='cancel')
+        yield self.navigation_hint()
 
     async def on_mount(self):
         self.query_one('#review').display = False
         self.query_one('#edit-selection').display = False
         try:
-            records = await asyncio.to_thread(self.service.documents.list_documents, pods=self.pods)
-            # Old pinned revisions must remain selectable even when refs move.
             members = await asyncio.to_thread(self.service.members, self.original, pods=self.pods) if self.original else []
-            merged = {(r['pod'], r['digest']): r for r in records + members}
-            self.records = sorted(merged.values(), key=lambda r: (document_name(r['manifest']), r['pod'], r['digest']))
-            selected = {(r['pod'], r['digest']) for r in members}
-            cards = [MemberCard(r, index=i, chosen=(r['pod'], r['digest']) in selected)
-                     for i, r in enumerate(self.records)]
-            await self.query_one('#documents', Grid).mount(*(CardFrame(card) for card in cards))
+            members.sort(key=lambda r: (document_name(r['manifest']), r['pod'], r['digest']))
+            cards = [MemberCard(record, index=i) for i, record in enumerate(members)]
+            self.next_member_index = len(cards)
+            await self.query_one('#documents', Grid).mount(
+                *cards, before=self.query_one('#choose-documents').parent)
             self.loaded = True
             self.initial_values = self.collect()
             self.update_review_button()
+            self.query_one('#choose-documents', Button).disabled = False
             self.resize_cards()
             self.update_count()
-            if not cards:
-                self.query_one('#status', Static).update('No existing documents. Add a document from the Documents page first.')
         except (OSError, ValueError) as error:
             self.query_one('#status', Static).update(str(error))
-        self.query_one('#name', Input).focus()
+        self.call_after_refresh(self.focus_initial_field)
+
+    def focus_initial_field(self):
+        # Opening starts at the page heading, even if mounting the cards caused
+        # a pending focus scroll. Later navigation keeps normal minimal scrolling.
+        self.query_one('#name', Input).focus(scroll_visible=False)
+        self.query_one('#body', VerticalScroll).scroll_home(animate=False, immediate=True)
 
     def resize_cards(self):
-        columns = 2 if self.size.width >= 100 else 1
-        width = max(16, (self.size.width - 6 - (columns - 1) - 2) // columns)
-        resize_card_grid(self.query_one('#documents', Grid), width, columns)
-
-    def on_resize(self):
-        self.resize_cards()
+        self.resize_grids(self.size.width)
 
     def update_count(self):
-        count = sum(card.chosen for card in self.query(MemberCard))
-        self.query_one('#selection-count', Static).update(f'{count} selected · {len(self.records)} existing documents')
+        count = len(self.query(MemberCard))
+        self.query_one('#selection-count', Static).update(
+            f'{count} selected' if count else 'No documents selected. Choose documents to add them.')
         self.update_review_button()
 
     def update_review_button(self):
@@ -123,16 +147,19 @@ class CollectionApp(NavigationApp):
     def on_select_changed(self, event: Select.Changed):
         self.update_review_button()
 
-    def collect(self):
-        pod = self.query_one('#pod', Select).value
+    def selected_pod(self):
+        pod = self.pod if self.original else self.query_one('#pod', Select).value
         if pod == Select.NULL:
             raise ValueError('Choose a pod')
+        return pod
+
+    def collect(self):
         data = deepcopy(self.draft)
         data.update(name=self.query_one('#name', Input).value.strip(),
                     description=self.query_one('#description', Input).value.strip(),
-                    pod=pod,
-                    documents=[{'digest': c.record['digest'], 'pod': c.record['pod']}
-                               for c in self.query(MemberCard) if c.chosen])
+                    pod=self.selected_pod(),
+                    documents=[document_pin(c.record)
+                               for c in self.query(MemberCard)])
         return data
 
     def show_review(self, reviewing):
@@ -146,25 +173,65 @@ class CollectionApp(NavigationApp):
             self.exit(None)
 
     def action_vim_move(self, direction):
-        before = self.focused
-        super().action_vim_move(direction)
-        if before is self.focused and isinstance(before, MemberCard):
+        focused = self.focused
+        if focused is not None and any(
+            isinstance(node, MemberCard) and node.has_class('expanded')
+            for node in focused.ancestors
+        ):
+            # Inside an open card, follow its controls like Tab instead of
+            # treating the summary as a shortcut to a neighbouring grid tile.
             if direction in {'h', 'k'}:
                 self.screen.focus_previous()
             else:
                 self.screen.focus_next()
+            return
+        super().action_vim_move(direction)
 
     async def on_button_pressed(self, event):
         if self.busy:
             return
-        if isinstance(event.button, MemberCard):
-            event.button.chosen = not event.button.chosen
+        event.stop()
+        if event.button.has_class('card-summary') or event.button.has_class('collapse-card'):
+            card = next(node for node in event.button.ancestors if isinstance(node, MemberCard))
+            card.set_expanded(not card.has_class('expanded'))
+            # Expansion lands on Done, never on the removal action.
+            target = card.query_one('.collapse-card' if card.has_class('expanded') else '.card-summary', Button)
+            self.call_after_refresh(target.focus)
+            return
+        if event.button.has_class('remove-member'):
+            card = next(node for node in event.button.ancestors if isinstance(node, MemberCard))
+            await card.remove()
+            self.call_after_refresh(self.query_one('#choose-documents').focus)
             self.resize_cards()
             self.update_count()
             return
         action = event.button.id
         if action == 'cancel':
             self.action_cancel()
+        elif action == 'choose-documents' and self.loaded:
+            async def attach(records):
+                for record in records or []:
+                    card = next((card for card in self.query(MemberCard)
+                                 if document_pin(card.record) == document_pin(record)), None)
+                    if card is None:
+                        card = MemberCard(record, index=self.next_member_index)
+                        self.next_member_index += 1
+                        await self.query_one('#documents', Grid).mount(
+                            card, before=self.query_one('#choose-documents').parent)
+                    else:
+                        card.record = record
+                        card.refresh_summary()
+                self.query_one('#documents', Grid).sort_children(
+                    key=lambda card: (0, document_name(card.record['manifest']),
+                                      card.record['pod'], card.record['digest'])
+                    if isinstance(card, MemberCard) else (1, '', '', ''))
+                self.resize_cards()
+                self.update_count()
+                self.call_after_refresh(self.query_one('#choose-documents').focus)
+
+            self.push_screen(DocumentPicker(service=self.service.documents, owner=self.selected_pod(),
+                allow_collections=False,
+                attached=[document_pin(card.record) for card in self.query(MemberCard)]), attach)
         elif action == 'edit-selection':
             self.prepared = None
             self.show_review(False)
@@ -177,7 +244,7 @@ class CollectionApp(NavigationApp):
                     self.prepared = await asyncio.to_thread(self.service.prepare, self.collect(), pods=self.pods)
                     m = self.prepared['manifest']
                     names = [f"  {document_name(c.record['manifest'])} · {c.record['manifest']['version']} · {c.record['pod']}"
-                             for c in self.query(MemberCard) if c.chosen]
+                             for c in self.query(MemberCard)]
                     self.query_one('#review', Static).update('\n'.join([
                         m['name'], m['description'], '', f"Pod: {self.prepared['pod']}",
                         f"{len(names)} documents", *names]))
