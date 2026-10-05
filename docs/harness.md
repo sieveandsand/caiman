@@ -272,7 +272,7 @@ I-9's protections — `0444` blobs, a compartment-keyed cache, no symlinks — a
 properties of the documents, and the transcript is a copy taken downstream of all of
 them.
 
-Concretely: a sealed session that greps a customer specification writes the
+Concretely: a session that greps a customer specification writes the
 matched requirement text into `~/.codex/sessions/…`, unlabeled, in plaintext,
 outside the worktree.
 
@@ -303,10 +303,9 @@ project, or compartment. A fact extracted from an OEM Alpha session is, as far a
 this schema is concerned, eligible to surface in a later session that holds only
 `oem-beta`.
 
-This is the same hazard the security model already names under *Derived answers
-still carry the secret* — the argument for no hybrid sessions — but arriving
-through a channel that document does not consider, because it crosses sessions
-rather than crossing models within one. It is also the reason `memory_mode` on
+This is another form of retained prior context, covered by Security §7.1. It
+can cross session boundaries, so a fresh conversation alone is not evidence that
+harness memory is isolated. It is also the reason `memory_mode` on
 the `threads` row is worth knowing about.
 
 I have not verified what populates `stage1_outputs` or under what conditions it
@@ -317,28 +316,27 @@ a demonstrated leak**, and it should be verified before it informs any decision.
 
 Historical note: this analysis originally assumed an `agents.toml` map with
 `receives = "public"` or `"all"`. S-19 retired that map after these measurements.
-It is not a current control. The planned `open`/`sealed` mode filters workspace
-materialization and does not verify which model the harness uses.
+It is not a current control. Open/sealed modes are also retired under pods.
+S-39 uses explicit per-session selection and host provisioning; it does not verify
+which model the harness uses. [CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md) owns
+the accepted workflow. The measurements above remain historical observations.
 
 ## Open questions
 
 These are inputs to existing decisions, not resolutions. Do not implement any of
 them without settling the decision first.
 
-1. **Does `sync` warn on a sealed session?** A one-line note in the brief, in the
-   spirit of the existing *Session mode* block — telling the agent and the
-   engineer that this session's transcript will contain compartmented text. Cheap,
-   honest, consistent with "the agent is told, not merely constrained." Routes to
-   `SECURITY-MODEL.md`.
-2. **Does the revocation procedure gain a transcript step?** If so it needs a
-   per-harness path list, which makes it harness-coupled — arguably a violation of
-   S-01's spirit. The alternative is documenting it as an accepted limit, which is
-   at least honest. Routes to `SECURITY-MODEL.md` § *Reclassification*.
-3. **Should sealed sessions run on an encrypted disk image?** The security model
-   already lists this under *Optional hardening* and prefers it on macOS. Note
-   that it protects the documents but **not** `~/.claude` or `~/.codex`, so it does
-   not address this finding unless `$HOME` moves too. Worth recording that
-   qualification against that option.
+1. **How should session context explain transcript persistence?** Switching or
+   deleting context cannot erase prior conversation, transcripts, or memories.
+   The accepted boundary is in [Session context §8](CONTAINER-CONTEXT.md#8-boundaries-and-lifecycle);
+   harness-specific retention procedures remain G20.
+2. **Which harness residue can users locate and clean up?** Define supported
+   procedures without promising complete revocation. Caiman does not manage
+   transcripts or automatically interrupt harnesses in the first version.
+3. **Which filesystem boundary is appropriate for confidential workloads?**
+   Protecting only the worktree does not protect transcript locations elsewhere.
+   Per-session context folders are not a filesystem access boundary.
+
 4. **Does harness selection (D-07) gain a criterion for transcript handling?**
    See below.
 
@@ -352,7 +350,7 @@ and its agents write session state, and whether that location is configurable.**
 A harness that can point transcript storage inside the worktree brings the
 residue back under `.gitignore` and inside whatever protects the documents.
 
-D-07 also records that Xirp "has been discussed as a model; whether it is
+The historical D-07 discussion recorded that Xirp "has been discussed as a model; whether it is
 obtainable outside Spotify and under what licence is **unverified**." Partial
 evidence from the local install, offered as evidence and not as a conclusion:
 
@@ -368,7 +366,7 @@ evidence from the local install, offered as evidence and not as a conclusion:
 "External edition" plus an identity-gated login is consistent with a distribution
 to people outside Spotify under some agreement, not with open availability. **No
 licence file was found in the installed bundle**, so this remains unverified in
-the way D-07 says it is. The obtainability question should be answered by asking,
+these measurements. The obtainability question should be answered by asking,
 not by inspecting an install.
 
 Separately, `@chirp/squab` is a good reference implementation for the *session

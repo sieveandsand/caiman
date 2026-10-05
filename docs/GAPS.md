@@ -83,21 +83,19 @@ Suggested starting order: **G01, G06, G17, G25**. G13 is complete.
   versions, review of the proposed changes, failure behavior, and preservation of
   existing pins. Reconcile the command surface across the docs.
 - [ ] **G16 — Specify agent-facing formats.** Provide schemas or stable examples
-  for project.json, omission notices, and access logs. Document maps were removed
+  for project.json, document inventories, and access logs. Document maps were removed
   by S-25; they no longer need a format. Include distinctions between absent,
   restricted, and unavailable information. Define metadata visibility for resolved
-  JSON and omission notices, the document-path identity format, and startup
+  JSON and document inventories, the document-path identity format, and startup
   inventory/staleness inputs before implementing their producers.
-- [ ] **G27 — Specify host/container version compatibility.** The host's `sync`
-  and the container's `session start` and little caiman can be different Caiman
-  versions ([Architecture §6.11.7](ARCHITECTURE.md#6117-what-runs-inside-the-container)).
-  Define the workspace format version, which versions each reader accepts, and
-  the message for an unknown one. Settle this before the workspace format ships.
-- [ ] **G28 — Surface stale pins in provisioned worktrees.** Long-lived
-  worktrees keep their pins while version refs move, and inside a container
-  nothing can check ([Architecture §6.11.8](ARCHITECTURE.md#6118-long-lived-containers)).
-  Specify how the host TUI finds provisioned worktrees and what it shows,
-  without repinning anything.
+- [ ] **G27 — Specify workspace adapter compatibility.** S-39 uses a portable
+  adapter, not a second Caiman installation in the container. Define its runtime,
+  protocol versions, unsupported-version behavior, and harness trust/activation.
+  See [Session context §9](CONTAINER-CONTEXT.md#9-implementation-scope-and-remaining-decisions).
+- [ ] **G28 — Surface stale pins per session.** Define how the host TUI presents
+  installed selections whose version labels moved, and how published choices are
+  refreshed. Catalog refresh must not change installed revisions; stale requests
+  fail rather than substituting another digest (S-39).
 - [ ] **G29 — Decide provisioning for multi-repository workspaces.** Zephyr
   `west`, Yocto `repo`/`kas`, and Android `repo` roots are not git repositories,
   and agents often run in a member repository. Choose between provisioning into
@@ -110,18 +108,19 @@ Suggested starting order: **G01, G06, G17, G25**. G13 is complete.
   topology, feature names, document identities, and specification versions can
   be confidential. Record the visibility decision and reconcile the brief's
   guarantees with it; metadata-only generation does not itself establish safety.
-- [ ] **G18 — Clarify session mode versus model authorization.** Document that
-  sealed materialization does not verify the selected model's authorization.
-  Describe the human responsibility, wrong-mode outcomes, and any explicitly
-  accepted limitation without implying model attestation. Specify how a saved
-  selection distinguishes same-session resume from a new session or model change.
-  D-14 proposes scoping the declaration to the worktree and restating it at every
-  session start.
-- [ ] **G19 — Bound workspace isolation claims.** State what prevents, or does
-  not prevent, an agent from reading the underlying store or another workspace.
-  Scope tests and guarantees to the actual filesystem and process boundaries.
+- [x] **G18 — Clarify saved selection and model authorization.** S-39 and
+  [Session context](CONTAINER-CONTEXT.md#session-identity) settle independent
+  session selection, same-session resume, new/forked folders, and explicit
+  switching. Caiman does not attest models. Open/sealed modes are retired under
+  pods. Harness-specific identity verification remains implementation work.
+- [x] **G19 — Bound workspace isolation claims.**
+  [Session context §8](CONTAINER-CONTEXT.md#8-boundaries-and-lifecycle) and
+  [Security](SECURITY-MODEL.md) state that session folders do not isolate
+  permissions, shared-worktree agents may read other sessions' documents, and
+  actual isolation requires filesystem/process boundaries. Container verification
+  remains required; this closes the design claim, not validation.
 - [ ] **G20 — Resolve treatment of harness residue.** Decide how transcripts and
-  other persisted session state affect cleanup, revocation, and compartment use.
+  other persisted session state affect cleanup, revocation, and pod content use.
   Document supported procedures and accepted limits; distinguish measured
   behavior from unverified risks in harness.md.
 - [ ] **G21 — Verify audit coverage.** Measure direct reads, shell reads,
@@ -137,10 +136,11 @@ Suggested starting order: **G01, G06, G17, G25**. G13 is complete.
 - [x] **G23 — Reconcile repository isolation rules.** S-33 settles one private
   repository per compartment and one compartment per private document, with no
   separate domain abstraction. Updated the design references; Git transport
-  remains proposed. Resolved 2026-09-24 by user instruction.
-- [ ] **G24 — Remove stale agent-policy assumptions.** Review roadmap criteria,
-  harness discussion, and other references to the retired agent map. Mark
-  historical observations as historical and align current behavior with S-19.
+  was proposed at resolution on 2026-09-24. The current pod model supersedes
+  those compartment rules and implements optional per-pod Git clone/sync.
+- [x] **G24 — Remove stale agent-policy assumptions.** Session workflow, roadmap,
+  harness notes, and security contracts now use pods and S-39. The old agent map
+  and open/sealed modes are retired; historical measurements are not policy.
 - [ ] **G25 — Narrow unsupported safety claims.** Review claims such as both
   mode mistakes being harmless, documents being unreachable, and sessions
   provably excluding customer information. State the relevant assumptions and

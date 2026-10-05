@@ -12,7 +12,8 @@ Document references now pin stable IDs and bodies while following current metada
 **Status:** Accepted. Local storage and Repo Manager repository setup are
 implemented. Team storage (per-compartment Git transport, publication, verified
 fetch, and context snapshots) is adopted (S-35) and not yet implemented; §14 sets
-the implementation order. Session materialization is planned.
+the implementation order. Session materialization is planned under S-39;
+[CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md) owns its accepted lifecycle and workspace layout.
 **Scope:** The on-disk representation of documents, boards, and projects; how
 they are shared between teammates through Git; and the procedure that builds a
 session workspace from them.
@@ -120,8 +121,8 @@ efficiently. §5 lists the verifiable requirements.
 | R-6 | Materialized files are read-only | I-9 |
 | R-7 | No symbolic links to directories appear in the materialized documents | I-9 |
 | R-8 | A document version that cannot be fully materialized causes `sync` to fail | I-9 |
-| R-9 | Content for compartment A is never written into a workspace for a session that does not hold A | I-1, S-16 |
-| R-10 | A document with neither a public assertion nor a compartment is unreachable | I-1 |
+| R-9 | A session context includes only the selected project’s complete dependency set from its owning pod and public | I-1, S-39 |
+| R-10 | Missing pods, identities, or pinned bodies fail resolution | I-2 |
 | R-11 | Target privacy, approved hosting, and compartment identity are checked before any object is sent; a failed check is a hard error | S-16, I-1 |
 | R-12 | Nothing is pushed to a remote until its labels have been reviewed | §9.5 |
 | R-13 | Fetched content lands in a directory already at mode `0700`; blobs are `0444`. Permissions are established before transfer, never repaired afterward. Git carries neither mode | I-9, S-16 |
@@ -133,7 +134,7 @@ efficiently. §5 lists the verifiable requirements.
 | R-19 | Publication sends only reviewed objects and named reference changes | I-3 |
 | R-20 | Concurrent publishers cannot silently overwrite the same application ref | I-4 |
 | R-21 | A published root has a complete retained dependency graph at publication time | R-5 |
-| R-22 | Sessions hold digests; friendly labels never re-resolve during a session | I-4 |
+| R-22 | Installed revisions retain resolved identities until an explicit switch; moved labels never silently repin | I-4, S-39 |
 | R-23 | Local authoring and already-materialized work remain usable without the remote | S-18 |
 | R-24 | Git transport cannot rewrite source file bytes or legacy manifests | S-25, S-11 |
 | R-25 | A document-set digest is distinct from a context digest and from a session receipt | §6.7.3 |
@@ -844,9 +845,9 @@ what an agent actually read, or continued availability.
 
 | Identifier | Commits to | Deliberately excludes |
 |---|---|---|
-| Project digest | Declared configuration and pinned dependencies | Session mode, generated files, session identity |
+| Project digest | Declared configuration and pinned dependencies | Generated files, session identity |
 | Document-set digest | Sorted unique document-manifest digests selected for materialization | Session ID, timestamps, local paths, feature/precedence configuration |
-| Context digest | Project digest, document-set digest, mode, resolver/materializer versions, generated-file descriptors, and dependency routes | Machine path, user identity, timestamp, observed reads |
+| Context digest | Project digest, document-set digest, resolver/materializer versions, generated-file descriptors, and dependency routes | Machine path, user identity, timestamp, observed reads |
 | Local session receipt | Context digest plus session ID, time, actor, and completion state | Document contents; no claim to complete read observation |
 
 **Document-set manifest.** A small flat root, sufficient at this scale:
@@ -864,36 +865,35 @@ what an agent actually read, or continued availability.
 Bracketed values are placeholders. Entries are sorted by full digest and
 deduplicated. The referenced document manifests identify the blobs and their
 sizes. Adding or removing a document, or changing its manifest — including a
-metadata or classification change over identical bytes — changes the
+approved metadata change over identical bytes — changes the
 document-set digest. This is document identity, not a checksum of concatenated
 text.
 
 A document-set manifest is a structural index, not an ingested document. It is
-stored with its owning context in that context's reviewed compartment, and its
-metadata must be approved for those readers. Its entries do not grant access to
-the documents. A set spanning several source compartments does not create a new
-compartment.
+stored with its owning context in the selected project's pod. It records the
+exact approved document manifests used for that revision; dependency routes
+remain limited to the owning pod and public. Its entries do not grant filesystem
+access to the documents.
 
-**Context manifest.** Contains `project_digest`, `document_set_digest`, `mode`,
+**Context manifest.** Contains `project_digest`, `document_set_digest`,
 `resolver_version`, `materializer_version`, and:
 
 - `files`: entries ordered by path with a safe relative path, digest, and size,
   covering generated files and materialized document bytes. No absolute machine
   paths.
 - `routes`: ordered entries mapping each required manifest digest to a stable
-  compartment ID. Remote URLs stay in local configuration.
-- The owning compartment and an explicit exposure policy.
+  pod ID. Remote URLs stay in local configuration.
+- The owning pod identity.
 
-The context manifest includes every input needed to reproduce the selection,
-including the private project, even when the materialized document set is
-`open`. It can therefore remain restricted: mode controls the agent workspace,
-not the engineer's access to configuration inputs. An `open` workspace receives
-only the approved projection and the selected open documents.
+The context manifest records the exact inputs used for an installed revision.
+It belongs to the selected project's pod, with dependency routes limited to that
+pod and public. Session identity, installed revision, and acknowledgement state
+remain outside the content hash. Metadata visibility needs review (G17); there
+is no separate mode-filtered projection or open/sealed document subset.
 
 Generated files must not embed the context digest if their own digests are
 listed in that context; that would be a cycle. The context digest goes into an
-external receipt or sidecar excluded from the hashed file list. Project
-precedence keeps its order even though the document set is a set.
+external receipt or sidecar excluded from the hashed file list. Projects declare no precedence (S-36).
 
 Publishing a context snapshot is an explicit act. It stores reproducible
 configuration metadata in an appropriately restricted repository — never the
@@ -955,75 +955,62 @@ Ingest never commits or pushes (§9.5); local authoring is not publication.
 
 ### 7.2 Resolve
 
-Input: a project name and version, or a root digest. Output: a complete,
-digest-pinned set of everything the session may materialize.
+Input: an explicit host-authorized context choice naming a pod, project, version,
+and resolved project snapshot digest. Output: the complete document set for a
+session context revision. A bare project name lists versions and resolves nothing.
 
-1. Read `refs/projects/<project>/<version>` in a compartment the caller can
-   access. If the path does not exist, fail. If no version is supplied, list the
-   available versions and stop — a bare name never resolves (R-3, I-7). A root
-   digest skips this step.
-2. Read the project manifest at the resulting digest.
-3. Read each pinned board manifest from the `public` tree: every `boards[].digest`
-   in a v2 project, or `board.digest` in a stored v1 project.
-4. Collect every document digest from each board manifest's assembly-level
-   `documents` and part entries, and from the project manifest's `documents` and
-   `precedence` lists.
-5. Read each document manifest and collect its blob digests.
+Resolve board/project snapshots by immutable digest and stable pod route. Every
+reference must stay within the owning pod or public, including transitively.
+Document references identify a stable document ID and fixed blob digest; read
+current approved metadata as specified in [DOCUMENT-METADATA.md](DOCUMENT-METADATA.md).
+Record the exact metadata manifests used in the installed revision so later
+metadata changes do not silently rewrite already generated files.
 
-The result is the complete pin set. Nothing in steps 2–5 consults a ref: once
-step 1 has produced the project manifest digest, resolution is entirely by
-digest, which is what makes the operation reproducible (I-4, R-22). The same
-walker, extracted from current pin resolution and independent of transport,
-drives fetch (§7.7) and publication closure (§7.6).
-
-Resolution is also the point where local access is decided. A caller that cannot
-read `store/oem-alpha/` fails at step 1 with `EACCES` and never learns whether the
-project exists.
+Missing pods, snapshots, or pinned bodies are errors. Never substitute another
+version or turn missing dependencies into omitted documents. Refreshing the
+catalog does not repin installed contexts. Explicit session switching is owned
+by [Session context §6](CONTAINER-CONTEXT.md#6-changing-context-during-a-session).
 
 ### 7.3 Materialize
 
-Input: a resolved pin set, an explicit mode, and a destination directory. Output: a
-session workspace.
+Input: a resolved complete pin set, a registered workspace/session identity, and
+a validated context choice. Output: one installed session context revision.
+This host-side operation is planned; its final CLI and schema remain unspecified.
+There is no open/sealed mode or agent-side store access.
 
-1. Read `--mode`. **If absent, fail and write nothing** (I-1, S-19). There is no
-   default and no lookup — the human states the mode per session.
-2. Compute the visible set from the project pins, the declared mode, and explicit
-   classifications: `open` yields public documents only; `sealed` yields every
-   document the project version pins, across its compartments. The visible set is
-   never "whatever downloaded successfully": a permitted dependency that cannot be
-   obtained is an error, not an omission.
-3. Compute the document-set and context manifests (§6.7.3).
-4. Build the workspace in a sibling staging directory with restrictive
-   permissions. Validate every path and verify every byte. For each visible
-   document, create its directory under `documents/` and link its single content
-   blob at its manifest file path.
-5. Write `_index.md`, listing what was materialized and **what was omitted and
-   why**.
-6. Write `project.json` — the resolved project structure, fully expanded.
-7. Render `project.md`, the brief. The renderer reads manifests only and has no
-   access to blob content (I-6).
-8. Install the staging generation (below), then mark the local receipt complete.
+1. Validate the session, host-authorized selection, expected revision, and safe
+   destination under the registered worktree.
+2. Resolve every dependency, retaining fixed body digests and recording the
+   approved metadata identities used. A missing dependency fails the operation.
+3. Compute document-set and context identities (§6.7.3).
+4. Build a complete replacement in a sibling staging directory with restrictive
+   permissions. Validate paths and verify bytes. Each document remains one
+   unchanged file, including binary and empty files.
+5. Write `documents/_index.md` describing the complete installed set and source
+   identities. It must not present unavailable pinned documents as omissions.
+6. Write `project.json` with the resolved structure and identities. Its schema and
+   metadata visibility remain G16/G17; do not dump customer identity into the brief.
+7. Render `project.md` using metadata only (I-6).
+8. Install the staging generation, record the revision, and publish the matching
+   result. The agent then rereads and acknowledges that revision.
 
-Resulting workspace:
+[CONTAINER-CONTEXT.md §3](CONTAINER-CONTEXT.md#3-one-worktree-several-sessions)
+is the sole workspace-layout specification. Materialized files live under:
 
-```
-<worktree>/.caiman/
-├── project.md                          the brief, loaded into agent context
-├── project.json                        resolved structure, machine-readable
+```text
+<worktree>/.caiman/sessions/<session-id>/context/
+├── project.md
+├── project.json
 └── documents/
     ├── _index.md
-    ├── nxp/s32k344/
-    │   ├── reference-manual@rev-4/
-    │   │   └── document.md            complete unchanged manual
-    │   └── errata@rev-6/
-    │       └── document.md
-    ├── ti/tps65313/datasheet@2024-03/document.md
-    └── oem-alpha/                      present only when --mode sealed
-        ├── flash-spec@3.2/
-        │   └── document.md
-        └── deviations-falcon@2026-06/
-            └── document.md
+    └── <document-identity-and-version>/<original-format-file>
 ```
+
+Final document path encoding must preserve stable pod/document identities and
+fixed body versions for citation and audit attribution (G16/G21). Requests,
+results, session identity, and installed/acknowledged state live outside the
+replaceable `context/` directory. Switching one session never replaces another's
+context or the entire `.caiman/` tree.
 
 #### Installing a generation
 
@@ -1036,7 +1023,13 @@ directory, so installation is a recoverable directory swap:
 4. Mark the receipt complete.
 
 Recovery either restores the old complete generation or finishes installing the
-new one. A partially populated document directory is never exposed.
+new one, reconciling revision state and the request result before accepting
+another change. A partially populated document directory is never exposed.
+The swap can have a brief gap: it is not a portable atomic replacement of a
+nonempty directory. The affected agent and dependent subagents must wait during
+installation. Uncoordinated readers have no uninterrupted-read guarantee.
+[Session context §7](CONTAINER-CONTEXT.md#7-keeping-updates-reliable) owns ordering
+and retry requirements; validate them through the actual bind mount.
 
 #### Link mechanism
 
@@ -1087,11 +1080,10 @@ The `@version` suffix is required for this to work. A bare
 `reference-manual/` directory would make a stale workspace and a current one
 produce identical citations.
 
-`_index.md` records omissions explicitly — for example, *"OEM specifications: not
-materialized (session mode: open)"*. Without it, a missing directory is
-ambiguous: an agent cannot distinguish "this project has no specifications" from
-"this session may not see them", and the distinction determines whether it should
-stop and ask (S-19).
+`_index.md` inventories the complete installed selection. If a task requires a
+different selection, the agent asks the user and uses the session switch flow.
+Failure to obtain a pinned document fails installation; no filtered partial
+context is declared ready.
 
 ### 7.4 Cache
 
@@ -1367,7 +1359,7 @@ A document ingested against the wrong compartment is the motivating case.
 copies of every file an agent reads into an append-only transcript under `$HOME`,
 which persists after the documents are removed. Re-materialization removes the copy
 the store controls; it does not remove harness residue. The consequence is that
-revocation is not achievable for any `sealed` session through this mechanism
+revocation is not achievable for a session that has read documents through this mechanism
 alone. See `harness.md` §*Implications*, and
 `SECURITY-MODEL.md` for whether the procedure there should be extended.
 
@@ -1431,7 +1423,7 @@ proportional to sessions × document set size.
 Note that separate APFS volumes within a single container are distinct
 filesystems for this purpose, so co-location cannot be inferred from the disk
 being the same physical device. `sync` should detect the fallback and report it,
-because the symptom otherwise is slow session startup with no stated cause.
+because the symptom otherwise is slow context preparation with no stated cause.
 
 ### 8.7 Backups and restoration
 
@@ -1462,9 +1454,9 @@ chooses the acceptable recovery point before real team rollout (§13.1).
 | Control | Mechanism | Strength |
 |---|---|---|
 | Compartment separation in the store | Directory permissions (`0700`) | Enforced by the kernel. A process without access fails at `open()` |
-| Compartment separation in a workspace | Documents outside the session's compartments are never written | Enforced by absence. An agent cannot read a file that does not exist |
-| Missing session mode | `sync` fails, writes nothing | Fail-closed, per I-1 |
-| Unlabeled document | Neither public nor compartmented; materialized nowhere | Fail-closed, per I-1, R-10 |
+| Independent session selections | Separate context directories | Not a permission boundary; other folders may be readable |
+| Missing session or context selection | Host refuses provisioning | No implicit shared-worktree selection |
+| Missing dependency | Installation fails and retains the prior complete revision | Never silently omitted |
 | Tampering with stored or fetched content | Digest verification on read and fetch | Detects modification; does not prevent it |
 | Compartment separation on the remote | One private repository per compartment | The Git host enforces read access; every reader can obtain that repository's full history (S-33) |
 | Unreviewed content leaving the machine | Outgoing commits built only from a reviewed plan | Enforced by Caiman on the publisher's machine; a raw Git writer bypasses it (§9.7) |
@@ -1522,13 +1514,14 @@ mistakes and corrupt objects but cannot stop a raw Git writer from leaking
 material. A receive hook can enforce application rules where available; CI after
 upload cannot prevent the upload's disclosure. No hosted CI is required.
 
-Backend access and session mode are separate decisions. Being permitted to fetch
-an object does not mean it may be given to an `open` session; the human still
-chooses `open` or `sealed` (S-19). No model attestation is introduced.
+Backend access and permission to send document content to a model are separate.
+The user chooses an appropriate processing environment; host-published choices
+and adapter requests do not attest which model is running. Per-session folders
+are independent selections, not permission boundaries (S-39).
 
 ## 10. Performance and Resource Considerations
 
-**Session startup** is dominated by the number of files linked, not by their
+**Context preparation** is dominated by the number of files linked, not by their
 size, because CoW clones and hardlinks do not copy bytes. A document set of a few
 thousand files is a few thousand `clonefile` calls.
 
@@ -1578,7 +1571,7 @@ storage-specific cases; the full negative-test list is in `SECURITY-MODEL.md`.
 `tests/test_collections.py` also checks that collection edits preserve old roots,
 member-ref updates do not change pinned revisions, reordered or repeated members
 produce the same root, stale saves fail, and nonexistent or nested members are
-rejected. Collection visibility and classification are S-T22 in the security model.
+rejected. Collection dependency boundaries are S-T22 in the security model.
 Transport tests use local bare repositories and synthetic data only — no real
 documents in tests or CI.
 
@@ -1589,10 +1582,10 @@ documents in tests or CI.
 | T-3 | Canonical serialization round-trip with keys in different input orders | One logical manifest yields one digest |
 | T-4 | Kill ingest after blob write, before manifest write; then resolve | No reachable manifest with missing blobs (§8.1) |
 | T-5 | Corrupt a blob on disk, then materialize | Digest verification fails the operation |
-| T-6 | Materialize a project in compartment A with `--mode sealed` | No file from compartment B appears in the workspace (R-9) |
-| T-7 | Materialize with `--mode open` | No compartmented document is written, for any project |
-| T-8 | Materialize with `--mode` omitted | Nothing is written at all; no default applied (I-1) |
-| T-9 | Ingest a document with neither `public` nor a compartment | Materialized nowhere |
+| T-6 | Materialize a project in pod A | Only its pinned dependency set from A and public appears |
+| T-7 | Switch session A while B shares the worktree | B’s selection and files remain unchanged |
+| T-8 | Materialize without a valid session/selection | Nothing is written |
+| T-9 | Resolve a document whose owning pod or fixed body is unavailable | Materialization fails without replacing installed context |
 | T-10 | Materialize where one blob is unreadable | `sync` fails, names the file, leaves no partial workspace (R-8) |
 | T-11 | Walk a materialized document tree for symlinked directories | None exist (R-7) |
 | T-12 | Check modes of every materialized file | All `0444` (R-6) |
@@ -1620,10 +1613,10 @@ documents in tests or CI.
 | T-34 | Materialize the same documents in two sessions | Same document-set digest despite different session IDs (R-25) |
 | T-35 | Change precedence only | Project and context digests change; document-set digest does not (R-25) |
 | T-36 | Change a document's metadata over identical bytes | Complete new manifest; current metadata follows stable references while bodies and consumers stay fixed ([metadata workflow](DOCUMENT-METADATA.md)) |
-| T-37 | Change only the mode | Context digest changes (R-25) |
+| T-37 | Change the selected project or document set | Context identity reflects changed content inputs; session IDs alone do not change it |
 | T-38 | Resolve a bare digest with no configured route | Does not resolve (§6.7.2) |
 | T-39 | Reconstruct a shared context on a fresh authorized machine | Byte-for-byte identical (R-15) |
-| T-40 | Materialize an `open` workspace from a restricted project | No restricted source manifest, brief field, or document present (R-9, R-17) |
+| T-40 | Interrupt installation and retry the same request | Recover a complete context and consistent revision/result without duplicate installation |
 | T-41 | Alpha-only user fetches a project requiring Alpha and Falcon | Reports the missing repository rather than omitting its document (§7.7) |
 | T-42 | Materialize a withdrawn artifact online | Refused, with the advisory nature reported (§8.3) |
 | T-43 | Repoint labels after pinning, then reconstruct old versions | Old pins survive (R-22) |
@@ -1698,12 +1691,10 @@ board schema for confidential topology and assembly notes. That conflicts with
 Needs a decision before a classified board schema is written; until then boards
 stay public.
 
-**Should the brief become a classified projection?** Team storage proposes that
-the brief be a classified generated artifact: the renderer receives only fields
-approved for the selected mode, and `open` materialization stops if no open
-projection has been approved. That changes S-09 and I-6 ("the brief is open,
-always"). It is not adopted by this document; it needs its own decision, and G17
-already questions whether brief metadata is safe to expose.
+**Which metadata is safe to publish to the workspace?** The brief remains
+metadata-only and codename-only (I-6). G17 must review catalog, resolved JSON,
+and brief fields; metadata is not automatically safe to expose. This does not
+reintroduce open/sealed modes or application access labels.
 
 **Does the hardlink fallback stay?** Team storage says to prefer clones, then
 copies, and not to share hardlink inodes between caches and workspaces, because a
@@ -1729,7 +1720,7 @@ changing the registered source artifact.
 | Garbage collection implemented naively later | Permanently broken pins (§8.5) | Do not implement GC for the MVP. If added, drive it from the transitive walk, never from refs alone |
 | Canonical serialization drifts between versions or writers | Same logical manifest yields two digests; deduplication and comparison silently degrade | T-3, T-25; treat the serializer as a versioned interface tied to `schema` |
 | Workspace on a different volume | Silent loss of CoW benefit; slow startup, high disk use | Detect and report at `sync` time (§8.6) |
-| Harness residue outside the store (§9.6) | Revocation is incomplete for `sealed` sessions | Out of scope here. Tracked in `harness.md`; policy decision belongs to `SECURITY-MODEL.md` |
+| Harness residue outside the store (§9.6) | Revocation is incomplete after documents have been read | Out of scope here. Tracked in `harness.md`; policy decision belongs to `SECURITY-MODEL.md` |
 | A compartment repository created public by mistake | That compartment's specifications published, irreversibly | Pre-send privacy and approval check (R-11, §7.6.1); Caiman never creates a remote, so visibility stays an explicit human act |
 | A mislabeled document pushed before the error is found | History rewrite, or permanent residue (§9.5) | Label review sits between ingest and push (R-12). This is the whole reason push is not automatic |
 | Partial publication across repositories | Dependencies published without their root | Root-last ordering; report exactly what was sent; resumable journal (§7.6.2) |

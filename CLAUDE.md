@@ -8,6 +8,7 @@ Instructions for AI agents working in this repository.
 |---|---|
 | Make any non-trivial change | This file, then `docs/ARCHITECTURE.md` |
 | Touch `store/`, `ingest/`, or `materialize/` | `docs/STORAGE.md` |
+| Touch session provisioning, workspace adapters, or container integration | `docs/CONTAINER-CONTEXT.md` (canonical accepted workflow, S-39) |
 | Touch anything label-, compartment-, or agent-related | `docs/SECURITY-MODEL.md` |
 | Resolve something that looks undecided | `docs/DECISIONS.md` — settled, open, and retired. Do not silently resolve an open decision in code |
 
@@ -147,8 +148,8 @@ binary formats require suitable readers and must never be silently omitted.
   agent would search, get results, and have no indication part of the set was
   skipped. Silent incompleteness is the worst failure this system can have —
   there is no error to notice.
-- **Key the blob cache by compartment.** Hardlinks share an inode, so mode lives
-  on the inode; linking a compartmented blob out of a shared cache leaves it
+- **Key the blob cache by pod.** Hardlinks share an inode, so mode lives
+  on the inode; linking a pod-specific blob out of a shared cache leaves it
   reachable by the cache path.
 - **Blobs and materialized documents are read-only** (`0444`). An in-place edit
   propagates through every hardlink and poisons the cache for every session.
@@ -162,10 +163,9 @@ to record which managed documents were read. Three rules, none of them
 negotiable:
 
 **Never deny a tool call.** `PreToolUse` can block; Caiman does not use it.
-Blocking would make Caiman look like an enforcement boundary, which S-19 says it
-is not — and it would add nothing, because a document the session may not see was
-never materialized, so there is no read to deny. A gate where nothing can pass is
-the shape of a gate with none of the substance.
+Caiman is not an enforcement boundary (S-19). Session folders separate
+selections, not permissions; agents may be able to read other folders in a shared
+worktree. Actual isolation requires filesystem/process boundaries.
 
 **Never fail a session.** Hook failures, timeouts, and a missing Caiman
 installation all leave the session running and unlogged. A broken audit hook that
@@ -233,7 +233,9 @@ src/caiman/
 ```
 
 Tests live under `tests/`, public example datasets under `fixtures/`, and design
-documentation under `docs/`. Session materialization remains planned; create
+documentation under `docs/`. S-39 and `docs/CONTAINER-CONTEXT.md` own the accepted
+host-provisioned, per-session workflow for local and container agents. Session
+materialization and the portable workspace adapter remain planned; create
 new feature packages when their implementation arrives. The default pod is permanently `public`; no board or project is a remembered default.
 
 No `server/`. If semantic fallback is ever built (S-18) it arrives as one tool

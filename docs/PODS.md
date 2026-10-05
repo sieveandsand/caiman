@@ -10,8 +10,10 @@ the current gallery tab or choosing a destination pod never changes the default.
 
 This design supersedes the compartment/access rules in the older storage,
 security, and architecture design sections. Those sections remain historical
-context for features that have not been implemented, including workspace
-materialization. Pod Git sync is separate from future workspace materialization.
+context for superseded storage/transport designs. The accepted workspace
+materialization and switching workflow is [Session context](CONTAINER-CONTEXT.md)
+(S-39), using this pod model. It is not yet implemented. Pod Git sync is separate
+from session materialization.
 
 ## Local layout and identity
 

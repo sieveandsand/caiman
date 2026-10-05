@@ -21,6 +21,12 @@ for the agent to search and cite.
 [Architecture](docs/ARCHITECTURE.md#2-background-and-problem) explains the problem and product boundaries;
 [Roadmap](docs/ROADMAP.md) tracks remaining work.
 
+The accepted [session and Docker workflow](docs/CONTAINER-CONTEXT.md) is planned:
+Caiman runs on the host, each agent session receives its own context folder in
+an initialized worktree, and containers read it through the existing bind mount.
+The open host TUI processes context-switch requests from a portable workspace
+adapter. The current startup guidance hooks do not implement this workflow.
+
 ## First launch and document ingestion
 
 Requires Python 3.11+ and an interactive terminal.

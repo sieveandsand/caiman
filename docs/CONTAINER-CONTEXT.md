@@ -1,11 +1,17 @@
 # Session context for agents in containers
 
-**Status: proposed design, not implemented.** This document collects the host-side
-provisioning and session-switching design discussed on 2026-10-01. It proposes
-changes to [Architecture §6.11](ARCHITECTURE.md#611-provisioning-a-worktree) and
-[decision D-14](DECISIONS.md#d-14-when-and-where-documents-are-provisioned-into-a-worktree).
-The current [pod model](PODS.md) applies; older open/sealed and compartment rules
-do not apply to this design.
+**Status: accepted workflow, not implemented.** Accepted by the user on
+2026-10-04 as S-39, resolving D-14. This is the canonical design for host-side
+provisioning and session switching, for both local agents and agents in containers.
+Architecture, storage, and hook documentation refer here for the lifecycle and
+protocol rather than defining alternative workflows.
+
+The current [pod model](PODS.md) and [document model](DOCUMENT-METADATA.md)
+apply. There is no open/sealed mode or application authorization layer. Every
+selected project resolves its complete pinned document set from its owning pod
+and public; missing dependencies fail provisioning. Document bodies stay pinned;
+metadata follows the current approved manifests, whose exact identities are
+recorded when installing a context revision.
 
 ## 1. The idea
 
@@ -93,7 +99,7 @@ worktree/
             └── ...
 ```
 
-These filenames describe the proposed layout, not a finalized wire format.
+These filenames describe the accepted layout, not a finalized wire format.
 Temporary staging folders and recovery records are omitted for clarity.
 
 ```mermaid
@@ -198,6 +204,30 @@ new session still gets its own folder and a visible selection.
 Hook configuration may need a new harness session or a harness-specific trust
 step before it becomes active. Each supported harness needs an actual container
 integration check; writing configuration alone is not proof that the hook ran.
+
+### Worktree and mount checks
+
+Initialize a host folder at the top of a Git worktree. Keep `.caiman/` ignored,
+verify the repository's commit guard (including `core.hooksPath`), and exclude
+`.caiman/` from container build contexts before publishing documents. Preserve
+existing hooks when installing integration. Multi-repository workspace roots
+still need a separate design (G29).
+
+The supported container setup bind-mounts the worktree from that host with write
+access for adapter requests. Mount the worktree, not a separate `.caiman/` or
+session context directory: a mount of a replaced directory may retain an older
+generation after installation. Container writable layers, named volumes, and
+remote-daemon paths are not substitutes for this host worktree.
+
+The initial TUI selects the host path. Docker discovery is not required by this
+workflow. Caiman does not create, start, exec into, copy into, or commit containers.
+No Docker socket is exposed to the adapter. Host and container paths may differ;
+validate Git worktree and hook paths separately from the relative request paths.
+
+Report clone, hardlink, or copy behavior at review. Read-only hardlinks are only
+an accident guard: an owner or root process can change their modes and modify the
+shared inode. Prefer filesystem clones; the fallback decision remains in
+[Storage §13.1](STORAGE.md#131-open-questions).
 
 ## 5. Starting a session
 
@@ -321,7 +351,7 @@ active context. Keep requests, results, and session identity outside the replace
 directory. Record enough information to recover both the installed revision and
 the corresponding request result after a crash.
 
-The older [storage design](STORAGE.md#installing-a-generation) uses a recoverable
+The [storage design](STORAGE.md#installing-a-generation) uses a recoverable
 directory swap. That avoids partially populated directories, but is not a
 portable atomic replacement of a nonempty directory: there may be a brief gap.
 For this first version, the affected agent waits during installation. Do not
@@ -402,6 +432,10 @@ hook support should not be mistaken for the complete workflow described here.
 - Race a TUI change with an agent request and reject the stale request.
 - Interrupt provisioning and recover a complete context and consistent result.
 - Reject malformed requests and destinations escaping the registered worktree.
+- Reject attempts to expand host-authorized choices by editing shared metadata.
+- Resume after container replacement with the same host worktree and session ID.
+- Reject stale acknowledgements without marking a newer revision adopted.
+- Verify Git and build exclusions, hook activation, and differing host/container paths.
 
 These checks should run against the supported harness and container setup, not
 only against host filesystem unit tests.

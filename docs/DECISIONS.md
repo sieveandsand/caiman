@@ -69,8 +69,9 @@ possible fallback under S-18.
 
 ### S-05. Fail closed, everywhere
 
-Missing or unreadable labels exclude content from resolution and materialization;
-they never imply public access. This is I-1.
+Missing required pod dependencies or fixed document bodies fail resolution and
+materialization. Never silently substitute or publish a partial set (I-2, I-9).
+The historical access-label rule is retired under pods.
 
 ### S-06. Citations identify the document, version, and source location
 
@@ -102,7 +103,7 @@ Settled 2026-08-20; supersedes D-01.
 
 Generate one always-visible brief from metadata only, with the program codename
 instead of customer identity. The generator cannot read document bodies (I-6).
-This lets an open session know that restricted context exists.
+The brief describes the selected session context; field visibility remains G17.
 
 The assumption that the remaining metadata is safe to expose is under review
 in G17; metadata-only generation does not prove it.
@@ -187,18 +188,15 @@ that trigger fires; do not add splitting or generated maps to ingest by default.
 
 Settled 2026-08-20; supersedes D-06/D-11. Trigger updated 2026-09-15 for S-25.
 
-### S-19. The human declares the session mode; Caiman holds no agent policy
+### S-19. The human selects context; Caiman holds no agent policy
 
-Require `sync --mode open|sealed`, with no default. The human selects the mode;
-Caiman does not attest the model or enforce its authorization.
+The human chooses the session's context and the processing environment suitable
+for its documents. Caiman does not attest models or enforce their authorization.
+The former agent map and open/sealed materialization modes are retired under the
+pod model. S-39 defines host-authorized context choices and per-session switching.
 
-The former agent-name map was removed because it required maintenance, could
-differ across machines, and could silently misidentify a harness's model.
-This accepts the risk of a mistaken mode choice. Any future convenience layer
-may narrow access, never widen it. `--agent-label` is an unverified audit
-annotation, not policy. [Security §5](SECURITY-MODEL.md#5-the-control).
-
-Settled 2026-08-20; agent map removed 2026-09-15.
+Settled 2026-08-20; agent map removed 2026-09-15; aligned with pods and S-39
+on 2026-10-04.
 
 ### S-20. Documents are linked from a content-addressed cache, not copied
 
@@ -229,14 +227,18 @@ I-3. S-35 adopts the protocol; [Storage §6.6](STORAGE.md#66-team-storage-one-gi
 
 Settled 2026-09-14; topology superseded 2026-09-24 by user instruction.
 
-### S-23. Session integration is via harness hooks, as thin adapters over the CLI
+### S-23. Session integration uses portable workspace adapters
 
-Keep session logic in `caiman session start|record|end`; adapters translate
-harness events. Start hooks inject context so the agent can ask for selection;
-they cannot prompt interactively. Hooks observe, never block, and degrade to the
-manual workflow if unavailable. [Architecture §6.10](ARCHITECTURE.md#610-session-integration).
+Harness hooks translate session events into workspace registration and context
+instructions. The workspace adapter uses request/result files to reach the host
+TUI; provisioning logic and store access stay on the host. The container does not
+need the Caiman package or a host Python path. Start hooks provide choices so the
+agent can ask the user; they never wait for interactive input or provision inline.
+Hooks never block tools or fail a session (I-10). Detailed read auditing is
+separate from the initial context workflow.
+[Session context](CONTAINER-CONTEXT.md) owns the adapter contract.
 
-Settled 2026-09-14.
+Settled 2026-09-14; amended 2026-10-04 by S-39.
 
 ### S-24. Audit has two layers: what could be read, and what was read
 
@@ -362,14 +364,15 @@ multiple entries, including duplicates, on ingestion, registration and read.
 Keep the existing array representation with zero public/one private entry so
 valid stored snapshots keep their bytes and hashes. Legacy multi-compartment
 documents require explicit re-ingestion and repinning, not silent narrowing.
-Projects and sessions may still refer to documents from multiple compartments.
+Historical scope rule: superseded by pods. Current project dependencies stay
+within the owning pod and public; S-39 defines session selection.
 
 Use one private Git repository per compartment; do not introduce a separate
 access-domain abstraction. This replaces the initial AND/intersection proposal
 and the subsequently discussed OR/replication option: neither is needed for a
-single-compartment document. Repository permissions enforce teammate access;
-Caiman performs classification checks and session selection. No transport is
-implemented by this decision. [Security §3](SECURITY-MODEL.md#3-classification)
+single-compartment document. Repository permissions enforce teammate access.
+The classification portion is superseded by pods; S-39 owns session selection.
+No transport is implemented by this historical decision. [Security §3](SECURITY-MODEL.md#3-classification)
 owns the rule; [Storage §6.6](STORAGE.md#66-team-storage-one-git-repository-per-compartment) owns the transport.
 
 Settled 2026-09-24 by user instruction; resolves G23's repository-boundary choice.
@@ -451,6 +454,20 @@ snapshots are never rewritten. [PODS.md](PODS.md) owns the current rules.
 
 Settled 2026-10-04 by user instruction; narrows the earlier arbitrary cross-pod model.
 
+### S-39. Host provisioning with independent context for each session
+
+Accepted by the user on 2026-10-04; resolves D-14. Caiman and its pods stay on the
+host. The host TUI initializes a worktree, publishes selectable contexts, and
+listens for workspace-adapter requests while open. Each session has its own
+context folder. Both TUI selection and agent requests use the same host
+provisioner; the agent rereads and acknowledges the installed revision.
+
+This supports multiple selections in one worktree without putting the store or
+full Caiman installation inside containers. Session folders are not permission
+boundaries. Worktree/container creation and harness interruption stay external.
+The detailed design and remaining implementation choices have one owner:
+[CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md). Implementation remains planned.
+
 ## Open
 
 ### D-02. When to move the store to an OCI registry
@@ -504,30 +521,18 @@ board handling consumes the effort intended for program context.
 
 ### D-07. Harness strategy
 
-The harness asks which project *and which agent*, creates the worktree, calls
-`caiman sync`, and launches. Caiman does not build it.
+Harness choice remains open. The harness owns agent/model selection, worktree
+and container creation, and agent execution. Caiman integrates through the
+workspace adapter and host TUI defined by S-39, without requiring a store or
+Caiman installation in the agent environment.
 
-One hard requirement on any candidate: **per-session agent and model selection**.
-A harness driving a single backend cannot express the choice S-19 rests on. Verify
-before adopting.
+Evaluate reliable session identity, resume/fork/subagent events, hook activation,
+per-session model selection, and transcript handling before adopting a harness.
+The manual path is host TUI selection for an explicit session followed by reading
+that session's brief. It uses the same provisioner and pins.
 
-Caiman's obligation is an interface clean enough for someone else to drive:
-`caiman sync --project P --version V --mode open|sealed --into DIR`, with no assumption
-that Caiman owns the file or knows what a session is. Until a harness exists, the
-same command plus a one-line `@.caiman/project.md` import is the manual path —
-which is good, because it exercises the interface from day one.
-
-Candidates by maintenance health: `ccmanager` (MIT, tidy, small), `agent-deck`
-(MIT, responsive maintainer), `emdash` (Apache-2.0, funded team). Avoid
-`claude-squad` (AGPL-3.0 is a real constraint for anything shipping internally).
-`Crystal` is effectively dead. Xirp has been discussed as a model; whether it is
-obtainable outside Spotify and under what licence is **unverified**.
-
-Note that worktree isolation, the primitive these are built on, does not address
-the actual bottleneck in firmware: one board, one probe, one CAN interface.
-
-*Open: adopt one and contribute project selection upstream, or write a thin
-launcher that shells out to `caiman sync` and then to an existing harness.*
+Historical candidate surveys are not current recommendations. Choose a harness
+on verified capabilities; do not build a launcher as part of context provisioning.
 
 ### D-08. Sample / test projects
 
@@ -582,50 +587,18 @@ rather than per-program.
 *Leaning: the third, once the first becomes painful. Do not build before there is
 a real deviation document to look at.*
 
-### D-14. When and where documents are provisioned into a worktree
-
-Raised 2026-09-25 by agents running in a Docker container per worktree. `sync`
-needs the store, which only the host holds; agent sessions start inside the
-container, where it is too late to provision without exposing the store.
-
-Proposed resolution — the engineer has agreed the direction; not yet settled:
-
-1. **Provision when the worktree exists, not at session start.** Creating
-   worktrees and containers stays outside Caiman (S-01). The engineer then opens
-   Caiman on the host, picks the target, project, version, and mode, and
-   provisions.
-2. **The target is the worktree folder on the host.** Provisioned context
-   belongs to the folder, never to a container; a container is only a way to
-   find the folder, through read-only `docker ps` and `docker inspect`.
-   Creating, starting, execing into, copying into, or committing containers
-   stays out of scope.
-3. **The store never enters a container.** Caiman in the image runs without a
-   store or configuration.
-4. **Session-start selection becomes a local-only fallback.** This amends S-23,
-   which made hook-driven selection the main path.
-5. **A mode declaration covers the worktree** until it is cleared or
-   re-provisioned, and every session start restates it. This answers G18's
-   resume question: the declaration is still made by a human, explicitly, with
-   no default (S-19), but for a worktree rather than one session.
-6. **Clearing and re-provisioning are always available**, warn that running
-   sessions keep what they read, and are logged.
-
-| Option | For | Against |
-|---|---|---|
-| **Provision per worktree from the host (proposed)** | Works when the agent cannot reach the store; one pin set for all of a worktree's sessions; an `open` container holds no compartmented file at all | The mode outlives the moment it was chosen; a later session may run an agent not cleared for it |
-| **Select at every session start (S-23 as written)** | The engineer declares the mode knowing which model runs | Impossible in a container without mounting the store; asks again on every restart |
-| **Mount the permitted store repositories into the container and run `sync` there** | Keeps session-start selection | The agent can read unpinned store objects directly; the mount set fixes the mode at `docker run`; links across mounts fail with `EXDEV`, forcing full copies |
-| **Copy documents into the container (`docker cp`)** | No host-path lookup | Full copies; outside every git guard; lost with the container; baked into images by `docker commit` |
-
-What would settle it: accepting the cost in the first row's "Against" column,
-with the per-session restatement as its mitigation.
-[Architecture §6.11](ARCHITECTURE.md#611-provisioning-a-worktree) holds the
-design. D-07's launcher still applies: a launcher may call `sync` itself after
-creating a worktree, with the mode typed by a human.
 
 ---
 
 ## Retired
+
+### D-14. When and where documents are provisioned into a worktree
+
+Resolved 2026-10-04 by S-39. The accepted workflow provisions from the host into
+independent session context folders and supports explicit switching through the
+TUI or adapter requests. [CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md) is the
+canonical design. The earlier shared-worktree context proposal is retired;
+its text remains available in Git history.
 
 ### D-09. Front-end form factor *(resolved 2026-09-15 by S-27)*
 

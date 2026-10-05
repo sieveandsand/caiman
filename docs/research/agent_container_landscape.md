@@ -1,8 +1,9 @@
 # Where coding agents run relative to containers
 
 Research note, 2026-09-25. Not a contract or a source of Caiman policy.
-[D-14](../DECISIONS.md#d-14-when-and-where-documents-are-provisioned-into-a-worktree)
-and [Architecture §6.11](../ARCHITECTURE.md#611-provisioning-a-worktree) use it.
+This informed the now-resolved D-14. The accepted workflow is
+[Session context](../CONTAINER-CONTEXT.md) (S-39); this historical survey does not
+define a separate local or container provisioning path.
 Products in this area change quickly; **recheck the claims below before relying
 on them.**
 

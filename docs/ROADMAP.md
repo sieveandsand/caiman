@@ -10,22 +10,24 @@ Local document ingestion and board/project authoring are implemented: TUIs, JSON
 drafts, validation, immutable pins, local registration, and guided board editing.
 See [README.md](../README.md) for usable commands.
 
-Still planned: Git transport, automatic adoption cascades, workspace status and
-verification, brief generation, session materialization, and harness hooks.
-The phases below describe completion criteria, not claims that a whole phase
-has shipped.
+Pod folders and Git clone/sync, plus local startup guidance hooks, are implemented.
+Still planned: workspace initialization, portable adapters, context catalogs,
+per-session materialization and switching, brief generation, and detailed audit
+hooks. S-39 settles the session workflow; [CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md)
+is the implementation contract. Phase labels below are planning sequence, not
+claims of shipped behavior or current calendar estimates.
 
 ## Success Criteria for the MVP
 
-1. A session starts with the selected board, features, specification release,
-   project version, and explicit mode correctly represented.
-2. Register-field answers cite the correct document, version, and locator.
-3. Requirement answers identify the governing source and any declared deviation.
+1. Each session receives the selected project, board versions, features, and
+   complete pinned document set in its own context folder.
+2. Answers cite the correct document, body version, and source locator.
+3. Requirement answers identify the governing source and declared deviations.
 4. Different project or silicon versions produce appropriately different answers.
-5. Tests show that `open` materialization writes no compartmented documents and
-   each project's workspace excludes other compartments. This is a workspace
-   property, not proof of model authorization or process isolation.
-6. Missing labels never make content available.
+5. Two sessions sharing a worktree retain independent selections during switches;
+   this is not a claim of filesystem isolation.
+6. Missing dependencies, stale requests, and invalid destinations never publish
+   partial or substituted context.
 7. The engineer spends less time opening manuals and correcting context mistakes.
 
 The last criterion measures usefulness. [GAPS.md](GAPS.md) defines the baseline
@@ -34,19 +36,20 @@ comparison, governing-source evaluation, and remaining validation work.
 ## Phase 0 — Answer the expensive question (day 1)
 
 Before using real restricted material, establish which processing and storage
-arrangements each counterparty permits. S-33 resolves G23 with one private
-repository per compartment; implement and validate the adopted publication
-protocol (S-35, [Storage §14](STORAGE.md#14-implementation-sequence-and-migration)) before sharing real material.
+arrangements each counterparty permits. [PODS.md](PODS.md) owns the current
+local-folder and optional Git-sharing model. Verify the actual hosting and
+filesystem boundaries before using confidential material in sessions.
 
 Product validation is also outstanding (G01–G07). G26 proposes moving an
 end-to-end baseline comparison earlier; its evaluation and continue/stop criteria
 still need agreement. Do not treat the implementation checkpoint as product
 validation.
 
-## Phase 1 — Documents in, labeled, citable (weeks 1–2)
+## Phase 1 — Documents in pods, citable (weeks 1–2)
 
-Local registration is implemented. Remaining work is store initialization,
-reviewed publication, pull/clone, and multi-machine validation.
+Local registration, pod initialization, and Git clone/sync are implemented.
+Multi-machine validation and any further publication protocol remain separate
+from the planned session workflow.
 
 Contracts: [Architecture §6.4](ARCHITECTURE.md#64-ingest) for admission;
 [Storage §7](STORAGE.md#7-data-flows) for writes and transport;
@@ -54,10 +57,10 @@ Contracts: [Architecture §6.4](ARCHITECTURE.md#64-ingest) for admission;
 
 Exit criteria:
 
-- Invalid labels or locators cannot publish a document version.
+- Registration accepts any readable file unchanged; destination pod and metadata are validated.
 - Cancellation leaves no version or ref update; unknown provenance is accepted.
 - Registered bytes are unchanged and resolve to the same digest on a second machine.
-- Publication requires label review and a permitted private destination.
+- Sharing is explicit and per pod; saving locally never commits or pushes.
 - Clone/pull restores permissions before other operations and reports ref conflicts.
 
 ## Phase 2 — The project, and the brief (weeks 3–4)
@@ -66,7 +69,7 @@ Board/project authoring and manual adoption are implemented. Remaining work:
 
 - Specify and implement reviewed document-adoption cascades (G15).
 - Add workspace status and store verification commands.
-- Generate the metadata-only brief, including features, precedence, and declared
+- Generate the metadata-only brief, including features and declared
   changes, with no access to document text or customer legal identity.
 
 Contracts: [Configuration guide](../README.md#configure-boards-and-projects), [Architecture §6.7](ARCHITECTURE.md#67-resolve)
@@ -76,23 +79,28 @@ Exit: two projects sharing a board but using different specification sets each
 produce the correct pinned structure and brief. Existing pins survive ref updates.
 The visibility assumption for brief metadata remains G17.
 
-## Phase 3 — Sessions (weeks 5–6)
+## Phase 3 — Sessions
 
-Implement explicit-mode materialization, dry runs, omission notices,
-reclassification, and the two audit layers. Add thin harness adapters for session
-start, observed reads, and session end; keep manual brief injection available.
+Implement the accepted [session workflow](CONTAINER-CONTEXT.md), in this order:
 
-Contracts: [Architecture §9](ARCHITECTURE.md#9-interfaces),
-[Storage §7.3](STORAGE.md#73-materialize), and
-[Security §9](SECURITY-MODEL.md#9-audit). Settle content-free shell logging (G22)
-and measure hook/subagent coverage (G21) before relying on access records.
+1. Host worktree initialization, Git/build guards, catalog publication, and the
+   portable workspace adapter with verified harness activation.
+2. Stable session registration and independent context folders; preserve resume
+   identity and define fork/subagent behavior.
+3. Complete host-side materialization, brief generation, request/result handling,
+   recoverable installation, and installed/acknowledged revision tracking.
+4. TUI and conversational switching through that same provisioner, with retries,
+   stale-request rejection, listener unavailability, and explicit cleanup.
 
-Record retrieval misses so the S-18 semantic-search trigger has evidence.
+Run the canonical acceptance scenarios through supported container bind mounts,
+including two sessions in one worktree and recovery after interruption.
+[Storage §7.3](STORAGE.md#73-materialize) owns storage mechanics;
+[Security](SECURITY-MODEL.md) owns trust boundaries and negative tests.
 
-Exit: independent workspaces contain the correct brief and complete permitted
-pin set. `open` writes no compartmented documents; missing mode writes nothing.
-These tests establish materialization behavior, not process isolation or model
-authorization. Then evaluate [MVP success criteria](#success-criteria-for-the-mvp).
+Detailed access auditing is separate work. Settle content-free shell logging
+(G22) and measure hook/subagent coverage (G21) before relying on access records.
+Record retrieval misses so S-18's semantic-search trigger has evidence, then
+measure the MVP success criteria.
 
 ## After the MVP
 
@@ -113,8 +121,8 @@ authorization. Then evaluate [MVP success criteria](#success-criteria-for-the-mv
 The recorded candidates, in order, are linking optimizations (copy instead),
 access logging, materialization logging, then the brief's change summary.
 
-Keep ingestion review, session-start integration, fail-closed labels and mode
-selection, citations, differential materialization, and the board/project brief.
+Keep ingestion review, session registration, explicit context selection, complete
+materialization, recoverable switching, citations, and the board/project brief.
 Splitting, generated maps, and AI ingestion are already outside scope (S-25).
 
 ## Schedule Risks
