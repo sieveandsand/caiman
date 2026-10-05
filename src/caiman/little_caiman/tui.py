@@ -18,6 +18,7 @@ from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
 from caiman.little_caiman.service import (ABSENCE_NOTICE, HARNESS_NAMES, Session, UsageTracker,
+                                          document_label, loaded_context, loaded_contents,
                                           list_sessions)
 from caiman.ui.cards import CARD_CSS, CardFrame, OverviewCard
 from caiman.ui.navigation import NavigationApp
@@ -26,6 +27,7 @@ from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 POLL_SECONDS = 2
 SECTIONS_SHOWN = 4
+DOCUMENTS_SHOWN = 6
 STATUS = {
     'modified': ('Modified · no stored blob matches', '#e69a89'),
     'missing': ('Missing from disk', '#e69a89'),
@@ -79,12 +81,28 @@ class CardText:
     def gap(self):
         self.text.append('\n')
 
+    def divider(self, label, style):
+        """`── LABEL ──────`: a section break that survives 16-color terminals."""
+        head = f'── {label.upper()} '
+        self.text.append(head + '─' * max(0, self.available - len(head)) + '\n', style=style)
+
     def finish(self, card):
         self.text.rstrip()
         card.label = self.text
         height = len(self.text.plain.splitlines()) + 2
         card.styles.height = height
         return height
+
+
+def context_facts(card: CardText, session: Session) -> None:
+    """The loaded board or project, or a plain statement that there is none."""
+    state = loaded_context(session)
+    if state is None:
+        card.line('No context loaded', '#8d9982')
+        return
+    card.facts([f"{str(state.get('kind', '')).title()} {state.get('name')} @ {state.get('version')}",
+                f"Revision {state.get('revision')}", f"{state.get('documents', 0)} Installed"],
+               '#dfe6d3')
 
 
 class SessionCard(OverviewCard):
@@ -102,44 +120,91 @@ class SessionCard(OverviewCard):
         card.heading(harness, harness, '#7fdc4f')
         card.gap()
         card.facts([f'Active {ago(session.updated)}', session.session_id[:8]], 'bold #aab69c')
+        context_facts(card, session)
         if session.title:
             card.gap()
             card.line(session.title, '#dfe6d3')
         return card.finish(self)
 
 
-class SessionSummaryCard(OverviewCard):
-    """The watched session; activating it returns to the session list."""
+class SessionHeader(Static):
+    """The watched session as plain text above the cards, not a card itself."""
 
     def __init__(self, tracker: UsageTracker):
-        super().__init__('', id='session-summary', classes='dashboard-tile card-face')
+        super().__init__('', id='session-summary')
         self.tracker = tracker
 
-    def format_card(self, width):
+    def format_header(self, width):
         tracker, session = self.tracker, self.tracker.session
         usages = tracker.documents.values()
         card = CardText(width)
         name = session.cwd.name if session.cwd and session.cwd.name else session.session_id[:8]
-        card.heading(name, name, '#eef3e6')
-        card.gap()
-        harness = HARNESS_NAMES[session.harness]
-        card.heading(harness, harness, '#7fdc4f')
-        card.gap()
+        card.line(name, 'bold #eef3e6')
+        card.line(HARNESS_NAMES[session.harness], '#aab69c')
         modified = sum(tracker.integrity(usage.ref).state == 'modified' for usage in usages)
         card.facts([f'{len(tracker.documents)} Docs', f'{sum(u.reads for u in usages)} Reads',
                     f'{sum(u.searches for u in usages)} Searches', f'{sum(u.edits for u in usages)} Edits'],
-                   'bold #aab69c')
+                   '#aab69c')
         details = []
         if tracker.tree_searches:
             details.append((f'{tracker.tree_searches} searches across all documents', '#dfe6d3'))
         if modified:
             details.append((f'{modified} modified on disk', '#e69a89'))
         if not tracker.has_workspace:
-            details.append(('No context loaded in this session; only store reads can appear', '#8d9982'))
-        if details:
+            details.append(('Only direct store reads can appear', '#8d9982'))
+        for value, style in details:
+            card.line(value, style)
+        card.text.rstrip()
+        self.update(card.text)
+
+
+class LoadedContextCard(OverviewCard):
+    """What `caiman session load` installed; Enter shows every document."""
+
+    def __init__(self, session: Session):
+        super().__init__('', id='loaded-context', classes='dashboard-tile card-face')
+        self.session = session
+        self.expanded = False
+
+    def format_card(self, width):
+        contents = loaded_contents(self.session)
+        card = CardText(width)
+        if contents is None:
+            card.heading('No context loaded', 'No context loaded', '#eef3e6')
             card.gap()
-            for value, style in details:
-                card.line(value, style)
+            card.line('Ask the agent to load a board or project.', '#8d9982')
+            return card.finish(self)
+        title = f"{contents.get('name')} @ {contents.get('version')}"
+        card.heading(title, title, '#eef3e6')
+        card.gap()
+        kind = str(contents.get('kind', '')).title()
+        card.heading(kind, kind, '#7fdc4f')
+        card.gap()
+        boards = [board for board in contents.get('boards') or [] if isinstance(board, dict)]
+        documents = [entry.get('path', '') for entry in contents.get('documents') or [] if isinstance(entry, dict)]
+        card.line(f"Revision {contents.get('revision')}", 'bold #aab69c')
+        # Each category gets a labeled divider; each entry is its name with its
+        # location indented beneath, and a blank line between entries.
+        if boards:
+            card.gap()
+            card.divider(f'Boards · {len(boards)}', 'bold #7fdc4f')
+        for board in boards:
+            card.gap()
+            card.line(f"{board.get('name')} @ {board.get('version')}", '#dfe6d3')
+            card.line(f"  pod {board.get('pod')}", '#8d9982')
+        if documents:
+            card.gap()
+            card.divider(f'Documents · {len(documents)}', 'bold #7fdc4f')
+        shown = documents if self.expanded else documents[:DOCUMENTS_SHOWN]
+        for path in shown:
+            scope, document = document_label(path)
+            card.gap()
+            card.line(document, '#dfe6d3')
+            if scope:
+                card.line(f'  {scope}', '#8d9982')
+        if len(documents) > len(shown):
+            card.gap()
+            card.line(f'+{len(documents) - len(shown)} more · Enter to show', '#8d9982')
         return card.finish(self)
 
 
@@ -199,6 +264,7 @@ class LittleApp(NavigationApp):
     #brand { height: 1; }
     .little-grid { height: auto; grid-size: 1; grid-columns: 1fr; grid-gutter: 1 0; }
     #little-status { height: auto; margin-bottom: 1; color: #aab69c; }
+    #session-summary { height: auto; padding: 0 1; margin-bottom: 1; }
     #notice { height: auto; padding: 0 2; color: #8d9982; }
     #navigation Button { width: auto; }
     '''
@@ -218,6 +284,8 @@ class LittleApp(NavigationApp):
             heights = [frame.resize_card(width) for frame in grid.children]
             grid.styles.grid_rows = heights or [1]
             grid.styles.height = sum(heights) + max(0, len(heights) - 1)
+        for header in self.query(SessionHeader):
+            header.format_header(width)
 
     def action_page_down(self):
         self.query_one('#body', VerticalScroll).scroll_page_down(animate=False)
@@ -289,15 +357,16 @@ class UsageApp(LittleApp):
     def compose(self):
         yield Static('little caiman', id='brand')
         with VerticalScroll(id='body'):
-            with Grid(id='summary-grid', classes='little-grid'):
-                yield CardFrame(SessionSummaryCard(self.tracker))
+            yield SessionHeader(self.tracker)
+            with Grid(id='context-grid', classes='little-grid'):
+                yield CardFrame(LoadedContextCard(self.tracker.session))
             yield Static('Reading transcript…', id='little-status', markup=False)
             yield Grid(id='documents', classes='little-grid')
         yield Static(ABSENCE_NOTICE, id='notice')
         yield self.navigation_hint()
 
     async def on_mount(self):
-        self.query_one('#session-summary', Button).focus()
+        self.query_one('#loaded-context', Button).focus()
         await self.refresh_usage()
         self.set_interval(POLL_SECONDS, self.refresh_usage)
 
@@ -331,11 +400,9 @@ class UsageApp(LittleApp):
                 grid.move_child(self.cards[key], before=index)
 
     def on_button_pressed(self, event):
-        if isinstance(event.button, DocumentUsageCard):
+        if isinstance(event.button, (DocumentUsageCard, LoadedContextCard)):
             event.button.expanded = not event.button.expanded
             self.resize_cards()
-        elif isinstance(event.button, SessionSummaryCard):
-            self.exit('sessions')
 
 
 def run_little_caiman(store_root: Path | None, session: Session | None = None, *, home: Path | None = None) -> int:

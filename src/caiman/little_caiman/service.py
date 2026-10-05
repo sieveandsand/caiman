@@ -19,9 +19,10 @@ from pathlib import Path
 import re
 import shlex
 import sqlite3
+from urllib.parse import unquote
 
 from caiman.documents.ingest import heading_outline
-from caiman.sessions.service import CAIMAN, find_workspace, is_registered, session_name
+from caiman.sessions.service import CAIMAN, find_workspace, is_registered, read_state, session_name
 
 
 HARNESS_NAMES = {'claude': 'Claude Code', 'codex': 'Codex'}
@@ -137,6 +138,37 @@ def registered(session: Session) -> Session | None:
     except ValueError:
         return None
     return replace(session, documents=folder / 'context' / 'documents') if is_registered(folder) else None
+
+
+def loaded_context(session: Session) -> dict | None:
+    """What `caiman session load` last installed for this session, read fresh each time."""
+    if session.documents is None:
+        return None
+    try:
+        return read_state(session.documents.parent.parent)
+    except (OSError, ValueError):
+        return None
+
+
+def loaded_contents(session: Session) -> dict | None:
+    """The installed context's identities: boards and document paths, never content."""
+    if session.documents is None:
+        return None
+    try:
+        data = json.loads((session.documents.parent / 'project.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def document_label(path: str) -> tuple[str, str]:
+    """`documents/nxp/s32k344/manual@rev-4/document.pdf` → (`nxp/s32k344`, `manual @ rev-4`)."""
+    folders = Path(path).parts[1:-1]
+    if not folders:
+        return '', path
+    name, _, version = folders[-1].rpartition('@')
+    scope = '/'.join(unquote(part) for part in folders[:-1])
+    return scope, (f'{unquote(name)} @ {unquote(version)}' if name else unquote(folders[-1]))
 
 
 def list_sessions(home: Path | None = None, limit: int = 30) -> list[Session]:

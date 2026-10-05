@@ -70,6 +70,8 @@ def test_first_start_creates_the_workspace_and_asks_for_a_choice(library, tmp_pa
     assert (session['harness'], session['session_id'], session['transcript_path']) == ('claude', 's1', '/t.jsonl')
     assert 'No board or project is loaded' in context and 'session list' in context
     assert 'Never choose a version yourself' in context
+    # Asking must not depend on the first prompt being about hardware.
+    assert 'At the start of your first reply, whatever the user asked' in context
     assert env_file.read_text() == f'export CAIMAN_SESSION=claude-s1\nexport CAIMAN_WORKSPACE={worktree}\n'
 
 

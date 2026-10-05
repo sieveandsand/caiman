@@ -253,7 +253,7 @@ async def test_usage_view_shows_counts_sections_and_the_absence_notice(tmp_path,
         assert 'Modified' not in text
         assert card.region.right <= 40
         assert ABSENCE_NOTICE in str(app.query_one('#notice', Static).render())
-        summary = app.query_one('#session-summary', Button).label.plain
+        summary = str(app.query_one('#session-summary', Static).render())
         # At 40 columns the summary breaks between facts, never inside one.
         assert '1 Docs · 1 Reads\n0 Searches · 0 Edits' in summary
         # A new read appears on the next poll without restarting the sidecar.
@@ -310,3 +310,63 @@ def test_binary_reads_do_not_invent_markdown_sections(tmp_path, filename, conten
     [usage] = tracker.ranked()
     assert usage.reads == 1
     assert usage.sections == {'Lines 2–2': 1}
+
+
+def load_state(cwd, harness, session_id, **state):
+    path = cwd / '.caiman' / 'sessions' / f'{harness}-{session_id}' / 'state.json'
+    defaults = dict(kind='project', name='kestrel', version='dvt-1', revision=2, documents=12)
+    path.write_text(json.dumps(defaults | state))
+
+
+@pytest.mark.asyncio
+async def test_cards_show_each_sessions_loaded_context(tmp_path, workspace):
+    home = tmp_path / 'home'
+    for name in ('a', 'b'):
+        path = home / '.claude' / 'projects' / f'-work-{name}' / f'{name}.jsonl'
+        path.parent.mkdir(parents=True)
+        write_lines(path, [{'type': 'user', 'cwd': str(tmp_path / 'work' / name)}])
+        os.utime(path, (1000 if name == 'a' else 2000,) * 2)
+        register(tmp_path / 'work' / name, 'claude', name)
+    load_state(tmp_path / 'work' / 'a', 'claude', 'a')
+    app = SessionPickerApp(home=home)
+    async with app.run_test(size=(60, 50)) as pilot:
+        await pilot.pause()
+        newer, older = [card.label.plain for card in app.query('.card-face')]
+        assert 'No context loaded' in newer
+        assert 'Project kestrel @ dvt-1 · Revision 2' in older and '12 Installed' in older
+        await pilot.press('q')
+    # The usage view follows a switch made while it is open.
+    cwd, _, store = workspace
+    register(cwd, 'claude', 'abc12345')
+    session = claude_session(tmp_path, cwd, [])
+    app = UsageApp(session=session, store_root=store)
+    async with app.run_test(size=(60, 60)) as pilot:
+        await pilot.pause()
+        loaded = app.query_one('#loaded-context', Button)
+        assert 'NO CONTEXT LOADED' in loaded.label.plain
+        install_contents(cwd, documents=8)
+        await app.refresh_usage()
+        await pilot.pause()
+        text = loaded.label.plain
+        assert 'KESTREL @ DVT-1' in text and 'Revision 3' in text
+        assert '── BOARDS · 2 ──' in text and '── DOCUMENTS · 8 ──' in text
+        assert text.index('BOARDS') < text.index('demo-board @ Rev A') < text.index('DOCUMENTS')
+        assert 'demo-board @ Rev A\n  pod public\n\ndemo-board @ Rev B\n  pod alpha' in text
+        assert 'manual 0 @ Rev 1\n  nxp/s32k344\n\nmanual 1 @ Rev 1' in text and '+2 more · Enter to show' in text
+        assert 'manual 7' not in text
+        loaded.focus()
+        await pilot.press('enter')
+        await pilot.pause()
+        assert 'manual 7 @ Rev 1\n  nxp/s32k344' in loaded.label.plain and 'more' not in loaded.label.plain
+        await pilot.press('q')
+
+
+def install_contents(cwd, documents):
+    context = cwd / '.caiman' / 'sessions' / 'claude-abc12345' / 'context'
+    context.mkdir(parents=True, exist_ok=True)
+    (context / 'project.json').write_text(json.dumps({
+        'kind': 'project', 'name': 'kestrel', 'version': 'dvt-1', 'revision': 3,
+        'boards': [{'name': 'demo-board', 'version': 'Rev A', 'pod': 'public'},
+                   {'name': 'demo-board', 'version': 'Rev B', 'pod': 'alpha'}],
+        'documents': [{'path': f'documents/nxp/s32k344/manual%20{n}@Rev%201/document.pdf'}
+                      for n in range(documents)]}))

@@ -128,10 +128,12 @@ def session_context(store_root: Path, folder: Path, state: dict | None) -> str:
     if state is None or not (folder / 'context').is_dir():
         return ('Caiman manages versioned firmware documents, boards, and projects. '
                 f'No board or project is loaded for this session ({name}). '
-                'Ask the user which board or project to load before answering hardware or '
-                f'requirement questions. List choices with `{cli} session list` (add a name '
-                'to see its versions). Never choose a version yourself; ask the user. '
-                f'Then load it with `{load}`.')
+                'At the start of your first reply, whatever the user asked, ask which board '
+                'or project and version to load for this session; they may decline, and then '
+                'do not ask again. Show the choices from '
+                f'`{cli} session list` (add a name to see its versions). Never choose a '
+                f'version yourself. Load the user\'s choice with `{load}`, then continue '
+                'with their request.')
     brief = folder / 'context' / 'project.md'
     return (f"Caiman: this session ({name}) has {state['kind']} {state['name']} @ "
             f"{state['version']} loaded (revision {state['revision']}). Read {brief} before "
