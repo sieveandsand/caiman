@@ -14,8 +14,8 @@ Pods support local folders and optional Git clone/sync.
 Startup guidance hooks can be installed for Claude Code and Codex from the home menu.
 
 Caiman models hardware as boards and customer programs as projects. Each project
-pins one or more boards and its specification documents, with human-declared
-features. The planned session workflow writes that context as ordinary files
+pins one or more boards and its documents, with collections available to group
+and select related documents. The planned session workflow writes that context as ordinary files
 for the agent to search and cite.
 
 [Architecture](docs/ARCHITECTURE.md#2-background-and-problem) explains the problem and product boundaries;
@@ -179,6 +179,34 @@ After importing the dataset above, open the micro:bit v2 board or its R2 project
 .venv/bin/caiman project configure fixtures/project.json
 ```
 
+Projects select board versions, documents, and collections. **Choose documents**
+shows individual documents and named collections together. Selecting a collection
+attaches its stable identity to the project; its current membership is resolved
+when the project is read. Saving collection edits therefore updates every project
+referencing that collection, without rewriting project snapshots.
+
+For example, if a referenced collection changes from A/B to B/C, the project's
+collection contributes B/C automatically. If A is also attached directly, A stays.
+Overlapping collections and direct attachments contribute each document once.
+Collection renames also appear automatically. Document metadata edits remain
+visible through existing references; each member's body stays fixed. Replacing a
+member with a newly registered document explicitly changes the body supplied by
+that collection.
+
+Saved collection references also retain the original collection snapshot digest
+for historical resolution. Normal views follow the current collection; exact
+project manifests and their original collection snapshots remain unchanged.
+Existing projects with previously expanded document lists keep those direct
+attachments: select the collection again to establish a live reference and remove
+any unwanted direct attachments. Caiman does not infer the old grouping.
+
+Boards, parts, and collection editing still expand selected collections into
+individual document attachments. Collections cannot contain nested collections.
+
+Features are no longer part of normal project authoring. Existing feature data is
+preserved and can be edited through raw JSON; new projects do not require it.
+Collections remain document groups, without feature scope or hardware mappings.
+
 The top-level JSON files are copies of the micro:bit v2 and sound R2 drafts.
 The full dataset also demonstrates v1 hardware and two projects sharing the
 MacroPad board. Use a new version label to retain the imported snapshot when
@@ -217,10 +245,6 @@ available controls; there are no Ctrl shortcuts or command palette.
 
 ### Edit an existing board or project
 
-**Delete board** opens a confirmation for the selected board version and pod.
-Confirming removes it from the gallery; its stored snapshot remains available
-to projects that already pin it. **Keep board** returns to the current draft.
-
 Choose **Boards**, select a card, then press Enter or `e` for the guided
 editor. Cards emphasize the board name and version with fullwidth uppercase headings
 where they fit, and show only part names and counts of parts, links, and document
@@ -229,8 +253,19 @@ Board-level fields stay at the top;
 board documents, parts, and links each appear in a responsive card grid. Click
 a card or press Enter to expand its editor in place, and choose **Done** to
 collapse it while keeping draft edits. Each grid has a large **+** card for
-adding an entry. Part document pins are edited inside the part card; enter
-aliases as comma-separated `name = value` pairs. Vendor completion suggests
+adding an entry. For board documents and inside a part, **Choose documents** opens a searchable list
+from all locally available pods. Select documents with Space or a click, then
+**Attach selected**. Selections survive search changes; Cancel adds nothing.
+Already attached documents are excluded. Attached rows show names, versions,
+and pods, with optional notes and Remove controls; part reference fields live under
+**Reference details**. Empty rows do not count as document pins. Register new
+documents from the Documents page before attaching them.
+
+**Delete board** opens a confirmation for the selected board version and pod.
+Confirming removes it from the gallery; its stored snapshot remains available
+to projects that already pin it. **Keep board** returns to the current draft.
+
+Enter aliases as comma-separated `name = value` pairs. Vendor completion suggests
 common spellings and vendors already on the board, but accepts any value.
 
 **Review changes** shows a field-level diff before registration. Across edit
@@ -246,10 +281,12 @@ are not lost. Legacy `caiman.board/1` boards and boards with `from`/`to` links
 are shown without guided editing; use raw JSON to preserve their shape.
 
 For projects, choose **View projects**, select a snapshot, and press `e` or
-**Edit**. Boards, documents, and features each appear as a card grid.
+**Edit**. Boards and documents each appear as a card grid.
+Use **Choose documents** for individual documents and named collections in one
+searchable picker. Overlapping groups add each document once. Existing feature
+declarations are retained and remain editable through **Edit raw JSON in Vim**.
 A project may pin several boards, including one board at more than one version.
-Each part a feature is realized on names its board, version, and role; a new part
-starts on the board when exactly one is pinned. A project registered with a
+A project registered with a
 single `board` (`caiman.project.v1`) opens restated with that board spelled out;
 any document it listed only under `precedence` moves to documents, and precedence
 order and notes are dropped. The review shows the rewrite. Choose a new version label
@@ -258,6 +295,12 @@ Repointing a label never changes an existing digest pin. Editing a board does
 not update projects that pin it; adopt the changed board in each project explicitly.
 
 ### JSON drafts and document selectors
+
+The configuration-authoring screen also offers **Choose documents** and **Choose
+part documents** beside board JSON fields, and **Choose documents** for projects.
+Each picker includes both documents and collections. For part attachments, select the part first. Confirming fills its
+document references; canceling leaves the JSON unchanged. The normal review and
+registration step still saves the configuration.
 
 ```bash
 caiman board template --output .caiman/board.json

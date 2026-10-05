@@ -80,7 +80,8 @@ An artifact may reference its own pod or `public` only. Here “current pod” m
 that artifact's owning/destination pod, not a remembered global preference.
 `public` artifacts reference only `public`; two distinct non-public pods cannot
 reference each other. This applies to board and project pins, assembly and part
-documents, project and feature documents, and collection members. Project board
+documents, project and feature documents, live project collection references, and collection
+members. Both the collection edge and its current member edges are checked. Project board
 dependencies obey the same rule recursively, so a public board cannot introduce
 a dependency on another non-public pod.
 

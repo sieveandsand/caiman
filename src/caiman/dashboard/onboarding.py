@@ -8,8 +8,9 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from caiman.ui.navigation import NavigationApp
 from caiman.ui.cards import CARD_CSS, AddTile, CardFrame, OverviewCard, card_label, resize_card_grid
-from textual.containers import Grid, Horizontal, VerticalScroll
-from textual.widgets import Button, Input, Label, ListView, SelectionList, Static
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.widgets import Button, Input, Label, ListView, Select, SelectionList, Static
+from rich.text import Text
 from textual.widgets.selection_list import Selection
 
 from caiman.boards.form import vendor_suggester
@@ -17,6 +18,7 @@ from caiman.configurations.service import ConfigurationService
 from caiman.configurations.models import part_aliases, part_identity, project_boards
 from caiman.ui.mascot import HEIGHT as MASCOT_HEIGHT, WIDTH as MASCOT_WIDTH, render_mascot
 from caiman.documents.models import ValidationError
+from caiman.documents.picker import DocumentPicker, document_pin
 from caiman.storage.store import Store
 from caiman.repositories.status import PodStatusRow
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
@@ -26,7 +28,20 @@ class SetupApp(NavigationApp):
     """Create one board or project. A project names its boards explicitly, every time."""
 
     TITLE = 'Caiman · Create configuration'
-    CSS = TERMINAL_CSS + '\n#review { height: auto; }\nButton { width: auto; }\n#board-choice { height: auto; max-height: 12; }\n'
+    CSS = TERMINAL_CSS + '''
+    #review { height: auto; }
+    #project-documents, .project-document { height: auto; }
+    .project-document { margin-bottom: 1; }
+    .project-document Static { width: 1fr; height: auto; }
+    .project-document Button { min-width: 10; }
+    Button { width: auto; }
+    Button:focus { border: double #7fdc4f; }
+    #board-choice { height: auto; max-height: 12; border: solid #5f7055; }
+    #board-choice:focus { border: double #7fdc4f; }
+    #board-choice > .option-list--option-highlighted { text-style: bold reverse; }
+    Select:focus > SelectCurrent { border: double #7fdc4f; }
+    SelectOverlay > .option-list--option-highlighted { text-style: bold reverse; }
+    '''
 
     def __init__(self, *, kind: str, store_root: Path, board=None, pod=None):
         super().__init__()
@@ -36,7 +51,12 @@ class SetupApp(NavigationApp):
         self.initial_board = board
         self.initial_pod = pod
         self.service = ConfigurationService(Store(store_root))
+        self.project_pod = (self.service.store.pods.resolve(
+            pod or self.service.store.pods.configured_default)['id']
+            if kind == 'project' else None)
         self.boards = []
+        self.documents = {}
+        self.next_document_id = 0
         self.prepared = None
         self.selection = None
         self.reviewing = False
@@ -51,9 +71,19 @@ class SetupApp(NavigationApp):
         yield Static(f'caiman  /  create {self.kind}', id='brand')
         with VerticalScroll(id='body'):
             with VerticalScroll(id='edit', classes='step'):
-                yield from self.field('name', 'Board name' if self.kind == 'board' else 'Program codename')
-                yield from self.field('version', 'Version (exact label)')
-                yield from self.field('pod', 'Pod', self.initial_pod or self.service.store.pods.default)
+                yield from self.field('name', 'Board name' if self.kind == 'board' else 'Program name')
+                yield from self.field('version', 'Version')
+                yield Label('Pod')
+                if self.kind == 'project':
+                    pod = self.service.store.pods.resolve(self.project_pod)
+                    yield Static(Text(f"{pod['name']} · {pod['id']}"), id='pod')
+                else:
+                    pods = self.service.store.pods.list()
+                    requested = self.initial_pod or self.service.store.pods.configured_default
+                    selected = self.service.store.pods.resolve(requested)['id'] if requested else None
+                    yield Select([(Text(f"{pod['name']} · {pod['id']}"), pod['id']) for pod in pods],
+                                 value=selected if selected in {pod['id'] for pod in pods} else Select.NULL,
+                                 prompt='Choose a pod', id='pod')
                 if self.kind == 'board':
                     yield from self.field('notes', 'Notes (optional, unstructured)')
                     yield Static('Add the first hardware part. More parts, links, and board documents can be added in board configuration.', classes='hint')
@@ -65,10 +95,12 @@ class SetupApp(NavigationApp):
                 else:
                     yield Label('Boards')
                     yield Static('Mark every board version this program runs on with Space. '
-                                 'A board may be chosen at more than one version.', classes='hint')
+                                 '↑↓ / j/k move · Space selects · Tab continues.', classes='hint')
                     yield SelectionList(id='board-choice')
-                    yield from self.field('customer', 'Customer identity')
-                    yield from self.field('spec_set', 'Specification set (exact release label)')
+                    yield from self.field('customer', 'Customer')
+                    yield Label('Documents')
+                    yield Vertical(id='project-documents')
+                    yield Button('Add documents', id='add-project-document')
             yield Static('', id='review', markup=False)
         yield Static('', id='status', markup=False)
         with Horizontal(id='navigation'):
@@ -82,6 +114,20 @@ class SetupApp(NavigationApp):
         if self.kind == 'project':
             await self.load_boards()
 
+    def navigation_help(self):
+        if self.kind == 'board':
+            return super().navigation_help()
+        return 'Tab/Shift+Tab controls · j/k move · Space selects boards · Enter/i edit · q back'
+
+    def action_vim_move(self, direction):
+        if isinstance(self.focused, SelectionList) and direction in {'j', 'k'}:
+            if direction == 'j':
+                self.focused.action_cursor_down()
+            else:
+                self.focused.action_cursor_up()
+            return
+        super().action_vim_move(direction)
+
     def text(self, field):
         return self.query_one(f'#{field}', Input).value.strip()
 
@@ -92,16 +138,23 @@ class SetupApp(NavigationApp):
             self.boards = await asyncio.to_thread(self.service.list_configs, 'board')
             initial = self.initial_board
             # A board handed over from ingestion stays choosable even if its label moved.
-            if initial and not any(record['digest'] == initial['digest'] for record in self.boards):
+            if initial and not any(
+                record['digest'] == initial['digest']
+                and record['pod'] == initial.get('pod', 'public') for record in self.boards
+            ):
                 manifest = initial['manifest']
                 self.boards.append({'manifest': manifest, 'digest': initial['digest'], 'name': manifest['board'],
-                                    'version': manifest['version'], 'pod': 'public'})
+                                    'version': manifest['version'], 'pod': initial.get('pod', 'public')})
             selector = self.query_one('#board-choice', SelectionList)
             selector.clear_options()
             # Only a board handed over from ingestion starts marked; nothing else is preselected.
-            selector.add_options([Selection(f"{record['name']} @ {record['version']} [{record['digest'][7:19]}]", index,
-                                            bool(initial) and record['digest'] == initial['digest'])
-                                  for index, record in enumerate(self.boards)])
+            selector.add_options([
+                Selection(self.board_label(record), index,
+                          bool(initial) and record['digest'] == initial['digest']
+                          and record['pod'] == initial.get('pod', 'public'))
+                for index, record in enumerate(self.boards)
+            ])
+            selector.highlighted = 0 if self.boards else None
             self.query_one('#status', Static).update(
                 f'{len(self.boards)} registered boards.' if self.boards else 'No boards registered. Create a board first.')
         except (OSError, ValueError) as error:
@@ -110,17 +163,35 @@ class SetupApp(NavigationApp):
             self.busy = False
             self.show_view()
 
+    @staticmethod
+    def board_label(record, selected=False):
+        marker = '[x]' if selected else '[ ]'
+        return Text(f"{marker} {record['name']} @ {record['version']} · "
+                    f"{record.get('pod_name', record['pod'])} [{record['digest'][7:19]}]")
+
+    def on_selection_list_selected_changed(self, event):
+        if event.selection_list.id != 'board-choice':
+            return
+        # Explicit text keeps checked state visible when colors collapse.
+        selected = set(event.selection_list.selected)
+        for index, record in enumerate(self.boards):
+            event.selection_list.replace_option_prompt_at_index(
+                index, self.board_label(record, index in selected))
+
     def show_view(self):
         self.query_one('#edit').display = not self.reviewing
         self.query_one('#review').display = self.reviewing
-        for widget in self.query('Input, SelectionList, Button'):
+        for widget in self.query('Input, Select, SelectionList, Button'):
             widget.disabled = self.busy
         self.query_one('#back', Button).disabled = not self.reviewing or self.busy
         self.query_one('#cancel', Button).disabled = self.saving
         self.query_one('#next', Button).label = 'Register' if self.reviewing else 'Review'
 
     def draft(self):
-        data = {self.kind: self.text('name'), 'version': self.text('version'), 'pod': self.text('pod')}
+        pod = self.project_pod if self.kind == 'project' else self.query_one('#pod', Select).value
+        if pod is Select.NULL:
+            raise ValueError('Choose a pod')
+        data = {self.kind: self.text('name'), 'version': self.text('version'), 'pod': pod}
         if self.kind == 'board':
             part = {'part': self.text('part'), 'role': self.text('role'), 'vendor': self.text('vendor'), 'documents': []}
             if self.text('silicon_revision'):
@@ -140,7 +211,7 @@ class SetupApp(NavigationApp):
                        'digest': self.boards[index]['digest'], 'pod': self.boards[index].get('pod', 'public')} for index in chosen]
             data.update(customer=self.text('customer'),
                         boards=boards,
-                        spec_set=self.text('spec_set'), documents=[], features=[])
+                        documents=[document_pin(record) for record in self.documents.values()])
         return data
 
     def action_cancel(self):
@@ -168,9 +239,8 @@ class SetupApp(NavigationApp):
                           'Pod: ' + self.selection['pod']])
             for board in project_boards(manifest):
                 lines.extend([f"Board: {board['name']} @ {board['version']}", f"  Board digest: {board['digest']}"])
-            lines.extend([f"Specification set: {manifest['spec_set']}",
-                          f"Pinned project documents: {len(manifest['documents'])}",
-                          f"Features: {len(manifest['features'])}"])
+            lines.append(f"Project attachments: {len(manifest['documents'])}")
+            lines.extend('  ' + DocumentPicker.record_label(record) for record in self.documents.values())
         lines.extend(['', f'Store: {self.store_root}', 'Manifest: ' + self.selection['digest']])
         return '\n'.join(lines)
 
@@ -180,6 +250,30 @@ class SetupApp(NavigationApp):
             self.action_cancel()
             return
         if self.busy:
+            return
+        if action == 'add-project-document':
+            button = event.button
+
+            async def attach_documents(records):
+                for record in records or []:
+                    index = self.next_document_id
+                    self.next_document_id += 1
+                    self.documents[index] = record
+                    await self.query_one('#project-documents').mount(Horizontal(
+                        Static(DocumentPicker.record_label(record), markup=False),
+                        Button('Remove', id=f'remove-document-{index}'),
+                        id=f'project-document-{index}', classes='project-document'))
+                self.call_after_refresh(button.focus)
+
+            self.push_screen(DocumentPicker(
+                service=self.service, owner=self.project_pod, preserve_collections=True,
+                attached=[document_pin(record) for record in self.documents.values()]), attach_documents)
+            return
+        if action and action.startswith('remove-document-'):
+            index = int(action.removeprefix('remove-document-'))
+            del self.documents[index]
+            await self.query_one(f'#project-document-{index}').remove()
+            self.query_one('#add-project-document').focus()
             return
         if action == 'back':
             self.prepared = None

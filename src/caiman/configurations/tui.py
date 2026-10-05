@@ -9,16 +9,58 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from caiman.ui.navigation import NavigationApp
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Collapsible, Input, Label, Static, TextArea
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Button, Collapsible, Input, Label, OptionList, Static, TextArea
+from rich.text import Text
 
 from caiman.configurations.files import template, unique_keys
 from caiman.configurations.service import ConfigurationService
 from caiman.configurations.models import (restate_project_draft, part_aliases, part_identity, project_boards,
                                           project_is_legacy, realized_parts)
 from caiman.documents.models import ValidationError
+from caiman.documents.picker import DocumentPicker, document_pin
 from caiman.storage.store import Store
 from caiman.ui.theme import TERMINAL_CSS, apply_theme
+
+
+class AttachmentTargetPicker(ModalScreen):
+    """Choose the part whose document list will be edited."""
+
+    BINDINGS = [Binding('escape', 'cancel', 'Cancel')]
+    CSS = '''
+    AttachmentTargetPicker { align: center middle; background: #000000 80%; }
+    #attachment-target { width: 90%; max-width: 90; height: 70%; border: solid #7fdc4f; background: #000000; padding: 1 2; }
+    #attachment-target Static { height: auto; }
+    #attachment-target OptionList { height: 1fr; }
+    #attachment-target OptionList:focus { border: double #7fdc4f; }
+    #attachment-target .option-list--option-highlighted { text-style: bold reverse; }
+    #attachment-target Button:focus { border: double #7fdc4f; }
+    '''
+
+    def __init__(self, key, entries):
+        super().__init__()
+        self.key, self.entries = key, entries
+
+    def compose(self):
+        with Vertical(id='attachment-target'):
+            yield Static('Choose a part')
+            labels = [Text(f"{i + 1}. {entry.get('part', '?')} · {entry.get('role', '?')}")
+                for i, entry in enumerate(self.entries)]
+            yield OptionList(*labels, id='attachment-targets')
+            yield Button('Cancel', id='target-cancel')
+
+    def on_option_list_option_selected(self, event):
+        event.stop()
+        self.dismiss(event.option_index)
+
+    def on_button_pressed(self, event):
+        event.stop()
+        self.action_cancel()
+
+    def action_cancel(self):
+        self.dismiss(None)
 
 
 class ConfigApp(NavigationApp):
@@ -29,6 +71,8 @@ class ConfigApp(NavigationApp):
     #catalog { height: 14; }
     #resolved { height: 20; }
     #catalog-status { height: auto; }
+    .choose-documents { width: auto; border: solid #33422e; }
+    .choose-documents:focus { border: double #7fdc4f; }
     """
 
     def __init__(self, kind: str, store_root: Path, draft: dict | None = None):
@@ -61,7 +105,7 @@ class ConfigApp(NavigationApp):
 
     @property
     def collections(self) -> tuple[str, ...]:
-        return ("documents", "parts", "links") if self.kind == "board" else ("boards", "documents", "features")
+        return ("documents", "parts", "links") if self.kind == "board" else ("boards", "documents")
 
     def field(self, key: str, label: str, value=None) -> ComposeResult:
         yield Label(label)
@@ -75,18 +119,17 @@ class ConfigApp(NavigationApp):
             yield Static("1 / 2 · Edit draft", id="step-title")
             with VerticalScroll(id="edit", classes="step"):
                 yield Static("Edit these fields here or import an editable JSON configuration file.", classes="hint")
-                yield from self.field(self.kind, "Board name" if self.kind == "board" else "Program codename")
+                yield from self.field(self.kind, "Board name" if self.kind == "board" else "Program name")
                 yield from self.field("version", "Version (an exact label)")
                 yield from self.field("derives_from", "Derived from version (optional)")
                 yield from self.field("relation", "Reason for this relationship (required when deriving)")
                 yield from self.field("pod", "Pod", self.draft.get("pod", self.service.store.pods.default))
                 if self.kind == "project":
                     yield from self.field("customer", "Customer identity (private project information)")
-                    yield from self.field("spec_set", "Specification set")
                 else:
                     yield from self.field("vendor", "Board vendor (optional)")
                     yield from self.field("notes", "Notes (optional, unstructured; nothing parses them)")
-                with Collapsible(title="Registered document catalog · copy exact pins", collapsed=True):
+                with Collapsible(title="Registered document catalog · reference details", collapsed=True):
                     yield Static("Documents from available pods", classes="hint")
                     yield Button("Refresh catalog", id="refresh-catalog")
                     yield Static("", id="catalog-status", markup=False)
@@ -94,8 +137,13 @@ class ConfigApp(NavigationApp):
                 for key in self.collections:
                     yield Label(f"{key.capitalize()} · JSON array")
                     yield Static(self.collection_hint(key), classes="hint", markup=False)
+                    if key in {'documents', 'parts'}:
+                        label = {'documents': 'Choose documents', 'parts': 'Choose part documents'}[key]
+                        yield Button(label, id=f'choose-{key}', classes='choose-documents')
                     yield TextArea(json.dumps(self.draft.get(key, []), indent=2, ensure_ascii=False), id=key, show_line_numbers=True, soft_wrap=True, tab_behavior="focus")
                     yield Static("", id=f"error-{key}", classes="error", markup=False)
+                if self.kind == 'project' and self.draft.get('features'):
+                    yield Static('Existing feature declarations are retained. Edit the JSON configuration file to change them.', classes='hint')
             with VerticalScroll(id="review-pane", classes="step"):
                 yield Static("", id="review", markup=False)
                 with Collapsible(title="Complete resolved configuration", collapsed=True):
@@ -109,13 +157,12 @@ class ConfigApp(NavigationApp):
 
     def collection_hint(self, key: str) -> str:
         if self.kind == "board" and key == "documents":
-            return 'Documents about the assembly itself: {"ref": "…", "digest": "sha256:…", "notes": "why it is pinned"}.'
+            return 'Choose documents about the assembly. Optional notes explain why each document is attached.'
         return {
-            "parts": 'Each part has role, vendor, part, and documents. A document pin uses {"ref": "…", "digest": "sha256:…"}. Optional: silicon_revision, aliases, notes.',
+            "parts": 'Each part has role, vendor, part, and documents. Choose part documents to attach existing documents. Optional: silicon_revision, aliases, notes.',
             "links": 'Declare links between part roles: {"name": "bus", "between": ["mcu.SPI1", "sensor.SPI"], "notes": "why it exists"}.',
-            "documents": 'Reuse catalog pins: {"ref": "…", "digest": "sha256:…"}. Exact references are pinned during review.',
+            "documents": 'Choose existing documents from the library. Attachments are saved after review.',
             "boards": 'Pin each board version the program uses: {"name": "falcon-main", "version": "B"}. A board may appear at several versions. A blank digest pins the exact version during review.',
-            "features": 'Declare scope as required or not-used. Include governed_by, related, and realized_on parts as {"board": "…", "version": "…", "role": "…"}.',
         }[key]
 
     def on_mount(self) -> None:
@@ -131,6 +178,8 @@ class ConfigApp(NavigationApp):
         self.query_one("#next", Button).label = "Register" if self.reviewing else "Review"
         self.query_one("#next", Button).disabled = self.busy or self.registration is not None
         self.query_one("#refresh-catalog", Button).disabled = self.busy or self.registration is not None
+        for button in self.query('.choose-documents'):
+            button.disabled = self.busy or self.registration is not None
         self.query_one("#cancel", Button).disabled = self.saving
         if self._last_view != self.reviewing:
             self._last_view = self.reviewing
@@ -151,7 +200,7 @@ class ConfigApp(NavigationApp):
             else:
                 data.pop(key, None)
         if self.kind == "project":
-            data.update(customer=self.value("customer"), spec_set=self.value("spec_set"))
+            data.update(customer=self.value("customer"))
         errors = {}
         for key in self.collections:
             try:
@@ -202,11 +251,13 @@ class ConfigApp(NavigationApp):
             lines.extend([f"Customer: {manifest['customer']}", "Pod: " + self.prepared.pod])
             for board in project_boards(manifest):
                 lines.extend([f"Board: {board['name']} @ {board['version']}", f"  Board digest: {board['digest']}"])
-            lines.extend([
-                f"Specification set: {manifest.get('spec_set', '')}",
-                f"Documents: {len(manifest.get('documents', []))}",
-                f"Features: {len(manifest.get('features', []))}",
-            ])
+            current = self.service.reviewed_documents(self.prepared)
+            lines.append(f"Current documents: {len(current)}")
+            for selector in manifest.get('documents', []):
+                if 'collection' in selector:
+                    lines.append(f"Collection {selector['collection']}: follows current membership")
+            lines.extend(f"  {record['manifest'].get('name', 'Document')} · {record['manifest']['version']}"
+                         for record in current)
             for feature in manifest.get("features", []):
                 lines.append(f"  {feature['name']}: {feature['scope']}")
                 for board, version, role in realized_parts(manifest, feature):
@@ -222,8 +273,8 @@ class ConfigApp(NavigationApp):
         pins = list(manifest.get("documents", []))
         if self.kind == "board":
             pins += [pin for part in manifest.get("parts", []) for pin in part.get("documents", [])]
-        lines.extend(["", "Pinned documents"])
-        lines.extend(f"{pin.get('ref') or pin.get('document', 'Selected by digest')} [{pin['pod']}]\n  {pin.get('blob', pin.get('digest'))}" for pin in pins)
+        lines.extend(["", "Document and collection references"])
+        lines.extend(f"{pin.get('ref') or pin.get('collection') or pin.get('document', 'Selected by digest')} [{pin['pod']}]\n  {pin.get('blob', pin.get('digest'))}" for pin in pins)
         if not pins:
             lines.append("None")
         lines.extend(["", f"Store: {self.store_root.expanduser().absolute()}", f"Manifest digest: {self.prepared.digest}", "", "Register saves this reviewed version locally."])
@@ -250,6 +301,53 @@ class ConfigApp(NavigationApp):
                 await self.advance()
             elif action == "refresh-catalog":
                 await self.refresh_catalog()
+            elif action in {'choose-documents', 'choose-parts'}:
+                self.choose_documents(action.removeprefix('choose-'), event.button)
+
+    def attachment_array(self, key):
+        entries = json.loads(self.query_one(f'#{key}', TextArea).text, object_pairs_hook=unique_keys)
+        if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+            raise ValueError(f'{key.capitalize()} must be a JSON array of objects before choosing documents.')
+        return entries
+
+    def choose_documents(self, key, button):
+        try:
+            entries = self.attachment_array(key)
+        except ValueError as error:
+            self.query_one('#status', Static).update(str(error))
+            return
+
+        def choose_for_target(index=None):
+            if key != 'documents' and index is None:
+                self.call_after_refresh(button.focus)
+                return
+            field = 'documents'
+            attached = entries if key == 'documents' else entries[index].get(field, [])
+            if not isinstance(attached, list) or not all(isinstance(pin, dict) for pin in attached):
+                self.query_one('#status', Static).update(f'{field} must be a JSON array of document references.')
+                return
+
+            def attach(records):
+                if records:
+                    pins = [*attached, *(document_pin(record) for record in records)]
+                    if key == 'documents':
+                        updated = pins
+                    else:
+                        updated = entries
+                        updated[index][field] = pins
+                    self.query_one(f'#{key}', TextArea).load_text(json.dumps(updated, indent=2, ensure_ascii=False))
+                    self.query_one('#status', Static).update('')
+                self.call_after_refresh(button.focus)
+
+            self.push_screen(DocumentPicker(service=self.service, owner=self.value('pod') or 'public',
+                                    preserve_collections=self.kind == 'project', attached=attached), attach)
+
+        if key == 'documents':
+            choose_for_target()
+        elif entries:
+            self.push_screen(AttachmentTargetPicker(key, entries), choose_for_target)
+        else:
+            self.query_one('#status', Static).update('Add a part before choosing its documents.')
 
     async def refresh_catalog(self) -> None:
         self.busy = True
@@ -258,7 +356,7 @@ class ConfigApp(NavigationApp):
             entries = await asyncio.to_thread(self.service.list_documents, pods=self.pods())
             pins = [{key: entry[key] for key in ("ref", "digest", "pod")} for entry in entries]
             self.query_one("#catalog", TextArea).load_text(json.dumps(pins, indent=2, ensure_ascii=False))
-            self.query_one("#catalog-status", Static).update(f"{len(entries)} registered documents. Copy ref and digest into a document pin.")
+            self.query_one("#catalog-status", Static).update(f"{len(entries)} registered documents. Use Choose documents to attach them.")
         except (OSError, ValueError) as error:
             self.query_one("#catalog-status", Static).update(str(error))
         finally:

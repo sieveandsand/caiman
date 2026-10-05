@@ -30,8 +30,8 @@ Three framing facts that constrain most changes:
 - **The filesystem is the interface.** No server, no index, no process between
   the agent and the documents (S-18).
 - **A Board is hardware; a Project is a program** — one or more board versions
-  plus a customer specification set, features, and compartments (S-13, S-34,
-  S-36).
+  plus a program document set in one owning pod. Collections help select documents;
+  existing feature declarations are retained as compatibility data (S-13, S-14, S-34, S-36).
 
 ---
 
@@ -55,7 +55,10 @@ Each artifact lives in one pod. Cross-pod board/project pins carry a stable pod 
 manifest digest. Document references carry a stable pod ID, document ID, and
 fixed blob digest; they resolve current approved metadata. Folder/display-name changes must not retarget references. Old
 snapshots keep their original bytes and hashes; legacy adapters operate in memory.
-Missing dependencies must be reported, never silently substituted or copied.
+Project collection references retain stable pod/collection IDs and an original
+snapshot digest; normal reads follow current membership, historical reads use
+the recorded snapshot (S-14). Missing dependencies must be reported, never
+silently substituted or copied.
 
 ### I-3. Sharing is explicit and per pod
 
@@ -77,6 +80,9 @@ while preserving their document bodies. Exact manifest reads retain history.
 Document metadata never restricts attachment to a board or part. Missing or
 changed bodies are errors. [DOCUMENT-METADATA.md](docs/DOCUMENT-METADATA.md) owns
 this model; no separate descriptive metadata overlay or consumer adoption exists.
+Project collection references intentionally follow current membership (S-14),
+while retaining the original collection digest for historical resolution. Their
+effective document set may change without rewriting the project snapshot.
 
 ### I-5. Never guess a hardware or requirement fact
 
@@ -263,7 +269,7 @@ demonstrably failed on real queries.
 | Add an MCP server, retrieval service, or any process between agent and documents | S-18 |
 | Build a PDF → markdown converter, or add one as a dependency | S-08 |
 | Split, rewrite, summarize, or generate maps for ingested documents; add AI to ingest | S-25 |
-| Track compliance status — a feature declares `required` or `not-used`; `in-progress`, `implemented`, `verified` are ALM's job | S-14 |
+| Track compliance status — feature authoring is retired; preserved declarations use `required` or `not-used`, never `in-progress`, `implemented`, or `verified` | S-14 |
 | Build conflict detection between specifications, in any form | S-15, I-8 |
 | Host or model licensed standards content (ISO, AUTOSAR, MISRA) | S-17 |
 | Add checks that pretend Caiman is an enforcement boundary — a gate with no substance invites false confidence | S-19 |

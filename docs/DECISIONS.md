@@ -138,15 +138,37 @@ the public board manifest.
 
 Settled 2026-08-20; amended 2026-09-25 by S-34 (several boards) and S-36 (no precedence).
 
-### S-14. Features are first-class; they declare scope, never status
+### S-14. Projects use boards and documents; features are compatibility data
 
-Project features connect specifications to board roles. They declare `required`
-or `not-used`, never implementation or verification status. Compliance tracking
-belongs outside Caiman. Features are declared per project version and carried
-forward with S-11, without a separate customer feature catalog.
-[Project fields](STORAGE.md#project-fields).
+Project authoring focuses on pinned boards and documents. Collections organize
+related documents and can populate a project's document list. One shared picker
+offers documents and collections together, without a separate collection action.
+Choosing a collection in a project saves `{pod, collection, digest}`: stable
+collection identity plus the original snapshot digest. Normal project reads
+follow the collection's current approved membership and metadata; historical
+resolution uses the recorded digest. Saving a collection updates the effective
+document set of referencing projects without rewriting their manifests. Direct
+document attachments remain independent; overlaps are deduplicated on resolution.
+Missing or invalid dependencies fail the complete resolution. Project registration
+rejects collection changes made after its review.
 
-Settled 2026-08-20.
+This revises the initial expand-on-selection behavior at the user's request on
+2026-10-04. Already expanded projects retain their direct references; no grouping
+is inferred. Boards and parts still expand selected groups. Collection editors
+offer individual documents only; collections do not contain collections.
+
+Normal project creation and editing do not expose feature controls or require a
+`features` field. Existing declarations remain intact, validated, and editable
+through raw JSON. No automatic feature-to-collection migration occurs: a document
+group does not express `required` / `not-used`, requirement IDs, hardware mappings,
+or feature relationships. Those fields are not added to collections.
+
+Implementation, verification, and compliance tracking remain outside Caiman.
+Revisit structured feature authoring only when a concrete consumer justifies its
+maintenance cost. [Project fields](STORAGE.md#project-fields).
+
+Settled 2026-08-20; revised 2026-10-04 by explicit user decision to simplify
+projects around documents and collections.
 
 ### S-15. Declared relationships are rendered, never inferred
 

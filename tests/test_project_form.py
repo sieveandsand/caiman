@@ -5,8 +5,8 @@ from copy import deepcopy
 import pytest
 from textual.widgets import Button, Input
 
-from caiman.configurations.project_form import (FeatureCard, GoverningRow, PinnedBoardCard,
-                                                ProjectDocumentCard, ProjectFormApp, RealizedRow, RelatedRow,
+from caiman.configurations.project_form import (PinnedBoardCard,
+                                                ProjectDocumentCard, ProjectFormApp,
                                                 guided_shape_problem)
 
 A = 'sha256:' + 'a' * 64
@@ -42,11 +42,15 @@ def manifest():
 
 
 @pytest.mark.asyncio
-async def test_untouched_form_collects_the_manifest_it_was_given(manifest):
+@pytest.mark.parametrize('legacy_spec_set', [True, False])
+async def test_untouched_form_collects_the_manifest_it_was_given(manifest, legacy_spec_set):
+    if not legacy_spec_set:
+        manifest.pop('spec_set')
     app = ProjectFormApp(original=manifest)
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.pause()
         assert app.collect() == manifest
+        assert not app.query('#project-spec_set')
 
 
 @pytest.mark.asyncio
@@ -69,17 +73,11 @@ async def test_fields_edit_and_optional_values_clear(manifest):
         board = app.query_one(PinnedBoardCard)
         board.query_one('.field-digest', Input).value = ''
         board.query_one('.field-version', Input).value = '2.2'
-        governing = app.query_one(GoverningRow)
-        governing.query_one('.field-requirements', Input).value = ''
-        part = app.query_one(RealizedRow)
-        part.query_one('.field-role', Input).value = 'modem'
         draft = app.collect()
     assert draft['version'] == 'C-sample'
     assert draft['pod'] == manifest['pod']
     assert draft['boards'] == [{'name': 'falcon-mainboard', 'version': '2.2'}, {'name': 'falcon-io', 'version': 'A'}]
-    assert draft['features'][0]['governed_by'][0] == {'ref': 'oem/falcon/spec/3', 'digest': A,
-                                                      'pod': 'oem-alpha'}
-    assert draft['features'][0]['realized_on'] == [{'board': 'falcon-mainboard', 'version': '2.1', 'role': 'modem'}]
+    assert draft['features'] == manifest['features']
     # Lineage is not a field and rides through.
     assert draft['derives_from'] == 'A-sample'
 
@@ -89,29 +87,6 @@ async def test_cards_add_collapse_and_remove_without_touching_neighbours(manifes
     app = ProjectFormApp(original=manifest)
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.pause()
-        add = app.query_one('#add-feature', Button)
-        add.focus()
-        await pilot.press('enter')
-        await pilot.pause()
-        added = list(app.query(FeatureCard))[-1]
-        assert added.has_class('expanded')
-        assert app.focused is added.query_one('.field-name', Input)
-        added.query_one('.field-name', Input).value = 'half-typed'
-        added.query_one('.collapse-feature', Button).press()
-        await pilot.pause()
-        assert not added.has_class('expanded')
-        assert wide('half-typed') in added.query_one('.card-summary', Button).label.plain
-        assert added.query_one('.field-name', Input).value == 'half-typed'
-        added.query_one('.add-related', Button).press()
-        await pilot.pause()
-        added.query_one(RelatedRow).query_one('.field-feature', Input).value = 'secure-boot'
-        assert app.collect()['features'][-1]['related'] == [{'feature': 'secure-boot', 'relation': ''}]
-        added.query_one(RelatedRow).query_one('.remove-row', Button).press()
-        await pilot.pause()
-        assert app.focused is added.query_one('.field-name', Input)
-        added.query_one('.remove-row', Button).press()
-        await pilot.pause()
-        assert app.focused is add
         document = list(app.query(ProjectDocumentCard))[0]
         document.query_one('.remove-row', Button).press()
         await pilot.pause()
@@ -127,18 +102,21 @@ async def test_empty_sections_offer_add_cards_and_grids_reflow(manifest):
     app = ProjectFormApp(original=empty)
     async with app.run_test(size=(70, 40)) as pilot:
         await pilot.pause()
-        for add_id in ('add-board', 'add-project-document', 'add-feature'):
+        for add_id in ('add-board', 'add-project-document'):
             assert app.query_one(f'#{add_id}', Button)
         assert not app.query('#precedence')
-        for add_id in ('add-project-document', 'add-feature'):
+        for add_id in ('add-project-document',):
             assert app.query_one(f'#{add_id}', Button)
         app.query_one('#add-project-document', Button).press()
         await pilot.pause()
-        assert app.collect()['documents'] == [{}]
+        assert app.collect()['documents'] == []
+        await pilot.press('escape')
+        await pilot.pause()
+        assert app.collect() == empty
     app = ProjectFormApp(original=manifest)
     async with app.run_test(size=(70, 40)) as pilot:
         await pilot.pause()
-        first, second = app.query(FeatureCard)
+        first, second = app.query(ProjectDocumentCard)
         assert first.region.x == second.region.x and first.region.bottom < second.region.y
         await pilot.resize_terminal(110, 40)
         await pilot.pause()
@@ -150,11 +128,11 @@ async def test_card_keyboard_navigation_can_leave_grid(manifest):
     app = ProjectFormApp(original=manifest)
     async with app.run_test(size=(110, 60)) as pilot:
         await pilot.pause()
-        first, second = app.query(FeatureCard)
+        first, second = app.query(ProjectDocumentCard)
         first.query_one('.card-summary', Button).focus()
         await pilot.press('l')
         assert app.focused is second.query_one('.card-summary', Button)
-        app.query_one('#add-feature', Button).focus()
+        app.query_one('#add-project-document', Button).focus()
         await pilot.press('j')
         assert not app.focused.has_class('dashboard-tile')
 
@@ -201,7 +179,7 @@ async def test_unrepresentable_project_is_raw_only_and_unchanged(manifest):
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.pause()
         assert not app.query('#review-changes')
-        assert not app.query(FeatureCard)
+        assert not app.query('#features')
         app.query_one('#raw', Button).press()
         await pilot.pause()
     assert app.return_value == ('raw', manifest)
@@ -217,37 +195,15 @@ async def test_boards_add_and_remove_as_cards(manifest):
         assert 'Digest pinned at review' in second.query_one('.card-summary', Button).label.plain
         app.query_one('#add-board', Button).press()
         await pilot.pause()
-        added = list(app.query(PinnedBoardCard))[-1]
-        assert app.focused is added.query_one('.field-name', Input)
-        # One board at a second version is an ordinary second pin.
-        added.query_one('.field-name', Input).value = 'falcon-mainboard'
-        added.query_one('.field-version', Input).value = '2.2'
-        assert app.collect()['boards'][-1] == {'name': 'falcon-mainboard', 'version': '2.2'}
+        # Without a library the picker reports the problem and preserves the draft.
+        from textual.widgets import Static
+        assert 'unavailable' in str(app.screen.query_one('#picker-status', Static).content)
+        await pilot.press('escape')
+        await pilot.pause()
+        assert app.collect() == manifest
         first.query_one('.remove-row', Button).press()
         await pilot.pause()
-        assert [board['version'] for board in app.collect()['boards']] == ['A', '2.2']
-
-
-@pytest.mark.asyncio
-async def test_a_new_part_starts_blank_unless_exactly_one_board_is_pinned(manifest):
-    app = ProjectFormApp(original=manifest)
-    async with app.run_test(size=(110, 60)) as pilot:
-        await pilot.pause()
-        feature = list(app.query(FeatureCard))[1]
-        feature.query_one('.add-realized', Button).press()
-        await pilot.pause()
-        assert app.collect()['features'][1]['realized_on'] == [{'board': '', 'version': '', 'role': ''}]
-    single = dict(manifest, boards=manifest['boards'][:1])
-    app = ProjectFormApp(original=single)
-    async with app.run_test(size=(110, 60)) as pilot:
-        await pilot.pause()
-        feature = list(app.query(FeatureCard))[1]
-        feature.query_one('.add-realized', Button).press()
-        await pilot.pause()
-        feature.query_one(RealizedRow).query_one('.field-role', Input).value = 'modem'
-        assert app.collect()['features'][1]['realized_on'] == [
-            {'board': 'falcon-mainboard', 'version': '2.1', 'role': 'modem'}]
-        assert 'modem on falcon-mainboard @ 2.1' in feature.summary(feature.summary_data()).plain
+        assert [board['version'] for board in app.collect()['boards']] == ['A']
 
 
 @pytest.mark.asyncio
@@ -329,13 +285,7 @@ async def test_review_tracks_edits_reverts_and_nested_records(manifest, color_sy
         assert review.disabled
         assert app.focused is not review
         assert review.rich_style != enabled_style
-        app.query_one('#add-feature', Button).press()
-        await pilot.pause()
-        assert not review.disabled
-        row = list(app.query(FeatureCard))[-1]
-        row.query_one('.remove-row', Button).press()
-        await pilot.pause()
-        assert review.disabled
+
 
 
 async def test_retained_changed_draft_can_be_reviewed(manifest):

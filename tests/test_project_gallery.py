@@ -39,7 +39,7 @@ async def test_project_cards_scope_layout_focus_and_selection(tmp_path):
         cards = list(app.query(ProjectCard))
         assert len(cards) == 3
         assert all(grid.styles.grid_size_columns == 2 for grid in app.query(Grid))
-        assert '0 Docs · 0 Features\n\nExample customer' in cards[0].label.plain
+        assert '0 Docs\n\nExample customer' in cards[0].label.plain
         assert 'Board: demo @ A' in cards[0].label.plain
         assert 'sha256' not in cards[0].label.plain
         assert app.focused is cards[0]
@@ -82,7 +82,7 @@ def test_project_card_preserves_fallback_identity():
     card.format_card(30)
     assert 'Mixed ß project' in card.label.plain
     assert '  [ opaque / label ]' in card.label.plain
-    assert '2 Docs · 1 Features' in card.label.plain
+    assert '2 Docs' in card.label.plain
     assert record == before
 
 

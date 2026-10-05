@@ -1,13 +1,12 @@
 """A guided project form in the board editor's layout.
 
-Identity, customer, pods, and the specification set sit at the top;
-boards, documents, and features are card grids below. The form
+Identity, customer, and the owning pod sit at the top; boards and documents
+are card grids below. Existing feature data is retained. The form
 carries every key it does not render — lineage, resolved digests, pods
 on existing pins — so an untouched draft collects to exactly what it was given.
 
-A project pins any number of boards, including one board at several versions,
-so each part a feature is realized on names its board and version. A v1
-project, which pins a single board and may declare precedence, opens restated
+A project pins any number of boards, including one board at several versions.
+A v1 project, which pins a single board and may declare precedence, opens restated
 in the current shape; the stored snapshot is untouched and the review shows the
 rewrite.
 
@@ -24,19 +23,21 @@ import json
 from pathlib import Path
 
 from rich.text import Text
-from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.suggester import SuggestFromList, Suggester
 from textual.widgets import Button, Collapsible, Input, Label, Static
 
+from caiman.boards.picker import BoardPicker, board_pin
 from caiman.configurations.models import restate_project_draft, project_is_legacy
 from caiman.configurations.service import ConfigurationService
+from caiman.documents.cards import document_name
+from caiman.documents.picker import DocumentPicker, document_pin
 from caiman.storage.store import Store
-from caiman.ui.editor import EDITOR_CSS, CardRow, EditorFormApp, Row, add_card, comma_list
+from caiman.ui.editor import EDITOR_CSS, CardRow, EditorFormApp, Row, add_card
 from caiman.ui.theme import apply_theme
 
 
-SCOPES = ('required', 'not-used')
-SELECTOR_TEXT = ('ref', 'digest', 'pod', 'document', 'blob', 'note', 'notes')
+SELECTOR_TEXT = ('ref', 'digest', 'pod', 'document', 'blob', 'collection', 'note', 'notes')
 
 
 def _strings(value) -> bool:
@@ -126,11 +127,9 @@ class Suggestions:
     def __init__(self, pods):
         names = [name for name in pods if isinstance(name, str)]
         self.pods = SuggestFromList([*names, 'public'])
-        self.scopes = SuggestFromList(SCOPES)
         self.refs = CatalogSuggester()
         self.boards = CatalogSuggester()
         self.board_versions = CatalogSuggester()
-        self.roles = CatalogSuggester()
 
 
 def _collect_selector(row: Row, keys) -> dict:
@@ -202,143 +201,61 @@ class ProjectDocumentCard(CardRow):
     kind = 'document'
     first_field = 'ref'
     keys = ('ref', 'digest', 'pod', 'document', 'blob')
+    record = None
+
+    def show_record(self, record):
+        self.record = record
+        self.record_selector = self.summary_data()
+        self.refresh_summary()
+        if 'collection' in self.data:
+            members = record.get('members', [])
+            self.query_one('.collection-members', Static).update('\n'.join(
+                f"{document_name(r['manifest'])} · {r['manifest']['version']}" for r in members))
 
     def __init__(self, data, *, suggestions: Suggestions, expanded=False):
         super().__init__(data, expanded=expanded)
         self.suggestions = suggestions
+        if 'collection' in data:
+            self.add_class('live-collection')
+            self.keys = ('pod', 'collection', 'digest')
 
     def editor_fields(self):
+        if 'collection' in self.data:
+            yield Static('Loading collection…', classes='collection-members', markup=False)
+            yield from self.actions('Remove collection')
+            return
         yield from _selector_fields(self, self.suggestions)
         yield from self.actions('Remove document')
 
     def summary_data(self):
+        if 'collection' in self.data:
+            return deepcopy(self.data)
         return {key: self.value(key) for key in self.keys}
 
     def summary(self, data):
         label = Text()
-        self.heading(label, _selector_title(data, 'New document'))
-        label.append('\n\n' + (data.get('pod') or 'Pod resolved at review'), style='#7fdc4f')
+        record = self.record if self.record and data == self.record_selector else None
+        if 'collection' in data:
+            self.heading(label, record['manifest']['name'] if record else data['collection'])
+            label.append('\n\nCollection · follows current membership', style='#7fdc4f')
+            if record:
+                count = len(record['manifest']['documents'])
+                label.append(f"\n{count} {'document' if count == 1 else 'documents'}", style='#aab69c')
+            hint = 'Collapse' if self.has_class('expanded') else 'Enter to view'
+            label.append('\n\n' + hint, style='#aab69c')
+            return label
+        name = document_name(record['manifest']) if record else _selector_title(data, 'New document')
+        self.heading(label, name)
+        details = (f"{record['manifest']['version']} · {record.get('pod_name', record['pod'])}" if record else
+                   data.get('pod') or 'Pod resolved at review')
+        label.append('\n\n' + details, style='#7fdc4f')
         label.append('\n\n' + self.summary_hint(), style='#aab69c')
         return label
 
     def collect(self) -> dict:
+        if 'collection' in self.data:
+            return deepcopy(self.data)
         return _collect_selector(self, self.keys)
-
-
-class GoverningRow(Row):
-    """A governing document inside a feature, with the requirement IDs it names."""
-
-    keys = ('ref', 'digest', 'pod', 'document', 'blob')
-
-    def __init__(self, data, *, suggestions: Suggestions):
-        super().__init__(data)
-        self.suggestions = suggestions
-
-    def compose(self):
-        yield from _selector_fields(self, self.suggestions)
-        yield Label('Requirement IDs (optional)', classes='field-label')
-        yield Input(value=', '.join(self.data.get('requirements') or []), placeholder='REQ-101, REQ-102',
-                    classes='field field-requirements')
-        yield from self.actions('Remove governing document')
-
-    def collect(self) -> dict:
-        selector = _collect_selector(self, self.keys)
-        selector.pop('requirements', None)
-        if requirements := comma_list(self.value('requirements')):
-            selector['requirements'] = requirements
-        return selector
-
-
-class RealizedRow(Row):
-    """A part the feature is realized on: a role on one pinned board version."""
-
-    def __init__(self, data, *, suggestions: Suggestions):
-        super().__init__(data)
-        self.suggestions = suggestions
-
-    def compose(self):
-        yield from self.text_field('board', 'Board', suggester=self.suggestions.boards)
-        yield from self.text_field('version', 'Board Version', suggester=self.suggestions.board_versions)
-        yield from self.text_field('role', 'Part Role', suggester=self.suggestions.roles,
-                                   placeholder='application-mcu')
-        yield from self.actions('Remove part')
-
-    def collect(self) -> dict:
-        part = self.carry('board', 'version', 'role')
-        part.update(board=self.value('board'), version=self.value('version'), role=self.value('role'))
-        return part
-
-
-def _part_text(part: dict) -> str:
-    return f"{part.get('role') or '?'} on {part.get('board') or '?'} @ {part.get('version') or '?'}"
-
-
-class RelatedRow(Row):
-    def compose(self):
-        yield from self.text_field('feature', 'Related Feature')
-        yield from self.text_field('relation', 'Relation', placeholder='declared in words, e.g. shares the bootloader')
-        yield from self.actions('Remove related feature')
-
-    def collect(self) -> dict:
-        related = self.carry('feature', 'relation')
-        related.update(feature=self.value('feature'), relation=self.value('relation'))
-        return related
-
-
-class FeatureCard(CardRow):
-    kind = 'feature'
-    first_field = 'name'
-
-    def __init__(self, data, *, suggestions: Suggestions, expanded=False):
-        super().__init__(data, expanded=expanded)
-        self.suggestions = suggestions
-
-    def editor_fields(self):
-        yield from self.text_field('name', 'Feature Name')
-        yield from self.text_field('scope', 'Scope', suggester=self.suggestions.scopes,
-                                   placeholder='required or not-used')
-        yield Label('Realized On', classes='field-label')
-        yield Vertical(*(RealizedRow(part, suggestions=self.suggestions)
-                         for part in self.data.get('realized_on') or []), classes='nested-rows realized')
-        yield Label('Governed By', classes='field-label')
-        yield Vertical(*(GoverningRow(selector, suggestions=self.suggestions)
-                         for selector in self.data.get('governed_by') or []), classes='nested-rows governing')
-        yield Label('Related Features', classes='field-label')
-        yield Vertical(*(RelatedRow(related) for related in self.data.get('related') or []),
-                       classes='nested-rows related')
-        with Horizontal(classes='section-actions'):
-            yield Button('Add part', classes='add-realized')
-            yield Button('Add governing document', classes='add-governing')
-            yield Button('Add related feature', classes='add-related')
-            yield Button('Remove feature', classes='remove-row')
-
-    def summary_data(self):
-        return {'name': self.value('name'), 'scope': self.value('scope'),
-                'realized_on': [row.collect() for row in self.query(RealizedRow)],
-                'governed_by': list(self.query(GoverningRow))}
-
-    def summary(self, data):
-        label = Text()
-        self.heading(label, data.get('name') or 'New feature')
-        label.append('\n\n' + (data.get('scope') or 'Scope not set'), style='#7fdc4f')
-        parts = data.get('realized_on') or []
-        label.append('\n' + ('\n'.join(_part_text(part) for part in parts) if parts else 'No parts'), style='#aab69c')
-        label.append(f"\n\n{len(data.get('governed_by') or [])} governing documents", style='bold #aab69c')
-        label.append('\n\n' + self.summary_hint(), style='#aab69c')
-        return label
-
-    def collect(self) -> dict:
-        feature = self.carry('name', 'scope', 'realized_on', 'governed_by', 'related')
-        feature.update(name=self.value('name'), scope=self.value('scope'))
-        # An absent list stays absent and a declared one stays declared, even
-        # when empty; either way the snapshot's bytes follow what was stored.
-        values = {'realized_on': [row.collect() for row in self.query_one('.realized').query_children(RealizedRow)],
-                  'governed_by': [row.collect() for row in self.query_one('.governing').query_children(GoverningRow)],
-                  'related': [row.collect() for row in self.query_one('.related').query_children(RelatedRow)]}
-        for key, value in values.items():
-            if value or key in self.data:
-                feature[key] = value
-        return feature
 
 
 class ProjectFormApp(EditorFormApp):
@@ -347,11 +264,16 @@ class ProjectFormApp(EditorFormApp):
     TITLE = 'Caiman · Edit project'
     CSS = EDITOR_CSS + '''
     #project-pod { margin-bottom: 1; }
+    .live-collection .row-actions Button { border: solid #33422e; }
+    .live-collection .row-actions Button:focus { border: double #7fdc4f; }
     '''
 
-    def __init__(self, *, original: dict, draft: dict | None = None, message: str = '', root: Path | None = None):
+    def __init__(self, *, original: dict, draft: dict | None = None, message: str = '', root: Path | None = None, creating: bool = False):
         super().__init__()
         apply_theme(self)
+        self.creating = creating
+        if creating:
+            self.title = 'Caiman · Create project'
         self.original = deepcopy(original)
         self.draft = deepcopy(original if draft is None else draft)
         self.problem = guided_shape_problem(self.draft)
@@ -377,7 +299,7 @@ class ProjectFormApp(EditorFormApp):
                 yield add_card(add_label, id=add_id)
 
     def compose(self):
-        yield Static('caiman  /  edit project', id='brand')
+        yield Static('caiman  /  create project' if self.creating else 'caiman  /  edit project', id='brand')
         with VerticalScroll(id='body'):
             if self.read_only:
                 yield Static(f'The guided form cannot show this project without changing it: {self.problem}. '
@@ -391,10 +313,9 @@ class ProjectFormApp(EditorFormApp):
                                  'in precedence is listed under Documents; precedence order and notes are not kept. '
                                  'Registering writes caiman.project.v3, and the review shows every changed field.',
                                  classes='hint', markup=False)
-                yield from self.field('project', 'Program Codename', draft.get('project', ''))
+                yield from self.field('project', 'Program name', draft.get('project', ''))
                 yield from self.field('version', 'Version', draft.get('version', ''))
                 yield from self.field('customer', 'Customer', draft.get('customer', ''))
-                yield from self.field('spec_set', 'Specification Set', draft.get('spec_set', ''))
                 yield Label('Pod', classes='field-label')
                 yield Static(self.service.store.pod_name(self.pod) if self.service else self.pod,
                              id='project-pod', markup=False)
@@ -404,18 +325,26 @@ class ProjectFormApp(EditorFormApp):
                                         'Add board', 'add-board')
                 yield from self.section('Documents', 'documents',
                                         [ProjectDocumentCard(pin, suggestions=s) for pin in draft.get('documents', [])],
-                                        'Add document', 'add-project-document')
-                yield from self.section('Features', 'features',
-                                        [FeatureCard(feature, suggestions=s) for feature in draft.get('features', [])],
-                                        'Add feature', 'add-feature')
+                                        'Choose documents', 'add-project-document')
+                if draft.get('features'):
+                    yield Static('Existing feature declarations are retained. Use raw JSON to edit them.',
+                                 classes='hint', markup=False)
         yield Static(self.message, id='form-error', markup=False)
         with Horizontal(id='navigation'):
             if not self.read_only:
-                yield Button('Review changes', id='review-changes', variant='primary', disabled=True)
+                yield Button('Review project' if self.creating else 'Review changes',
+                             id='review-changes', variant='primary', disabled=not self.creating)
             yield Button('Edit raw JSON in Vim', id='raw', variant='primary' if self.read_only else 'default')
-            yield Button('Delete project', id='delete', variant='error')
+            if not self.creating:
+                yield Button('Delete project', id='delete', variant='error')
             yield Button('Back to projects', id='cancel')
         yield self.navigation_hint()
+
+    def update_review_button(self):
+        if self.creating and not self.read_only:
+            self.query_one('#review-changes', Button).disabled = False
+        else:
+            super().update_review_button()
 
     def on_mount(self):
         # EditorFormApp's own on_mount also runs and sizes the grids.
@@ -431,6 +360,14 @@ class ProjectFormApp(EditorFormApp):
         except (OSError, ValueError):
             return
         self.suggestions.refs.refs = sorted({entry['ref'] for entry in entries if entry.get('ref')})
+        for row in self.query(ProjectDocumentCard):
+            try:
+                record = await asyncio.to_thread(self.service.attachment_record, row.collect(), owner=self.pod)
+                row.show_record(record)
+            except (OSError, ValueError) as error:
+                if 'collection' in row.data:
+                    row.query_one('.collection-members', Static).update(f'Unavailable collection: {error}')
+                    self.query_one('#form-error', Static).update(str(error))
         try:
             boards = await asyncio.to_thread(ConfigurationService(Store(self.root)).list_configs, 'board')
         except (OSError, ValueError):
@@ -438,8 +375,6 @@ class ProjectFormApp(EditorFormApp):
         # Completion only; version labels are listed, never ordered (I-7).
         self.suggestions.boards.refs = sorted({record['name'] for record in boards})
         self.suggestions.board_versions.refs = sorted({record['version'] for record in boards})
-        self.suggestions.roles.refs = sorted({part['role'] for record in boards
-                                              for part in record['manifest'].get('parts', [])})
 
     def value(self, key):
         return self.query_one(f'#project-{key}', Input).value.strip()
@@ -447,19 +382,11 @@ class ProjectFormApp(EditorFormApp):
     def collect(self) -> dict:
         """Build a draft from the form, keeping every field it does not render."""
         data = deepcopy(self.draft)
-        for key in ('project', 'version', 'customer', 'spec_set'):
+        for key in ('project', 'version', 'customer'):
             data[key] = self.value(key)
         data['boards'] = [card.collect() for card in self.query_one('#boards').query_children(PinnedBoardCard)]
-        data['documents'] = [card.collect() for card in self.query_one('#documents').query_children(ProjectDocumentCard)]
-        data['features'] = [card.collect() for card in self.query_one('#features').query_children(FeatureCard)]
+        data['documents'] = [pin for card in self.query_one('#documents').query_children(ProjectDocumentCard) if (pin := card.collect())]
         return data
-
-    def single_board(self) -> dict:
-        """Start a new part on the board when exactly one is pinned; it stays editable."""
-        boards = [card.collect() for card in self.query_one('#boards').query_children(PinnedBoardCard)]
-        if len(boards) != 1:
-            return {}
-        return {'board': boards[0]['name'], 'version': boards[0]['version']}
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button = event.button
@@ -472,24 +399,32 @@ class ProjectFormApp(EditorFormApp):
             action = 'review' if button.id == 'review-changes' else 'raw'
             self.exit((action, deepcopy(self.draft) if self.read_only else self.collect()))
         elif button.has_class('card-summary') or button.has_class('collapse-card'):
-            self.toggle_card(button)
+            card = next(node for node in button.ancestors if isinstance(node, CardRow))
+            if 'collection' in card.data:
+                card.set_expanded(not card.has_class('expanded'))
+                target = card.query_one('.collapse-card' if card.has_class('expanded') else '.card-summary', Button)
+                self.call_after_refresh(target.focus)
+            else:
+                self.toggle_card(button)
         elif button.id == 'add-board':
-            await self.add_card(button, PinnedBoardCard({}, suggestions=self.suggestions, expanded=True))
+            async def attach_boards(records):
+                for record in records or []:
+                    card = PinnedBoardCard(board_pin(record), suggestions=self.suggestions)
+                    await button.parent.parent.mount(card, before=button.parent)
+                self.call_after_refresh(button.focus)
+
+            self.push_screen(BoardPicker(service=self.service, owner=self.pod,
+                attached=[card.collect() for card in self.query(PinnedBoardCard)]), attach_boards)
         elif button.id == 'add-project-document':
-            await self.add_card(button, ProjectDocumentCard({}, suggestions=self.suggestions, expanded=True))
-        elif button.id == 'add-feature':
-            feature = FeatureCard({'name': '', 'scope': ''}, suggestions=self.suggestions, expanded=True)
-            await self.add_card(button, feature)
-        elif button.has_class('add-governing'):
-            feature = next(node for node in button.ancestors if isinstance(node, FeatureCard))
-            await self.add_row_within(feature.query_one('.governing'), GoverningRow({}, suggestions=self.suggestions))
-        elif button.has_class('add-realized'):
-            feature = next(node for node in button.ancestors if isinstance(node, FeatureCard))
-            await self.add_row_within(feature.query_one('.realized'), RealizedRow(self.single_board(),
-                                                                                  suggestions=self.suggestions))
-        elif button.has_class('add-related'):
-            feature = next(node for node in button.ancestors if isinstance(node, FeatureCard))
-            await self.add_row_within(feature.query_one('.related'), RelatedRow({}))
+            async def attach_documents(records):
+                for record in records or []:
+                    card = ProjectDocumentCard(document_pin(record), suggestions=self.suggestions)
+                    await self.query_one('#documents').mount(card, before=self.query_one('#add-project-document').parent)
+                    card.show_record(record)
+                self.call_after_refresh(button.focus)
+
+            self.push_screen(DocumentPicker(service=self.service, owner=self.pod, preserve_collections=True,
+                attached=[card.collect() for card in self.query(ProjectDocumentCard)]), attach_documents)
         elif button.has_class('remove-row'):
             await self.remove_row(button)
 

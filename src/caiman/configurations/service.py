@@ -19,6 +19,7 @@ class PreparedConfig:
     manifest: dict
     digest: str
     pod: str
+    collection_heads: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,73 @@ class ConfigurationService:
                 'ref': document_ref(manifest).as_posix(),
                 'pod_name': self.store.pod_name(selected['pod']), 'manifest': manifest}
 
+    def collection_record(self, selector, *, owner, historical=False):
+        """Follow a stable collection ID; its saved digest is the historical baseline."""
+        from caiman.documents.collections import CollectionService
+        service = CollectionService(self.store)
+        pod = self.store.pods.check_reference(owner, selector['pod'])
+        identity = selector['collection']
+        baseline = selector.get('digest')
+        if baseline is not None:
+            original = service.load_digest(pod, baseline)
+            if original['id'] != identity:
+                raise StoreError('Collection snapshot identity does not match its reference')
+        if historical and baseline is None:
+            raise StoreError('Historical collection reference requires a snapshot digest')
+        try:
+            value = baseline if historical else self._read_ref(service._ref(pod, identity))
+        except FileNotFoundError as error:
+            raise StoreError('Collection dependency is unavailable locally; add its pod or sync it') from error
+        manifest = service.load_digest(pod, value)
+        if manifest['id'] != identity:
+            raise StoreError('Collection ref points to a different identity')
+        record = dict(pod=pod, pod_name=self.store.pod_name(pod), digest=value, manifest=manifest)
+        record['members'] = service.members(record)
+        for member in record['members']:
+            self.store.pods.check_reference(owner, member['pod'])
+        return record
+
+    def attachment_record(self, selector, *, owner):
+        if 'collection' in selector:
+            return self.collection_record(selector, owner=owner)
+        self.store.pods.check_reference(owner, selector.get('pod', owner))
+        return self.document_record(selector)
+
+    def project_documents(self, manifest, *, owner, historical=False):
+        """Resolve the project's own complete document set, deduplicating overlaps.
+
+        Board documents remain dependencies of their separately pinned boards.
+        Normal reads follow collection heads; historical reads use saved baselines.
+        """
+        documents, seen = [], set()
+        for selector in manifest.get('documents', []):
+            if 'collection' in selector:
+                records = self.collection_record(selector, owner=owner, historical=historical)['members']
+            else:
+                selected, _ = self._document(selector, owner=owner)
+                records = [self.document_record(selected, pinned=True)]
+            for record in records:
+                body = record['manifest']['files'][0]['sha256']
+                key = (record['pod'], record['manifest'].get('document_id', record['digest']), body)
+                if key not in seen:
+                    documents.append(record)
+                    seen.add(key)
+        return documents
+
+    def reviewed_documents(self, prepared):
+        """The membership actually reviewed, even if collection heads later move."""
+        manifest = deepcopy(prepared.manifest)
+        heads = {(pod, identity): value for pod, identity, value in prepared.collection_heads}
+        for selector in manifest.get('documents', []):
+            if 'collection' in selector:
+                selector['digest'] = heads[(selector['pod'], selector['collection'])]
+        return self.project_documents(manifest, owner=prepared.pod, historical=True)
+
+    def _collection_heads(self, manifest, owner):
+        return tuple((r['pod'], r['manifest']['id'], r['digest'])
+                     for selector in manifest.get('documents', []) if 'collection' in selector
+                     for r in [self.collection_record(selector, owner=owner)])
+
     def _read_config(self, kind: str, pod: str, digest: str, allowed: set[str]) -> dict:
         content = self.store._read_object(pod, "manifests", digest)
         try:
@@ -154,7 +222,7 @@ class ConfigurationService:
                 pins.extend(part.get('documents', []))
         else:
             pins.extend(manifest.get('precedence', []))
-            for feature in manifest['features']:
+            for feature in manifest.get('features', []):
                 pins.extend(feature.get('governed_by', []))
             for board in project_boards(manifest):
                 if 'digest' not in board:
@@ -203,9 +271,18 @@ class ConfigurationService:
                 continue
             documents = []
             for selector in result.get(field, []):
-                selected, _ = self._document(selector, pinned=pinned, owner=owner)
+                if 'collection' in selector:
+                    record = self.collection_record(selector, owner=owner)
+                    if pinned and 'digest' not in selector:
+                        raise StoreError('Stored collection reference requires a baseline digest')
+                    selected = dict(pod=record['pod'], collection=record['manifest']['id'],
+                                    digest=selector.get('digest', record['digest']))
+                    for member in record['members']:
+                        governing.append(self._document({'pod': member['pod'], 'digest': member['digest']}, owner=owner)[0])
+                else:
+                    selected, _ = self._document(selector, pinned=pinned, owner=owner)
+                    governing.append(selected)
                 documents.append(selected)
-                governing.append(selected)
             result[field] = documents
         for feature in result.get("features", []):
             documents = []
@@ -239,7 +316,7 @@ class ConfigurationService:
         manifest = self._pin(kind, manifest, owner=location)
         # Different input refs/revisions may resolve to the same stable document.
         manifest = validate_board(manifest) if kind == 'board' else validate_project(manifest)
-        return PreparedConfig(kind, manifest, _digest(manifest), location)
+        return PreparedConfig(kind, manifest, _digest(manifest), location, self._collection_heads(manifest, location))
 
     def register(self, prepared: PreparedConfig, *, replaces: dict | None = None,
                  require_new_label: bool = False) -> ConfigRegistration:
@@ -252,7 +329,9 @@ class ConfigurationService:
         an existing target label, as when a board edit declares a new version.
         """
         manifest = validate_board(prepared.manifest) if prepared.kind == 'board' else validate_project(prepared.manifest)
-        if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, owner=prepared.pod, pinned=True):
+        if (_digest(manifest) != prepared.digest
+                or manifest != self._pin(prepared.kind, manifest, owner=prepared.pod, pinned=True)
+                or prepared.collection_heads != self._collection_heads(manifest, prepared.pod)):
             raise StoreError('Configuration changed after review; prepare it again')
         with self.store.locked():
             return self._register(prepared, replaces=replaces, require_new_label=require_new_label)
@@ -260,7 +339,9 @@ class ConfigurationService:
     def _register(self, prepared, *, replaces=None, require_new_label=False):
         _kind(prepared.kind)
         manifest = validate_board(prepared.manifest) if prepared.kind == "board" else validate_project(prepared.manifest)
-        if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, owner=prepared.pod, pinned=True):
+        if (_digest(manifest) != prepared.digest
+                or manifest != self._pin(prepared.kind, manifest, owner=prepared.pod, pinned=True)
+                or prepared.collection_heads != self._collection_heads(manifest, prepared.pod)):
             raise StoreError("Configuration changed after review; prepare it again")
         pods = (self.store.pods.resolve(prepared.pod)["id"],)
         refs = tuple(self._config_path(prepared.kind, manifest[prepared.kind], manifest["version"], pod)

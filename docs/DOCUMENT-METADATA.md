@@ -51,8 +51,13 @@ latest approved complete manifest. Resolution verifies document ID, pinned
 blob, content hash, and size. Missing dependencies or a changed body are errors.
 Board/project/collection snapshots do not change merely because document
 metadata changed. Explicit manifest reads and history return stored revisions.
-A configuration digest fixes its declarations and document bodies, not the
-current metadata displayed for those documents.
+A configuration digest fixes direct document bodies and the declared references,
+not the current metadata displayed for those documents. Since 2026-10-04, a project
+may also reference a collection by stable ID. Normal reads follow its current
+membership and metadata; the reference retains its original collection digest for
+historical resolution. Collection changes may therefore change a project's
+effective document set without changing the project hash. Each member still pins
+its own fixed body. This is an explicit live relationship, not version inference.
 
 Each document is independent even when two documents contain identical bytes.
 Changed file bytes require a new document registration and explicit replacement

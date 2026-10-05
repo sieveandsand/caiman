@@ -47,7 +47,12 @@ class ProjectCard(OverviewCard):
         line('')
         heading(manifest['version'], 'Version ' + manifest['version'], '#7fdc4f')
         line('')
-        line(f"{len(manifest.get('documents', []))} Docs · {len(manifest.get('features', []))} Features", 'bold #aab69c')
+        attachments = manifest.get('documents', [])
+        collections = sum('collection' in pin for pin in attachments)
+        count = f"{len(attachments) - collections} Docs"
+        if collections:
+            count += f" · {collections} Collections"
+        line(count, 'bold #aab69c')
         line('')
         line(manifest['customer'], '#dfe6d3')
         for board in project_boards(manifest):

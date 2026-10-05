@@ -13,7 +13,7 @@ def document_pins(kind, manifest):
             pins.extend(part.get('documents', []))
     if kind == 'project':
         pins.extend(manifest.get('precedence', []))
-        for feature in manifest['features']:
+        for feature in manifest.get('features', []):
             pins.extend(feature.get('governed_by', []))
     return pins
 
@@ -33,6 +33,11 @@ class DocumentUsages:
         self.collections = CollectionService(store)
 
     def matches_document(self, pin):
+        if 'collection' in pin:
+            record = self.configurations.collection_record(pin, owner=pin['pod'])
+            matches = [self.matches_document({'pod': member['pod'], 'digest': member['digest']})
+                       for member in record['members']]
+            return any(matches)
         if self.store.pods.resolve(pin.get('pod', 'public'))['id'] != self.owner:
             return False
         if 'document' in pin:

@@ -22,9 +22,12 @@ class ProjectEditReviewApp(NavigationApp):
     TITLE = 'Caiman · Review project changes'
     CSS = TERMINAL_CSS + '\nButton { width: auto; }\n#changes { height: 18; }\n'
 
-    def __init__(self, *, root, original, prepared=None, error=None, original_digest=None, original_pod=None):
+    def __init__(self, *, root, original, prepared=None, error=None, original_digest=None, original_pod=None, creating=False):
         super().__init__()
         apply_theme(self)
+        self.creating = creating
+        if creating:
+            self.title = 'Caiman · Review new project'
         self.root = root
         self.original = original
         self.original_digest = original_digest
@@ -39,16 +42,22 @@ class ProjectEditReviewApp(NavigationApp):
                  'Pod: ' + self.prepared.pod]
         lines.extend(f"Board: {board['name']} @ {board['version']}  ({board['digest']})"
                      for board in project_boards(manifest))
-        lines += [f"Specification set: {manifest['spec_set']}",
-                 f"{len(manifest['documents'])} documents · {len(manifest['features'])} features"]
-        for feature in manifest['features']:
+        documents = ConfigurationService(Store(self.root)).reviewed_documents(self.prepared)
+        lines += [f"{len(documents)} current documents"]
+        for selector in manifest['documents']:
+            if 'collection' in selector:
+                lines.append(f"Collection {selector['collection']}: follows current membership")
+        lines.extend(f"  {r['manifest'].get('name') or r['manifest'].get('part') or r['manifest'].get('program')} · {r['manifest']['version']}"
+                     for r in documents)
+        for feature in manifest.get('features', []):
             lines.append(f"Feature {feature['name']}: {feature['scope']}")
             lines.extend(f"  Realized on {role} · {board} @ {version}"
                          for board, version, role in realized_parts(manifest, feature))
         return '\n'.join(lines)
 
     def compose(self):
-        yield Static('caiman  /  review project changes', id='brand')
+        yield Static('caiman  /  review new project' if self.creating else
+                     'caiman  /  review project changes', id='brand')
         with VerticalScroll(id='body'):
             if self.prepared is None:
                 yield Static('The draft needs correction before it can be registered.', classes='hint')
@@ -58,7 +67,8 @@ class ProjectEditReviewApp(NavigationApp):
                 manifest = self.prepared.manifest
                 yield Static(self.summary(), markup=False)
                 same_label = all(manifest[key] == self.original.get(key) for key in ('project', 'version'))
-                yield Static('Register updates this project in place. Existing digest pins remain unchanged.' if same_label else
+                yield Static('Register creates this project in the selected pod.' if self.creating else
+                             'Register updates this project in place. Existing digest pins remain unchanged.' if same_label else
                              'Register renames this project to the name/version above. Existing digest pins remain unchanged.',
                              classes='hint')
                 yield Static(f'Manifest: {self.prepared.digest}', markup=False)
@@ -71,7 +81,7 @@ class ProjectEditReviewApp(NavigationApp):
         yield Static('', id='status', markup=False)
         with Horizontal(id='navigation'):
             if self.prepared is not None:
-                yield Button('Register changes', id='register', variant='primary')
+                yield Button('Create project' if self.creating else 'Register changes', id='register', variant='primary')
             yield Button('Continue editing', id='edit')
             yield Button('Back to projects', id='cancel')
         yield self.navigation_hint()
@@ -156,6 +166,49 @@ class ProjectDeleteApp(NavigationApp):
                 self.deleting = False
                 for button in self.query(Button):
                     button.disabled = False
+
+
+
+def create_project(root: Path, *, pod=None, board=None) -> dict | None:
+    """Create with the shared guided editor, then explicitly review and register."""
+    from functools import partial
+    from caiman.configurations.editor import vim_excursion
+    from caiman.configurations.project_form import ProjectFormApp
+
+    service = ConfigurationService(Store(root))
+    owner = service.store.pods.resolve(pod or service.store.pods.configured_default)['id']
+    original = dict(project='', version='', customer='', pod=owner, boards=[], documents=[])
+    if board:
+        manifest = board['manifest']
+        original['boards'].append(dict(name=manifest['board'], version=manifest['version'],
+                                       digest=board['digest'], pod=board.get('pod', 'public')))
+    draft, message = deepcopy(original), ''
+    while True:
+        # Ownership comes from the entry point, including after a raw edit.
+        draft['pod'] = owner
+        outcome = ProjectFormApp(original=original, draft=draft, message=message,
+                                 root=root, creating=True).run()
+        if outcome is None:
+            return None
+        action, draft = outcome
+        message = ''
+        if action == 'raw':
+            edited = vim_excursion(root, original, draft,
+                                   review=partial(ProjectEditReviewApp, creating=True))
+            if edited is not None:
+                draft = edited
+            continue
+        draft['pod'] = owner
+        try:
+            prepared = service.prepare('project', draft, pod=owner)
+        except (OSError, ValueError) as invalid:
+            message = str(invalid)
+            continue
+        reviewed = ProjectEditReviewApp(root=root, original=original, prepared=prepared,
+                                        creating=True).run()
+        if reviewed == 'edit':
+            continue
+        return reviewed if isinstance(reviewed, dict) else None
 
 
 def edit_project(root: Path, service: ConfigurationService, selection: dict, draft: dict | None = None) -> dict | None:

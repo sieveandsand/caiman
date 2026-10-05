@@ -1,6 +1,6 @@
 """Pod switching behaves consistently across all catalog galleries."""
 import pytest
-from textual.widgets import Tabs, Input
+from textual.widgets import Select, Tabs
 
 from caiman.boards.gallery import BoardGalleryApp, BoardCard
 from caiman.configurations.gallery import ProjectGalleryApp, ProjectCard
@@ -110,4 +110,8 @@ async def test_empty_pod_add_uses_selected_pod(tmp_path, kind):
     setup = SetupApp(kind=kind, store_root=tmp_path, pod=app.return_value['pod'])
     async with setup.run_test() as pilot:
         await pilot.pause()
-        assert setup.query_one('#pod', Input).value == 'empty'
+        if kind == 'project':
+            assert setup.project_pod == 'empty'
+            assert not setup.query('Select#pod')
+        else:
+            assert setup.query_one('#pod', Select).value == 'empty'

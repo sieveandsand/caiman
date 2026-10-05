@@ -65,7 +65,7 @@ hardware or program assumptions. Team administration and SSO are deferred.
 ### 2.2 Product rationale
 
 The useful contribution is connecting a board to a program's frozen specification
-set, required features, and declared deviations. Document ingestion and search
+set and declared deviations, with collections helping organize the documents. Document ingestion and search
 support that model. Whether this saves enough review and maintenance time remains
 to be demonstrated; G01–G03 define the evaluation.
 
@@ -364,8 +364,8 @@ registers a new immutable version; Caiman does not repair it in place.
 
 ### 6.5 Register
 
-A board describes hardware; a project combines pinned boards with specifications,
-features, in one owning pod. [README.md](../README.md#configure-boards-and-projects) owns editing workflows; [Storage §6.4](STORAGE.md#64-manifest-schemas) owns the
+A board describes hardware; a project combines pinned boards with documents
+in one owning pod. [README.md](../README.md#configure-boards-and-projects) owns editing workflows; [Storage §6.4](STORAGE.md#64-manifest-schemas) owns the
 serialized manifests.
 
 #### 6.5.1 Board — hardware only
@@ -382,12 +382,21 @@ from that pod or public. It declares no precedence among documents (S-36). A pro
 one board at several versions; each pin is explicit (S-34). Separate projects can
 share a board while carrying different customers' requirements.
 
-#### 6.5.3 Features
+#### 6.5.3 Collections and retained features
 
-Features connect requirements to board roles through `governed_by`, `realized_on`,
-and `related`. A `realized_on` entry names the board, version, and role, because
-role names repeat across boards. Their scope is `required` or `not-used`; implementation and
-verification status are outside Caiman's scope (S-14).
+Collections organize documents by capability, subsystem, or workflow. The shared
+picker shows documents and collections together. Projects retain stable collection
+references and read their current membership; direct document attachments remain
+independent. Membership additions/removals and collection renames reach referencing
+projects without rewriting their snapshots. Historical collection resolution uses
+the original digest retained with each reference. Overlaps are deduplicated and
+missing dependencies fail the complete set. Boards and parts still expand selected
+groups into direct documents. Collection editors offer individual documents only.
+
+Structured features are no longer part of normal authoring (S-14). Existing
+`features` declarations are preserved and validated, and raw JSON remains available
+to edit them. New projects omit the optional field. Collections do not acquire
+feature scope, requirement IDs, hardware mappings, or implementation status.
 
 #### 6.5.4 Rules shared by both models
 

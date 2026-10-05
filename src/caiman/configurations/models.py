@@ -61,7 +61,14 @@ class _Validator:
             if key in data:
                 self.string(data[key], key)
 
-    def selector(self, value, path, pods, extra=()):
+    def selector(self, value, path, pods, extra=(), collections=False):
+        if collections and isinstance(value, dict) and 'collection' in value:
+            self.object(value, path, {'pod', 'collection', 'digest'}, {'pod', 'collection'})
+            self.string(value.get('pod'), path + '.pod', True)
+            self.string(value['collection'], path + '.collection', True)
+            if 'digest' in value:
+                self.digest(value['digest'], path + '.digest')
+            return
         if not self.object(value, path, {'ref', 'digest', 'pod', 'document', 'blob', *extra}):
             return
         if not {'ref', 'digest', 'document'} & value.keys():
@@ -90,15 +97,15 @@ class _Validator:
         if 'requirements' in value:
             self.strings(value['requirements'], path + '.requirements', nonempty=True)
 
-    def selectors(self, value, path, pods, extra=(), board=False):
+    def selectors(self, value, path, pods, extra=(), board=False, collections=False):
         seen = set()
         for index, selector in enumerate(self.sequence(value, path)):
             location = f'{path}.{index}'
-            self.selector(selector, location, pods, extra)
+            self.selector(selector, location, pods, extra, collections=collections)
             if not isinstance(selector, dict):
                 continue
             # Duplicate refs or pinned digests in the same pod are ambiguous.
-            for key in ('ref', 'digest', 'document'):
+            for key in ('ref', 'digest', 'document', 'collection'):
                 item = selector.get(key)
                 pod = selector.get('pod')
                 if isinstance(item, str) and (pod is None or isinstance(pod, str)):
@@ -371,9 +378,10 @@ def validate_project(data: dict) -> dict:
     fields = {'project', 'version', 'customer', 'spec_set', 'documents', 'features'}
     # v1 snapshots may still carry a declared precedence; v2 has none.
     fields |= {'board', 'precedence'} if legacy else {'boards'}
-    validator, data = _base(data, 'project', fields, fields - {'precedence'})
+    validator, data = _base(data, 'project', fields, fields - {'precedence', 'spec_set', 'features'})
     validator.string(data.get('customer'), 'customer')
-    validator.string(data.get('spec_set'), 'spec_set')
+    if 'spec_set' in data:
+        validator.string(data['spec_set'], 'spec_set')
     pinned = set()
     if legacy:
         if _board_selector(data.get('board'), validator, 'board'):
@@ -391,11 +399,11 @@ def validate_project(data: dict) -> dict:
                     validator.error(path, 'Duplicate board version; pin each board version once')
                 pinned.add(identity)
     allowed = set()
-    validator.selectors(data.get('documents'), 'documents', allowed)
+    validator.selectors(data.get('documents'), 'documents', allowed, collections=True)
     if legacy:
         validator.selectors(data.get('precedence', []), 'precedence', allowed, ('note',))
     names = set()
-    features = validator.sequence(data.get('features'), 'features')
+    features = validator.sequence(data.get('features', []), 'features')
     for index, feature in enumerate(features):
         path = f'features.{index}'
         if not validator.object(feature, path, {'name', 'scope', 'governed_by', 'realized_on', 'related'}, {'name', 'scope'}):
@@ -471,7 +479,7 @@ def validate_project_links(project: dict, boards: list[dict]) -> None:
             validator.error('board' if legacy else f'boards.{index}',
                             'Board identity and version do not match the project declaration')
         roles[(board['board'], board['version'])] = {part['role'] for part in board['parts']}
-    for index, feature in enumerate(project['features']):
+    for index, feature in enumerate(project.get('features', [])):
         for number, (name, version, role) in enumerate(realized_parts(project, feature)):
             if role not in roles.get((name, version), set()):
                 validator.error(f'features.{index}.realized_on.{number}', 'Part role is not declared on that pinned board')

@@ -19,7 +19,7 @@ claims of shipped behavior or current calendar estimates.
 
 ## Success Criteria for the MVP
 
-1. Each session receives the selected project, board versions, features, and
+1. Each session receives the selected project, board versions, and
    complete pinned document set in its own context folder.
 2. Answers cite the correct document, body version, and source locator.
 3. Requirement answers identify the governing source and declared deviations.
@@ -69,8 +69,8 @@ Board/project authoring and manual adoption are implemented. Remaining work:
 
 - Specify and implement reviewed document-adoption cascades (G15).
 - Add workspace status and store verification commands.
-- Generate the metadata-only brief, including features and declared
-  changes, with no access to document text or customer legal identity.
+- Generate the metadata-only brief, including declared
+  changes and any retained feature metadata, with no access to document text or customer legal identity.
 
 Contracts: [Configuration guide](../README.md#configure-boards-and-projects), [Architecture §6.7](ARCHITECTURE.md#67-resolve)
 and [§6.9](ARCHITECTURE.md#69-the-brief). Resolve agent-facing formats through G16.

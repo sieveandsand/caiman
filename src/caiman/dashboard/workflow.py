@@ -45,7 +45,12 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
         if action in {'create-board', 'create-project'}:
             kind = action.split('-')[1]
             setup_options = {'pod': ingest_context['pod']} if ingest_context.get('pod') else {}
-            selection = SetupApp(kind=kind, store_root=root, board=ingest_context.get('board'), **setup_options).run()
+            if kind == 'project':
+                from caiman.configurations.project_edit import create_project
+
+                selection = create_project(root, board=ingest_context.get('board'), **setup_options)
+            else:
+                selection = SetupApp(kind=kind, store_root=root, board=ingest_context.get('board'), **setup_options).run()
             if selection is not None:
                 ingest_context[kind] = selection
             if ingest_state is not None:

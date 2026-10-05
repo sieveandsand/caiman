@@ -247,7 +247,8 @@ class CollectionApp(EditorFormApp):
                              for c in self.query(MemberCard)]
                     self.query_one('#review', Static).update('\n'.join([
                         m['name'], m['description'], '', f"Pod: {self.prepared['pod']}",
-                        f"{len(names)} documents", *names]))
+                        f"{len(names)} documents", *names, '',
+                        'Saving updates the document set of projects referencing this collection.']))
                     self.query_one('#status', Static).update('')
                     self.show_review(True)
                     self.query_one('#review-save').focus()

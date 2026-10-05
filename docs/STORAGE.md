@@ -404,28 +404,45 @@ independently of whether provenance was supplied (S-26).
 
 #### 6.4.1a Document collections
 
-`caiman.collection.v1` contains `id`, `name`, `description`, `labels`, and
-`documents`. Each member contains exactly `compartment` and a document manifest
-`digest`. Members are sorted and deduplicated before canonical hashing. The
-root therefore commits to metadata and exact document revisions; member order
-has no semantic meaning. A collection requires at least one existing document
-and cannot contain another collection.
+Current collection manifests contain `schema`, `id`, `name`, `description`, and
+`documents`. Members pin `{pod, document, blob}`; membership is sorted and
+deduplicated before hashing. A collection requires at least one existing document
+and cannot contain another collection. Each collection has one owning pod and
+may reference only its own pod or public.
 
-The local store writes each snapshot into its compartment's immutable manifest
-objects and updates `refs/collections/<id>`. IDs are generated once and retained
-through edits; names are editable and there is no user-supplied version. Reads
-by root digest never follow a mutable member ref. Saves compare the opened root
-with the current collection ref and reject stale edits. Earlier snapshots remain
-readable by digest after edits. Collection manifests, member manifests, and
-content blobs form a Merkle DAG using the existing SHA-256 object store.
+Saving writes an immutable snapshot and updates `refs/collections/<id>`. IDs are
+retained through edits; names are editable and there is no user-supplied version.
+Saves reject stale edits. Earlier snapshots remain readable by digest. Document
+bodies stay fixed while displayed metadata follows approved document revisions
+([DOCUMENT-METADATA.md](DOCUMENT-METADATA.md)).
 
-Access is explicitly public or one private compartment. Public collections
-contain only public documents; private collections may include public documents
-and documents from their own compartment. The editor fixes access after creation.
-Member validation checks every manifest and blob before saving and when reading;
-missing, corrupt, unauthorized, or non-document members fail the entire operation.
-Collection browsing and editing are local. Board/project collection selectors
-and session materialization are not implemented by this gallery feature.
+The shared **Choose documents** picker offers individual documents and collections
+together. Project `documents` arrays may contain `{pod, collection, digest}`
+references. `collection` is the stable collection ID, and `digest` preserves the
+original collection snapshot for historical resolution. Normal resolution follows
+`refs/collections/<id>`, verifies that identity, and resolves every current member.
+A rename or membership edit therefore reaches all referencing projects without
+changing any stored project bytes or digest. Exact project reads retain the
+reference; historical document-set resolution uses its recorded collection digest.
+
+Direct document attachments are independent. The effective set is the deduplicated
+union of direct documents and current collection members. Removing a member from
+one collection never removes an independent direct attachment or a contribution
+from another collection. Collection members still pin fixed document bodies.
+Missing/corrupt members or invalid transitive pod references fail the whole set.
+
+Project preparation captures the reviewed collection heads separately from the
+stored manifest. Review shows those captured members, and registration rechecks
+the heads under the writer lock. A change after review requires a fresh review.
+The project editor shows collection cards with current names and membership;
+these display updates do not dirty its draft. Collection save review explains the
+impact on referencing projects.
+
+Boards, parts, and collection editing expand selections into individual document
+references. They do not gain live links or nested collections. Old projects with
+expanded references are unchanged; select a collection to establish its identity.
+Cancel and dependency failures write nothing. Session materialization remains
+unimplemented; installed session context does not become a live mutable tree.
 
 #### 6.4.2 Board version
 
@@ -550,7 +567,6 @@ must belong to the project's declared document set. See the
       "digest": "sha256:71e2d0c4…3f" }
   ],
 
-  "spec_set": "OEM release 3.2",
   "documents": [
     { "ref": "oem-alpha/flash-spec/3.2", "digest": "sha256:2d90ac17…a5" },
     { "ref": "oem-alpha/secoc-spec/3.1", "digest": "sha256:6e3f1180…77" },
@@ -584,9 +600,9 @@ must belong to the project's declared document set. See the
 | `project`, `version` | Program codename and opaque version label |
 | `customer`, `compartments` | Legal customer identity and a nonempty compartment set |
 | `boards` | Nonempty list of explicit board name/version pins, each with an optional existing digest in drafts. One board may appear at several versions; the same name and version twice is rejected |
-| `spec_set` | Human-declared frozen specification release |
-| `documents` | Selected specifications |
-| `features` | Named features with scope `required` or `not-used` |
+| `spec_set` | Retired optional metadata, preserved in existing snapshots; new projects omit it |
+| `documents` | Direct document pins and live collection references; historical collection digests retained |
+| `features` | Optional compatibility data, preserved when present; absent from normal authoring (S-14) |
 | `features[].governed_by` | Selected document references, optionally with requirement IDs |
 | `features[].realized_on` | Parts as `{board, version, role}`, each naming one of the project's own pins. Role names may repeat across boards; the entry says which board it means. Labels match exactly (I-7) |
 | `features[].related` | Existing feature names with a human-written `relation` |
@@ -1572,6 +1588,12 @@ storage-specific cases; the full negative-test list is in `SECURITY-MODEL.md`.
 member-ref updates do not change pinned revisions, reordered or repeated members
 produce the same root, stale saves fail, and nonexistent or nested members are
 rejected. Collection dependency boundaries are S-T22 in the security model.
+`tests/test_collection_picker.py` checks collection expansion into project pins,
+overlap deduplication, cancellation, complete failure on unavailable members,
+and preservation of existing features. `tests/test_live_project_collections.py`
+covers membership propagation, direct attachment independence, historical resolution,
+unchanged project hashes, usage discovery, and stale-review rejection.
+It also exercises selection and focus in truecolor, 256-color, and 16-color modes.
 Transport tests use local bare repositories and synthetic data only — no real
 documents in tests or CI.
 

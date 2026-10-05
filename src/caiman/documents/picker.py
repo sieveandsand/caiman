@@ -44,7 +44,8 @@ class DocumentPicker(RecordPicker):
                     f"{'document' if count == 1 else 'documents'} · {record.get('pod_name', record['pod'])}")
         return 'Document · ' + document_label(record)
 
-    def __init__(self, *, allow_collections=True, **kwargs):
+    def __init__(self, *, preserve_collections=False, allow_collections=True, **kwargs):
+        self.preserve_collections = preserve_collections
         self.allow_collections = allow_collections
         if not allow_collections:
             self.noun = 'documents'
@@ -111,6 +112,10 @@ class DocumentPicker(RecordPicker):
             if self.is_collection(record) and not self.allow_collections:
                 raise ValueError('Collections can contain only individual documents.')
             self.service.store.pods.check_reference(self.owner or 'public', record['pod'])
+            if self.is_collection(record) and self.preserve_collections:
+                current = self.service.collection_record(document_pin(record), owner=self.owner or 'public')
+                documents.append(current)
+                continue
             members = (collections.members(record) if self.is_collection(record) else
                        [self.service.document_record(document_pin(record), pinned=True)])
             for member in members:

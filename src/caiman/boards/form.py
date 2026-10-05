@@ -15,6 +15,7 @@ the review screen that already exists.
 from __future__ import annotations
 
 from copy import deepcopy
+import asyncio
 import json
 
 from rich.text import Text
@@ -24,6 +25,8 @@ from textual.widgets import Button, Collapsible, Input, Label, Static
 
 from caiman.configurations.files import vendor_suggestions
 from caiman.configurations.models import board_is_legacy
+from caiman.documents.cards import document_name
+from caiman.documents.picker import DocumentPicker, document_label, document_pin
 from caiman.ui.editor import EDITOR_CSS, CardRow, EditorFormApp, Row, add_card, comma_list
 from caiman.ui.theme import apply_theme
 
@@ -67,13 +70,19 @@ class DocumentRow(Row):
     """A document pin with an optional pod route."""
 
     def compose(self):
+        yield Static(self.data.get('ref') or self.data.get('document') or 'Document reference',
+                     classes='document-label', markup=False)
+        with Collapsible(title='Reference details', collapsed=True):
+            yield from self.reference_fields()
+        yield from self.text_field('notes', 'Notes (optional)')
+        yield from self.actions('Remove document')
+
+    def reference_fields(self):
         yield from self.text_field('ref', 'Document Ref')
         yield from self.text_field('pod', 'Pod (optional)')
         yield from self.text_field('digest', 'Manifest Digest (optional)')
         yield from self.text_field('document', 'Document ID (optional)')
         yield from self.text_field('blob', 'Pinned Blob (with Document ID)')
-        yield from self.text_field('notes', 'Notes (optional)')
-        yield from self.actions('Remove document')
 
     def collect(self) -> dict:
         selector = self.carry('ref', 'digest', 'notes', 'pod', 'document', 'blob')
@@ -86,16 +95,30 @@ class DocumentRow(Row):
 class BoardDocumentCard(CardRow, DocumentRow):
     kind = 'document'
     first_field = 'ref'
+    record = None
+
+    def show_record(self, record):
+        self.record = record
+        self.record_selector = self.summary_data()
+        self.refresh_summary()
 
     def editor_fields(self):
-        yield from DocumentRow.compose(self)
+        yield from self.reference_fields()
+        yield from self.text_field('notes', 'Notes (optional)')
+        yield from self.actions('Remove document')
 
     def summary_data(self):
         return {key: self.value(key) for key in ('ref', 'digest', 'notes', 'pod', 'document', 'blob')}
 
     def summary(self, data):
         label = Text()
-        self.heading(label, data.get('ref') or data.get('document') or ('Pinned board document' if data.get('digest') else 'New board document'))
+        record = self.record if self.record and all(
+            data.get(k) == self.record_selector.get(k) for k in ('ref', 'digest', 'pod', 'document', 'blob')) else None
+        name = (document_name(record['manifest']) if record else data.get('ref') or data.get('document') or
+                ('Pinned board document' if data.get('digest') else 'New board document'))
+        self.heading(label, name)
+        if record:
+            label.append(f"\n\n{record['manifest']['version']} · {record.get('pod_name', record['pod'])}", style='#7fdc4f')
         label.append('\n\nBoard document', style='bold #aab69c')
         label.append('\n\n' + self.summary_hint(), style='#aab69c')
         return label
@@ -119,14 +142,15 @@ class PartRow(CardRow):
         details = []
         if data.get('silicon_revision'):
             details.append('Silicon ' + data['silicon_revision'])
-        details.append(f"{len(data.get('documents', []) or [])} document pins")
+        documents = [pin for pin in data.get('documents', []) or [] if pin]
+        details.append(f"{len(documents)} document pins")
         label.append('\n\n' + ' · '.join(details), style='bold #aab69c')
         label.append('\n\n' + self.summary_hint(), style='#aab69c')
         return label
 
     def summary_data(self):
         data = {key: self.value(key) for key in ('part', 'vendor', 'role', 'silicon_revision')}
-        data['documents'] = list(self.query(DocumentRow))
+        data['documents'] = [pin for row in self.query(DocumentRow) if (pin := row.collect())]
         return data
 
     def editor_fields(self):
@@ -141,7 +165,7 @@ class PartRow(CardRow):
         yield Label('Document Pins', classes='field-label')
         yield Vertical(*(DocumentRow(pin) for pin in self.data.get('documents', []) or []), classes='documents')
         with Horizontal(classes='section-actions'):
-            yield Button('Add document', classes='add-document')
+            yield Button('Choose documents', classes='add-document')
             yield Button('Remove part', classes='remove-row')
 
     def collect(self) -> dict:
@@ -157,7 +181,7 @@ class PartRow(CardRow):
             raise
         if aliases:
             part['aliases'] = aliases
-        part['documents'] = [row.collect() for row in self.query(DocumentRow)]
+        part['documents'] = [pin for row in self.query(DocumentRow) if (pin := row.collect())]
         return part
 
 
@@ -223,6 +247,20 @@ class BoardFormApp(EditorFormApp):
     def on_resize(self, event):
         self.query_one('#navigation').styles.grid_size_columns = 4 if event.size.width >= 100 else 2
 
+    async def on_mount(self):
+        super().on_mount()
+        if self.service is not None:
+            for row in self.query(DocumentRow):
+                try:
+                    record = await asyncio.to_thread(self.service.document_record, row.collect())
+                    if isinstance(row, BoardDocumentCard):
+                        row.show_record(record)
+                    else:
+                        row.query_one('.document-label', Static).update(document_label(record))
+                except (OSError, ValueError) as error:
+                    if not isinstance(row, BoardDocumentCard):
+                        row.query_one('.document-label', Static).update(f'Unavailable document: {error}')
+
     def field(self, key: str, label: str, *, suggester=None):
         yield Label(label, classes='field-label')
         yield Input(value=str(self.draft.get(key, '') or ''), suggester=suggester, id=f'board-{key}')
@@ -245,7 +283,7 @@ class BoardFormApp(EditorFormApp):
                     with Grid(id='board-documents', classes='card-grid'):
                         for pin in self.draft.get('documents', []) or []:
                             yield BoardDocumentCard(pin)
-                        yield add_card('Add board document', id='add-board-document')
+                        yield add_card('Choose documents', id='add-board-document')
                 with Collapsible(title=f"Parts · {len(self.draft.get('parts', []) or [])} declared", collapsed=False):
                     with Grid(id='parts', classes='card-grid'):
                         for part in self.draft.get('parts', []) or []:
@@ -285,7 +323,7 @@ class BoardFormApp(EditorFormApp):
                 data[key] = value
             else:
                 data.pop(key, None)
-        documents = [row.collect() for row in self.query_one('#board-documents').query(BoardDocumentCard)]
+        documents = [pin for row in self.query_one('#board-documents').query(BoardDocumentCard) if (pin := row.collect())]
         if documents:
             data['documents'] = documents
         else:
@@ -314,12 +352,33 @@ class BoardFormApp(EditorFormApp):
         elif button.id == 'add-link':
             await self.add_card(button, LinkRow({'name': '', 'between': []}, expanded=True))
         elif button.id == 'add-board-document':
-            await self.add_card(button, BoardDocumentCard({}, expanded=True))
+            async def attach_board(records):
+                for record in records or []:
+                    card = BoardDocumentCard(document_pin(record))
+                    await button.parent.parent.mount(card, before=button.parent)
+                    card.show_record(record)
+                self.call_after_refresh(button.focus)
+
+            self.push_screen(DocumentPicker(service=self.service, owner=self.pod,
+                attached=[card.collect() for card in self.query(BoardDocumentCard)]), attach_board)
         elif button.has_class('add-document'):
             row = next(node for node in button.ancestors if isinstance(node, PartRow))
-            await self.add_row_within(row.query_one('.documents'), DocumentRow({}))
+            async def attach(records):
+                if records:
+                    for record in records:
+                        document = DocumentRow(document_pin(record))
+                        await row.query_one('.documents').mount(document)
+                        document.query_one('.document-label', Static).update(document_label(record))
+                    row.refresh_summary()
+                self.call_after_refresh(button.focus)
+
+            self.push_screen(DocumentPicker(service=self.service, owner=self.pod,
+                attached=[pin.collect() for pin in row.query(DocumentRow)]), attach)
         elif button.has_class('remove-row'):
-            await self.remove_row(button)
+            part = next((node for node in button.ancestors if isinstance(node, PartRow)), None)
+            removed = await self.remove_row(button)
+            if part is not None and removed is not part:
+                part.refresh_summary()
 
     def action_cancel(self) -> None:
         self.exit(None)

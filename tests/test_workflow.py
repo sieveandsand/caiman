@@ -142,7 +142,8 @@ def test_inline_create_cancel_restores_ingest_values(tmp_path, monkeypatch):
         def run(self):
             return None
     monkeypatch.setattr(tui, 'IngestApp', Ingest)
-    monkeypatch.setattr(onboarding, 'SetupApp', Cancel)
+    monkeypatch.setattr('caiman.configurations.project_edit.create_project',
+                        lambda root, **kwargs: Cancel(kind='project', **kwargs).run())
     assert run_workflow(root, ingest=True) == 0
     assert calls[1]['state'] == inputs
     assert calls[1]['context'] == context
@@ -257,7 +258,8 @@ def test_gallery_add_card_creates_then_returns_to_the_gallery(tmp_path, monkeypa
         return galleries.pop(0)
 
     monkeypatch.setattr(onboarding, 'LauncherApp', Home)
-    monkeypatch.setattr(onboarding, 'SetupApp', Setup)
+    monkeypatch.setattr('caiman.configurations.project_edit.create_project',
+                        lambda root, **kwargs: Setup(kind='project', **kwargs).run())
     monkeypatch.setattr(actions, 'run_dashboard_action', gallery)
     assert run_workflow(tmp_path) == 0
     assert created == ['project'] and galleries == [] and homes == []

@@ -120,3 +120,13 @@ def test_another_pod_cannot_impersonate_public_folder(tmp_path):
     (path / 'pod.json').write_text(json.dumps({'schema': 'caiman.pod.v1', 'id': 'alpha', 'name': 'Alpha'}))
     with pytest.raises(ValueError, match='public folder is occupied'):
         store.pods.ensure('public')
+
+
+@pytest.mark.parametrize(('owner', 'expected'), [('public', {'public'}), ('alpha', {'public', 'alpha'})])
+def test_document_picker_limits_candidates_to_reference_pods(tmp_path, owner, expected):
+    from caiman.documents.picker import DocumentPicker
+    store = Store(tmp_path / 'store')
+    for pod in ('public', 'alpha', 'beta'):
+        add_document(store.root, tmp_path, pod)
+    picker = DocumentPicker(service=ConfigurationService(store), owner=owner)
+    assert {record['pod'] for record in picker.load_records()} == expected

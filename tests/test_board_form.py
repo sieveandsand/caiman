@@ -112,19 +112,18 @@ async def test_rows_are_added_and_removed_without_touching_their_neighbours(mani
 
 
 @pytest.mark.asyncio
-async def test_document_pins_are_fields_and_the_pod_stays_public(manifest):
+async def test_opening_document_picker_does_not_add_an_empty_pin(manifest):
     app = BoardFormApp(original=manifest)
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.pause()
         part = list(app.query(PartRow))[1]
         part.query_one('.add-document', Button).press()
         await pilot.pause()
-        pin = list(part.query(DocumentRow))[-1]
-        pin.query_one('.field-ref', Input).value = 'ti/tps65313/datasheet/A'
-        pin.query_one('.field-notes', Input).value = 'Watchdog timing.'
+        assert not list(part.query(DocumentRow))
+        await pilot.press('escape')
+        await pilot.pause()
         draft = app.collect()
-    assert draft['parts'][1]['documents'] == [
-        {'ref': 'ti/tps65313/datasheet/A', 'notes': 'Watchdog timing.'}]
+    assert draft == manifest
     # The existing pin keeps the pod it was stored with.
     assert draft['parts'][0]['documents'][0]['pod'] == 'public'
 
@@ -415,6 +414,13 @@ async def test_document_and_link_cards_preserve_edits_and_neighbours(
         add.focus()
         await pilot.press('enter')
         await pilot.pause()
+        if kind == 'documents':
+            # Choosing a document is transactional: no row until confirmation.
+            assert len(app.query(card_type)) == 1
+            await pilot.press('escape')
+            await pilot.pause()
+            assert app.collect() == expected
+            return
         added = list(app.query(card_type))[-1]
         assert added.has_class('expanded')
         assert app.focused is added.query_one('.field-' + field, Input)
@@ -438,12 +444,16 @@ async def test_empty_document_and_link_sections_offer_plus_cards(manifest):
             add.focus()
             await pilot.press('enter')
             await pilot.pause()
+            if card_type is BoardDocumentCard:
+                assert not app.query(BoardDocumentCard)
+                await pilot.press('escape')
+                await pilot.pause()
+                continue
             assert app.query_one(card_type).has_class('expanded')
-        app.query_one(BoardDocumentCard).query_one('.field-ref', Input).value = 'acme/falcon-mainboard/schematic/A'
         app.query_one(LinkRow).query_one('.field-name', Input).value = 'new-link'
         app.query_one(LinkRow).query_one('.field-between', Input).value = 'application-mcu, safety-companion'
         draft = app.collect()
-        assert draft['documents'] == [{'ref': 'acme/falcon-mainboard/schematic/A'}]
+        assert 'documents' not in draft
         assert draft['links'] == [{'name': 'new-link', 'between': ['application-mcu', 'safety-companion']}]
         assert draft['parts'] == manifest['parts']
 
