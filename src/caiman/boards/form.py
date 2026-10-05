@@ -254,7 +254,7 @@ class BoardFormApp(EditorFormApp):
         yield Static(self.message, id='form-error', markup=False)
         with Horizontal(id='navigation'):
             if not self.read_only:
-                yield Button('Review changes', id='review-changes', variant='primary')
+                yield Button('Review changes', id='review-changes', variant='primary', disabled=True)
             yield Button('Edit raw JSON in Vim', id='raw', variant='primary' if self.read_only else 'default')
             yield Button('Delete board', id='delete', variant='error')
             yield Button('Back to boards', id='cancel')

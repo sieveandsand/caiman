@@ -230,8 +230,9 @@ adding an entry. Part document pins are edited inside the part card; enter
 aliases as comma-separated `name = value` pairs. Vendor completion suggests
 common spellings and vendors already on the board, but accepts any value.
 
-**Review changes** shows a field-level diff before registration. An unchanged
-draft returns to the form. Fields the form does not expose survive unchanged,
+**Review changes** shows a field-level diff before registration. Across edit
+pages, the button stays greyed out until the draft changes and becomes disabled
+again when all edits are reverted. Fields the form does not expose survive unchanged,
 including lineage (`derives_from` and `relation`). To edit lineage, use raw JSON,
 `board configure`, or `board new-version`.
 

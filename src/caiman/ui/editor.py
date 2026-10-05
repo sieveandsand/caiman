@@ -52,6 +52,10 @@ class Row(Vertical):
         super().__init__(classes='row')
         self.data = deepcopy(data) if isinstance(data, dict) else {}
 
+    def on_mount(self):
+        # Picker attachments and nested rows can change the draft without typing.
+        self.app.call_after_refresh(self.app.update_review_button)
+
     def text_field(self, key: str, label: str, *, suggester=None, placeholder=''):
         yield Label(label, classes='field-label')
         value = self.data.get(key, '')
@@ -165,6 +169,21 @@ class EditorFormApp(NavigationApp):
 
     def on_mount(self):
         self.resize_grids(self.size.width)
+        self.call_after_refresh(self.update_review_button)
+
+    def update_review_button(self):
+        buttons = self.query('#review-changes')
+        if not buttons:
+            return  # Unsupported shapes offer only the raw editor.
+        try:
+            unchanged = self.collect() == self.original
+        except ValueError:
+            # Invalid edits still need access to review's validation feedback.
+            unchanged = False
+        buttons.first(Button).disabled = unchanged
+
+    def on_input_changed(self, event: Input.Changed):
+        self.update_review_button()
 
     def on_resize(self, event):
         self.resize_grids(event.size.width)
@@ -193,6 +212,7 @@ class EditorFormApp(NavigationApp):
         row = next(node for node in button.ancestors if isinstance(node, Row))
         container = row.parent
         await row.remove()
+        self.update_review_button()
         # Focus never disappears with the row it was standing on.
         if isinstance(row, CardRow):
             target = container.query_one('.add-card', Button)

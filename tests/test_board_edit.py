@@ -309,3 +309,51 @@ def test_cancel_delete_returns_to_board_draft(board_setup, monkeypatch):
     assert editing.edit_board(root, service, selection) is None
     assert seen[1]['draft'] == prepared.manifest
     assert snapshot(root) == before
+
+
+@pytest.mark.parametrize('color_system', ['truecolor', '256', 'standard'])
+def test_gallery_edit_starts_disabled_and_tracks_real_changes(board_setup, monkeypatch, color_system):
+    import asyncio
+    from rich.console import COLOR_SYSTEMS
+    from textual.widgets import Button, Input
+    from caiman.boards.form import BoardFormApp
+    from caiman.boards.edit import edit_board
+
+    root, service, original, _ = board_setup
+    selection = {'manifest': original.manifest, 'digest': original.digest, 'pod': original.pod}
+    assert 'pod' not in selection['manifest']
+    before = snapshot(root)
+
+    async def inspect(app):
+        app.console._color_system = COLOR_SYSTEMS[color_system]
+        async with app.run_test(size=(110, 50)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            review = app.query_one('#review-changes', Button)
+            assert review.disabled
+            disabled_style = review.rich_style
+            pod = app.query_one('#board-pod', Input)
+            assert pod.value == selection['pod']
+            pod.value = 'another-pod'
+            await pilot.pause()
+            assert not review.disabled
+            assert review.rich_style != disabled_style
+            pod.value = selection['pod']
+            await pilot.pause()
+            assert review.disabled
+            version = app.query_one('#board-version', Input)
+            version.value = 'changed'
+            await pilot.pause()
+            assert not review.disabled
+            review.focus()
+            await pilot.pause()
+            assert app.focused is review
+            version.value = selection['manifest']['version']
+            await pilot.pause()
+            assert review.disabled
+            assert app.focused is not review
+        return None
+
+    monkeypatch.setattr(BoardFormApp, 'run', lambda app: asyncio.run(inspect(app)))
+    assert edit_board(root, service, selection) is None
+    assert snapshot(root) == before

@@ -209,3 +209,50 @@ async def test_delete_screen_deletes_only_on_the_explicit_button(project_setup):
             await pilot.pause(0.025)
     assert app.return_value is True
     assert service.list_configs('project', pods={'alpha'}) == []
+
+
+@pytest.mark.parametrize('color_system', ['truecolor', '256', 'standard'])
+def test_gallery_edit_starts_disabled_and_tracks_real_changes(project_setup, monkeypatch, color_system):
+    import asyncio
+    from rich.console import COLOR_SYSTEMS
+    from textual.widgets import Button, Input
+    from caiman.configurations.project_form import ProjectFormApp
+    from caiman.configurations.project_edit import edit_project
+
+    root, service, selection, _ = project_setup
+    assert 'pod' not in selection['manifest']
+    before = snapshot(root)
+
+    async def inspect(app):
+        app.console._color_system = COLOR_SYSTEMS[color_system]
+        async with app.run_test(size=(110, 50)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            review = app.query_one('#review-changes', Button)
+            assert review.disabled
+            disabled_style = review.rich_style
+            pod = app.query_one('#project-pod', Input)
+            assert pod.value == selection['pod']
+            pod.value = 'another-pod'
+            await pilot.pause()
+            assert not review.disabled
+            assert review.rich_style != disabled_style
+            pod.value = selection['pod']
+            await pilot.pause()
+            assert review.disabled
+            version = app.query_one('#project-version', Input)
+            version.value = 'changed'
+            await pilot.pause()
+            assert not review.disabled
+            review.focus()
+            await pilot.pause()
+            assert app.focused is review
+            version.value = selection['manifest']['version']
+            await pilot.pause()
+            assert review.disabled
+            assert app.focused is not review
+        return None
+
+    monkeypatch.setattr(ProjectFormApp, 'run', lambda app: asyncio.run(inspect(app)))
+    assert edit_project(root, service, selection) is None
+    assert snapshot(root) == before

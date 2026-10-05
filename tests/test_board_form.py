@@ -136,6 +136,7 @@ async def test_review_and_raw_exit_with_the_same_collected_draft(manifest):
         async with app.run_test(size=(110, 50)) as pilot:
             await pilot.pause()
             app.query_one('#board-version', Input).value = '2.2'
+            await pilot.pause()
             app.query_one('#review-changes' if action == 'review' else '#raw', Button).press()
             await pilot.pause()
         assert app.return_value[0] == action
@@ -159,6 +160,8 @@ async def test_malformed_aliases_stop_at_the_form_without_exiting(manifest):
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.pause()
         list(app.query(PartRow))[0].query_one('.field-aliases', Input).value = 'refdes U1'
+        await pilot.pause()
+        assert not app.query_one('#review-changes', Button).disabled
         app.query_one('#review-changes', Button).press()
         await pilot.pause()
         assert app.return_value is None
@@ -473,7 +476,7 @@ async def test_editor_and_add_card_shadows_follow_focus_and_preserve_geometry(ma
         await pilot.pause()
         assert not second.query_one('.card-shadow').visible
         assert add.parent.query_one('.card-shadow').visible
-        app.query_one('#review-changes').focus()
+        app.query_one('#raw').focus()
         await pilot.pause()
         assert not add.parent.query_one('.card-shadow').visible
 
@@ -552,3 +555,48 @@ async def test_delete_board_is_keyboard_accessible(manifest, width, read_only):
     action, draft = app.return_value
     assert action == 'delete'
     assert draft == manifest
+
+
+@pytest.mark.parametrize('color_system', ['truecolor', '256', 'standard'])
+async def test_review_tracks_edits_reverts_and_nested_records(manifest, color_system):
+    from rich.console import COLOR_SYSTEMS
+
+    app = BoardFormApp(original=manifest)
+    app.console._color_system = COLOR_SYSTEMS[color_system]
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.pause()
+        review = app.query_one('#review-changes', Button)
+        assert review.disabled
+        review.press()
+        await pilot.pause()
+        assert app.return_value is None
+        field = app.query_one('#board-notes', Input)
+        original = field.value
+        field.value = 'Changed'
+        await pilot.pause()
+        assert not review.disabled
+        review.focus()
+        await pilot.pause()
+        assert app.focused is review
+        enabled_style = review.rich_style
+        field.value = original
+        await pilot.pause()
+        assert review.disabled
+        assert app.focused is not review
+        assert review.rich_style != enabled_style
+        app.query_one('#add-part', Button).press()
+        await pilot.pause()
+        assert not review.disabled
+        row = list(app.query(PartRow))[-1]
+        row.query_one('.remove-row', Button).press()
+        await pilot.pause()
+        assert review.disabled
+
+
+async def test_retained_changed_draft_can_be_reviewed(manifest):
+    draft = deepcopy(manifest)
+    draft['version'] = 'edited version'
+    app = BoardFormApp(original=manifest, draft=draft)
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.pause()
+        assert not app.query_one('#review-changes', Button).disabled

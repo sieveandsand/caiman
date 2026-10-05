@@ -172,8 +172,11 @@ def edit_project(root: Path, service: ConfigurationService, selection: dict, dra
     original = selection['manifest']
     draft, message = deepcopy(original if draft is None else draft), ''
     draft.setdefault('pod', selection.get('pod', service.store.pods.default))
+    # Pod ownership lives outside the stored manifest. Compare the form against
+    # the same editable context, without treating that supplied field as an edit.
+    form_original = dict(original, pod=selection.get('pod', service.store.pods.default))
     while True:
-        outcome = ProjectFormApp(original=original, draft=draft, message=message, root=root).run()
+        outcome = ProjectFormApp(original=form_original, draft=draft, message=message, root=root).run()
         if outcome is None:
             return None
         action, draft = outcome

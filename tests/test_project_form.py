@@ -166,9 +166,11 @@ async def test_review_raw_and_back_exit_as_the_board_form_does(manifest):
         app = ProjectFormApp(original=manifest)
         async with app.run_test(size=(110, 50)) as pilot:
             await pilot.pause()
+            app.query_one('#project-version', Input).value = 'Changed'
+            await pilot.pause()
             app.query_one(button, Button).press()
             await pilot.pause()
-        assert app.return_value == (expected, manifest)
+        assert app.return_value == (expected, dict(manifest, version='Changed'))
     app = ProjectFormApp(original=manifest)
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.pause()
@@ -299,3 +301,48 @@ async def test_stable_document_references_preserve_feature_requirements(manifest
         app.query_one('#review-changes', Button).focus()
         await pilot.pause()
         assert app.collect() == manifest
+
+
+@pytest.mark.parametrize('color_system', ['truecolor', '256', 'standard'])
+async def test_review_tracks_edits_reverts_and_nested_records(manifest, color_system):
+    from rich.console import COLOR_SYSTEMS
+
+    app = ProjectFormApp(original=manifest)
+    app.console._color_system = COLOR_SYSTEMS[color_system]
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.pause()
+        review = app.query_one('#review-changes', Button)
+        assert review.disabled
+        review.press()
+        await pilot.pause()
+        assert app.return_value is None
+        field = app.query_one('#project-customer', Input)
+        original = field.value
+        field.value = 'Changed'
+        await pilot.pause()
+        assert not review.disabled
+        review.focus()
+        await pilot.pause()
+        assert app.focused is review
+        enabled_style = review.rich_style
+        field.value = original
+        await pilot.pause()
+        assert review.disabled
+        assert app.focused is not review
+        assert review.rich_style != enabled_style
+        app.query_one('#add-feature', Button).press()
+        await pilot.pause()
+        assert not review.disabled
+        row = list(app.query(FeatureCard))[-1]
+        row.query_one('.remove-row', Button).press()
+        await pilot.pause()
+        assert review.disabled
+
+
+async def test_retained_changed_draft_can_be_reviewed(manifest):
+    draft = deepcopy(manifest)
+    draft['version'] = 'edited version'
+    app = ProjectFormApp(original=manifest, draft=draft)
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.pause()
+        assert not app.query_one('#review-changes', Button).disabled

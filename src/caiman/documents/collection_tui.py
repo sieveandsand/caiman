@@ -49,6 +49,7 @@ class CollectionApp(NavigationApp):
         self.prepared = None
         self.busy = False
         self.loaded = False
+        self.initial_values = None
 
     def compose(self):
         yield Static('caiman  /  ' + ('edit collection' if self.original else 'add collection'), id='brand')
@@ -87,7 +88,8 @@ class CollectionApp(NavigationApp):
                      for i, r in enumerate(self.records)]
             await self.query_one('#documents', Grid).mount(*(CardFrame(card) for card in cards))
             self.loaded = True
-            self.query_one('#review-save', Button).disabled = False
+            self.initial_values = self.collect()
+            self.update_review_button()
             self.resize_cards()
             self.update_count()
             if not cards:
@@ -107,6 +109,19 @@ class CollectionApp(NavigationApp):
     def update_count(self):
         count = sum(card.chosen for card in self.query(MemberCard))
         self.query_one('#selection-count', Static).update(f'{count} selected · {len(self.records)} existing documents')
+        self.update_review_button()
+
+    def update_review_button(self):
+        if not self.loaded:
+            return
+        unchanged = bool(self.original) and self.collect() == self.initial_values
+        self.query_one('#review-save', Button).disabled = self.busy or unchanged
+
+    def on_input_changed(self, event: Input.Changed):
+        self.update_review_button()
+
+    def on_select_changed(self, event: Select.Changed):
+        self.update_review_button()
 
     def collect(self):
         pod = self.query_one('#pod', Select).value
@@ -177,4 +192,4 @@ class CollectionApp(NavigationApp):
                 self.query_one('#status', Static).update(str(error))
             finally:
                 self.busy = False
-                self.query_one('#review-save', Button).disabled = False
+                self.update_review_button()

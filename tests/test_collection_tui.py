@@ -1,5 +1,5 @@
 import pytest
-from textual.widgets import Input, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
 from caiman.dashboard.actions import DocumentCatalogApp
 from caiman.documents.cards import CollectionCard, CollectionFrame
@@ -104,3 +104,38 @@ async def test_collection_stack_is_persistent_focus_does_not_resize(tmp_path):
         card.focus()
         await pilot.press('enter')
     assert app.return_value['collection']['digest'] == saved['digest']
+
+
+@pytest.mark.parametrize('color_system', ['truecolor', '256', 'standard'])
+async def test_collection_review_tracks_edits_and_reverted_selection(tmp_path, color_system):
+    from rich.console import COLOR_SYSTEMS
+
+    store = Store(tmp_path / 'store')
+    pin = document(tmp_path, store)
+    service = CollectionService(store)
+    saved = service.register(service.prepare(draft([pin])))
+    app = CollectionApp(root=store.root, record=saved)
+    app.console._color_system = COLOR_SYSTEMS[color_system]
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.pause()
+        review = app.query_one('#review-save', Button)
+        assert review.disabled
+        name = app.query_one('#name', Input)
+        original = name.value
+        name.value = 'Changed'
+        await pilot.pause()
+        assert not review.disabled
+        name.value = original
+        await pilot.pause()
+        assert review.disabled
+        card = app.query_one(MemberCard)
+        card.press()
+        await pilot.pause()
+        assert not review.disabled
+        card.press()
+        await pilot.pause()
+        assert review.disabled
+        app.query_one('#cancel', Button).focus()
+        await pilot.pause()
+        assert card.chosen
+        assert '✓ Included' in card.label.plain

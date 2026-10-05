@@ -194,6 +194,15 @@ Say so wherever the log is surfaced.
   both map to black in 16/256 colors. Use a visible border, marker, or text cue,
   and check changed UI states in all three color modes, including selection
   retained after focus moves to action controls.
+- **Review only changed drafts.** Every edit page disables (greys out)
+  `Review changes` while the effective draft equals the original. Recompute after
+  field edits, picker results, and nested additions/removals; reverting all edits
+  disables it again. Retained drafts from raw editing or validation retries must
+  reflect their changes immediately. Invalid changed input still reaches review
+  validation. Include externally stored context (such as the owning pod) in
+  both sides of the comparison; populating that context is not an edit. Exercise
+  the real editor entry path with stored records, not only standalone forms.
+  Creation flows remain able to review a new record.
 - **Prefer boring dependencies.** Operational surface is the scarcest resource
   here (D-04). Adding a service needs a written reason — and "no server" is a
   settled decision, not a default.

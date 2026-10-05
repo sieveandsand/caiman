@@ -137,12 +137,6 @@ class DocumentFormApp(EditorFormApp):
         for grid in self.query('.card-grid'):
             grid.styles.grid_size_columns = 1
 
-    def update_review_button(self):
-        self.query_one('#review-changes', Button).disabled = self.collect() == self.original
-
-    def on_input_changed(self, event: Input.Changed):
-        self.update_review_button()
-
     def collect(self):
         result = deepcopy(self.draft)
         for key in ('name', 'version', 'description', 'doc_type'):
