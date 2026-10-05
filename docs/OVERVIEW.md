@@ -7,9 +7,9 @@ and customer requirements that coding agents need. It connects a project to an
 explicit board version and a pinned set of documents, so updating a manual does
 not silently change an existing configuration.
 
-[Getting started](README.md#first-launch-and-document-ingestion) ·
-[Documentation](README.md#documentation) ·
-[Roadmap](docs/ROADMAP.md)
+[Getting started](../README.md#first-launch-and-document-ingestion) ·
+[Documentation](../README.md#documentation) ·
+[Roadmap](ROADMAP.md)
 
 ## What you can do today
 
@@ -28,7 +28,7 @@ not silently change an existing configuration.
 **Development status: pre-MVP.** Local ingestion and board/project authoring are
 available through a terminal interface and JSON drafts. Session workspace
 generation, brief generation, document-access logging, and shared Git storage
-are planned. See the [README](README.md) for currently available commands and
+are planned. See the [README](../README.md) for currently available commands and
 integrations.
 
 ## Quick start
@@ -47,8 +47,8 @@ For your first walkthrough:
 
 1. Create a board and a project from the dashboard. Both can start without
    documents.
-2. Import the public [firmware datasets](fixtures/README.md), following
-   the [ingestion guide](README.md#first-launch-and-document-ingestion).
+2. Import the public [firmware datasets](../fixtures/README.md), following
+   the [ingestion guide](../README.md#first-launch-and-document-ingestion).
 3. Edit the board to select the manual, then explicitly adopt the updated board
    in your project.
 4. Review and register each configuration to preserve its exact document pins.
@@ -80,12 +80,12 @@ public firmware datasets when trying the tool; unit tests use synthetic inputs.
 
 | Guide | What it covers |
 |---|---|
-| [User guide](README.md) | Installation, ingestion, editing, and CLI examples |
-| [Architecture](docs/ARCHITECTURE.md) | How boards, projects, and agent context fit together |
-| [Storage](docs/STORAGE.md) | Object formats, immutable versions, and document pins |
-| [Security model](docs/SECURITY-MODEL.md) | Classification, compartments, and access boundaries |
-| [Team storage](docs/STORAGE.md#66-team-storage-one-git-repository-per-compartment) | Git sharing and Merkle-based context identity |
-| [Roadmap](docs/ROADMAP.md) | Remaining milestones and validation work |
+| [User guide](../README.md) | Installation, ingestion, editing, and CLI examples |
+| [Architecture](ARCHITECTURE.md) | How boards, projects, and agent context fit together |
+| [Storage](STORAGE.md) | Object formats, immutable versions, and document pins |
+| [Security model](SECURITY-MODEL.md) | Classification, compartments, and access boundaries |
+| [Team storage](STORAGE.md#66-team-storage-one-git-repository-per-compartment) | Git sharing and Merkle-based context identity |
+| [Roadmap](ROADMAP.md) | Remaining milestones and validation work |
 
 ## Development
 
@@ -95,6 +95,6 @@ Run the test suite from the repository root:
 .venv/bin/python -m pytest
 ```
 
-Read [CLAUDE.md](CLAUDE.md) for repository invariants before making changes.
+Read [CLAUDE.md](../CLAUDE.md) for repository invariants before making changes.
 Use synthetic test inputs or reviewed public source with redistribution rights
 and retained license notices. Private customer documents must stay out of this repository.
