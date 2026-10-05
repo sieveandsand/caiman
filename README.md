@@ -208,6 +208,10 @@ available controls; there are no Ctrl shortcuts or command palette.
 
 ### Edit an existing board or project
 
+**Delete board** opens a confirmation for the selected board version and pod.
+Confirming removes it from the gallery; its stored snapshot remains available
+to projects that already pin it. **Keep board** returns to the current draft.
+
 Choose **Boards**, select a card, then press Enter or `e` for the guided
 editor. Cards emphasize the board name and version with fullwidth uppercase headings
 where they fit, and show only part names and counts of parts, links, and document

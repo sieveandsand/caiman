@@ -98,6 +98,63 @@ class BoardEditReviewApp(NavigationApp):
                     button.disabled = False
 
 
+class BoardDeleteApp(NavigationApp):
+    """Confirm removing one board version from the list; exits True once deleted."""
+
+    TITLE = 'Caiman · Delete board'
+    AUTO_FOCUS = '#cancel'
+    CSS = TERMINAL_CSS + '''
+    Button { width: auto; }
+    Button:focus { border: double #7fdc4f; }
+    '''
+
+    def __init__(self, *, root, selection):
+        super().__init__()
+        apply_theme(self)
+        self.root = root
+        self.selection = selection
+        self.deleting = False
+
+    def compose(self):
+        manifest = self.selection['manifest']
+        yield Static('caiman  /  delete board', id='brand')
+        with VerticalScroll(id='body'):
+            yield Static(f"Delete {manifest['board']} @ {manifest['version']} from "
+                         + self.selection.get('pod', 'public') + '?', markup=False)
+            yield Static('The board leaves the board list. Its snapshot stays in the store by digest, so '
+                         'anything already pinned to it keeps working. Nothing is pushed.', classes='hint')
+            yield Static(f"Manifest: {self.selection['digest']}", markup=False)
+        yield Static('', id='status', markup=False)
+        with Horizontal(id='navigation'):
+            yield Button('Keep board', id='cancel', variant='primary')
+            yield Button('Delete board', id='delete', variant='error')
+        yield self.navigation_hint()
+
+    def action_cancel(self):
+        if not self.deleting:
+            self.exit(False)
+
+    async def on_button_pressed(self, event):
+        if self.deleting:
+            return
+        if event.button.id == 'cancel':
+            self.action_cancel()
+        elif event.button.id == 'delete':
+            self.deleting = True
+            for button in self.query(Button):
+                button.disabled = True
+            try:
+                await asyncio.to_thread(ConfigurationService(Store(self.root)).unregister, 'board',
+                                        self.selection['manifest'], self.selection['digest'], pod=self.selection.get('pod', 'public'))
+                self.exit(True)
+            except (OSError, ValueError) as error:
+                self.query_one('#status', Static).update(str(error))
+            finally:
+                self.deleting = False
+                for button in self.query(Button):
+                    button.disabled = False
+
+
 def _vim_excursion(root, original, draft):
     from caiman.configurations.editor import vim_excursion
 
@@ -109,7 +166,8 @@ def edit_board(root: Path, service: ConfigurationService, selection: dict) -> di
 
     The guided form is the way in; Vim is the escape hatch at the bottom of it
     and returns to the same form, so an edit made either way is reviewed the
-    same way. Returns the registered board, if one was registered.
+    same way. Returns the registered board, if one was registered. Confirmed
+    deletion removes its name/version ref and returns None.
     """
     from caiman.boards.form import BoardFormApp
 
@@ -122,6 +180,10 @@ def edit_board(root: Path, service: ConfigurationService, selection: dict) -> di
             return None
         action, draft = outcome
         message = ''
+        if action == 'delete':
+            if BoardDeleteApp(root=root, selection=selection).run():
+                return None
+            continue
         if action == 'raw':
             edited = _vim_excursion(root, original, draft)
             if edited is not None:

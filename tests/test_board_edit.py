@@ -238,3 +238,74 @@ def test_invalid_draft_reports_in_the_form_without_writing(board_setup, monkeypa
     assert 'parts.0.vendor' in seen[1]['message']
     assert seen[1]['draft'] == broken
     assert snapshot(root) == before
+
+
+@pytest.mark.parametrize('color_system', ['truecolor', '256', 'standard'])
+async def test_delete_board_confirmed_and_keeps_project_pins(board_setup, color_system):
+    from rich.console import COLOR_SYSTEMS
+    from caiman.boards.edit import BoardDeleteApp
+
+    root, service, original, _ = board_setup
+    project = service.prepare('project', {
+        'project': 'program', 'version': 'A', 'customer': 'Synthetic', 'spec_set': 'A',
+        'boards': [{'name': 'demo', 'version': 'v1'}], 'documents': [], 'features': [],
+    })
+    service.register(project)
+    selection = {'manifest': original.manifest, 'digest': original.digest, 'pod': original.pod}
+    before = snapshot(root)
+    app = BoardDeleteApp(root=root, selection=selection)
+    app.console._color_system = COLOR_SYSTEMS[color_system]
+    async with app.run_test(size=(70, 30)) as pilot:
+        await pilot.pause()
+        assert app.focused.id == 'cancel'
+        assert snapshot(root) == before
+        await pilot.press('tab')
+        assert app.focused.id == 'delete'
+        assert app.focused.styles.border_top[0] == 'double'
+        await pilot.press('enter')
+        await wait_for(pilot, lambda: app.return_value is not None)
+    assert app.return_value is True
+    assert service.list_configs('board') == []
+    assert service.load_digest('board', original.digest) == original.manifest
+    assert service.prepare('project', project.manifest).digest == project.digest
+
+
+async def test_delete_board_cancel_and_stale_selection(board_setup):
+    from caiman.boards.edit import BoardDeleteApp
+
+    root, service, original, prepared = board_setup
+    selection = {'manifest': original.manifest, 'digest': original.digest, 'pod': original.pod}
+    before = snapshot(root)
+    app = BoardDeleteApp(root=root, selection=selection)
+    async with app.run_test() as pilot:
+        await pilot.press('enter')
+    assert app.return_value is False
+    assert snapshot(root) == before
+    service.register(prepared)
+    before = snapshot(root)
+    app = BoardDeleteApp(root=root, selection=selection)
+    async with app.run_test() as pilot:
+        app.query_one('#delete').press()
+        await wait_for(pilot, lambda: 'changed since' in str(app.query_one('#status', Static).content))
+        assert app.is_running
+        await pilot.press('q')
+    assert snapshot(root) == before
+
+
+def test_cancel_delete_returns_to_board_draft(board_setup, monkeypatch):
+    import caiman.boards.edit as editing
+
+    root, service, original, prepared = board_setup
+    selection = {'manifest': original.manifest, 'digest': original.digest, 'pod': original.pod}
+    seen = []
+    form_returning(monkeypatch, [('delete', prepared.manifest), None], seen)
+    class CancelDelete:
+        def __init__(self, **kwargs):
+            assert kwargs['selection'] == selection
+        def run(self):
+            return False
+    monkeypatch.setattr(editing, 'BoardDeleteApp', CancelDelete)
+    before = snapshot(root)
+    assert editing.edit_board(root, service, selection) is None
+    assert seen[1]['draft'] == prepared.manifest
+    assert snapshot(root) == before

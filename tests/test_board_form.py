@@ -532,3 +532,23 @@ async def test_stable_document_reference_roundtrip_and_replacement(manifest, col
         assert draft['documents'][0]['notes'] == pin['notes']
         assert draft['parts'][0]['documents'] == [pin]
         assert validate_board(draft)['documents'] == draft['documents']
+
+
+@pytest.mark.parametrize('width', [70, 110])
+@pytest.mark.parametrize('read_only', [False, True])
+async def test_delete_board_is_keyboard_accessible(manifest, width, read_only):
+    if read_only:
+        manifest['links'] = [{'name': 'legacy', 'from': 'application-mcu', 'to': 'safety-companion'}]
+    app = BoardFormApp(original=manifest)
+    async with app.run_test(size=(width, 40)) as pilot:
+        await pilot.pause()
+        app.query_one('#raw').focus()
+        await pilot.press('tab')
+        button = app.query_one('#delete', Button)
+        assert app.focused is button
+        assert app.screen.region.contains_region(button.region)
+        assert app.screen.region.contains_region(app.query_one('#cancel').region)
+        await pilot.press('enter')
+    action, draft = app.return_value
+    assert action == 'delete'
+    assert draft == manifest

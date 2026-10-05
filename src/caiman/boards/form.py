@@ -194,10 +194,14 @@ class LinkRow(CardRow):
 
 
 class BoardFormApp(EditorFormApp):
-    """Edit a board field by field. Exits with ('review'|'raw', draft), or None."""
+    """Edit a board field by field. Exits with ('review'|'raw'|'delete', draft), or None."""
 
     TITLE = 'Caiman · Edit board'
-    CSS = BOARD_FORM_CSS
+    CSS = BOARD_FORM_CSS + '''
+    #navigation { layout: grid; grid-size: 2; grid-columns: 1fr; grid-rows: 3; height: auto; }
+    #navigation Button { width: 100%; min-width: 0; margin: 0; }
+    #navigation Button:focus { border: double #7fdc4f; }
+    '''
 
     def __init__(self, *, original: dict, draft: dict | None = None, message: str = ''):
         super().__init__()
@@ -212,6 +216,9 @@ class BoardFormApp(EditorFormApp):
         self.read_only = self.legacy or self.directed
         self.message = message
         self.vendors = vendor_suggester(self.draft)
+
+    def on_resize(self, event):
+        self.query_one('#navigation').styles.grid_size_columns = 4 if event.size.width >= 100 else 2
 
     def field(self, key: str, label: str, *, suggester=None):
         yield Label(label, classes='field-label')
@@ -249,6 +256,7 @@ class BoardFormApp(EditorFormApp):
             if not self.read_only:
                 yield Button('Review changes', id='review-changes', variant='primary')
             yield Button('Edit raw JSON in Vim', id='raw', variant='primary' if self.read_only else 'default')
+            yield Button('Delete board', id='delete', variant='error')
             yield Button('Back to boards', id='cancel')
         yield self.navigation_hint()
 
@@ -288,8 +296,8 @@ class BoardFormApp(EditorFormApp):
         event.stop()
         if button.id == 'cancel':
             self.exit(None)
-        elif button.id in {'review-changes', 'raw'}:
-            action = 'review' if button.id == 'review-changes' else 'raw'
+        elif button.id in {'review-changes', 'raw', 'delete'}:
+            action = 'review' if button.id == 'review-changes' else button.id
             try:
                 self.exit((action, deepcopy(self.draft) if self.read_only else self.collect()))
             except ValueError as error:
