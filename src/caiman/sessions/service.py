@@ -201,13 +201,13 @@ def resolve_context(store: Store, kind: str, name: str, version: str, pod: str |
 
 
 def document_location(manifest: dict) -> Path:
-    """`issuer/part/name@version/document.<ext>`: the path is the citation (STORAGE §7.3)."""
+    """`issuer/part/name@version/document.<ext>`: the path is the citation (ARCHITECTURE §5)."""
     issuer, scope, name, version = document_ref(manifest).parts
     return Path(issuer, scope, f'{name}@{version}', manifest['files'][0]['path'])
 
 
 def document_set_digest(documents: list[dict]) -> str:
-    """Depends only on what was installed, never on the session (STORAGE T-34)."""
+    """Depends only on what was installed, never on the session (STORAGE §6)."""
     keys = sorted([pod, str(identity), body] for pod, identity, body in map(_document_key, documents))
     return 'sha256:' + hashlib.sha256(canonical_json({'documents': keys})).hexdigest()
 

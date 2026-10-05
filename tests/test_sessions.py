@@ -170,7 +170,7 @@ def test_switching_one_session_leaves_another_unchanged(library):
     start(root, worktree, 's2')
     first = load_context(root, folder(worktree, 's1'), 'board', 'demo-board', 'Rev A')
     second = load_context(root, folder(worktree, 's2'), 'board', 'demo-board', 'Rev A')
-    # Same documents, same document-set identity, regardless of session (T-34).
+    # Same documents, same document-set identity, regardless of session (STORAGE §6).
     assert first['document_set'] == second['document_set']
     before = tree(folder(worktree, 's2'))
     switched = load_context(root, folder(worktree, 's1'), 'project', 'kestrel', 'dvt-1')

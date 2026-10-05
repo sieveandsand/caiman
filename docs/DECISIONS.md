@@ -1,732 +1,166 @@
 # Decisions
 
-## Complete document manifests and flexible attachments (2026-10-03)
+**Owns:** settled decisions and their reasons, and decisions still open.
+Each entry states the decision and why. Design detail lives in the linked doc.
+Settled entries are not relitigated without a new reason. Ask before resolving
+an open one in code.
 
-User-approved: every editable metadata field uses one complete immutable manifest
-revision. A stable document ID and fixed blob identify the document; all references,
-including old boards, resolve its latest approved metadata. Preserve earlier
-manifests for explicit history. Metadata edits do not rewrite consumer snapshots.
-Remove issuer/part/vendor/silicon matching restrictions on board attachments.
-Known local usages are informational; incomplete enumeration does not block edits.
-Existing test data and overlays require no migration. This supersedes the prior
-split between shared description/provenance and identity/applicability adoption.
-[DOCUMENT-METADATA.md](DOCUMENT-METADATA.md) owns the design and publication rules.
-
-## Document structure and requirement-pattern metadata removed (2026-10-03)
-
-User-approved: remove document `structure` and `requirements` fields from
-authoring, editing, and validation. Requirement IDs remain ordinary source
-content; project feature `governed_by[].requirements` references are unchanged.
-Existing document snapshots retain their bytes and digests; read adapters omit
-the retired fields in memory. This supersedes the requirement-pattern admission
-rules in S-25 and I-5. [PODS.md](PODS.md) describes compatibility.
-
-## Pods replace access labels and compartments (2026-10-01)
-
-User-approved: one local folder per pod, optionally one Git repository per pod.
-`public` is the permanent default pod. Caiman removes its separate authorization
-layer, discovers local pods, and pins cross-pod dependencies without copying
-them. Each configuration has one owning pod. This supersedes the access and
-compartment portions of S-16, S-22, S-29, S-33, and S-35. Existing immutable
-snapshots remain readable without rewriting their bytes. [PODS.md](PODS.md)
-owns the implemented format, UI, Git workflow, and migration limits.
-
-
-**Purpose:** The record of what was decided, when, and why.
-**Owns:** Decision history and the trade-off analysis for decisions still open.
-Settled entries state the decision and its rationale and point at the design
-document that implements it; they do not restate the design.
-
-Three sections: **Settled** (do not relitigate without a reason), **Open**
-(choose deliberately; record the choice here), and **Retired** (the scope no
-longer requires them — kept so the reasoning is not rediscovered).
-
----
+The invariants in [CLAUDE.md](../CLAUDE.md) (I-1 to I-10) are not repeated here.
 
 ## Settled
 
-### S-01. Caiman is a layer, not a platform
+### Scope
 
-Caiman assembles context and writes files into a worktree. Session management,
-worktrees, agent execution, and hardware testing belong to external tools.
-Keeping that boundary limits maintenance and lets engineers use their existing
-harness. [Architecture §2.3](ARCHITECTURE.md#23-positioning-and-principles).
+**S-01. Caiman is a layer, not a platform.** It writes files into a worktree.
+Session management, worktrees, agent execution, and hardware-in-the-loop testing
+belong to other tools. *Why:* keeps maintenance small and lets engineers keep
+their harness.
 
-### S-02. Documents are immutable, versioned artifacts
+**S-08. No document conversion.** Files are registered as supplied, including
+externally converted Markdown. *Why:* a converter is a project of its own.
+Optional converter provenance helps trace bad conversions.
 
-Several document releases must remain usable at once. Content-addressed artifacts
-preserve each version independently of a mutable name or Git HEAD.
+**S-14. Projects are boards plus documents; no compliance tracking.** Project
+authoring covers pinned boards, documents, and collections. A project's
+collection reference follows current membership and keeps the snapshot digest
+from save time for historical reads. Existing `features` data is kept and
+editable as raw JSON, with `scope` limited to `required` or `not-used`. *Why:*
+structured features cost more to maintain than any current consumer justifies.
 
-### S-03. Labels come from provenance, assigned to whole documents at ingest
+**S-15. Relationships are declared, never inferred.** Lineage and feature
+relations come from a human with a written explanation. There is no conflict
+detection between specifications. A deviation names the requirement IDs it
+amends, so `grep` finds both. *Why:* inferred precedence is a compliance risk.
 
-Humans assign explicit labels to the whole document at registration. Its text
-cannot establish who may receive it. [Security §4](SECURITY-MODEL.md#4-why-content-inspection-cannot-work).
+**S-17. Licensed standards are not hosted.** No ISO, AUTOSAR, or MISRA content.
+*Why:* redistribution rights.
 
-### S-04. Filesystem plus grep is the primary retrieval path
+**S-18. The filesystem is the interface.** No server, index, or MCP tool. Agents
+search with `rg` and read bounded ranges. *Why:* register and requirement IDs
+suit lexical search; a service adds upkeep without proven need. Revisit only
+when logged concept queries repeatedly defeat search (D-03).
 
-Use ordinary file search for exact identifiers. Semantic retrieval remains a
-possible fallback under S-18.
+**S-19. The human chooses context; Caiman enforces nothing.** Caiman does not
+attest models or gate tools. Session folders separate selections, not
+permissions. *Why:* a gate without substance invites false confidence.
 
-### S-05. Fail closed, everywhere
+### Documents and storage
 
-Missing required pod dependencies or fixed document bodies fail resolution and
-materialization. Never silently substitute or publish a partial set (I-2, I-9).
-The historical access-label rule is retired under pods.
+**S-21. Filesystem content-addressed store.** Blobs and manifests by digest,
+mutable refs by name, one tree per pod. *Why:* no database is needed at this
+scale. [Storage](STORAGE.md).
 
-### S-06. Citations identify the document, version, and source location
+**S-25. Ingest registers one unchanged file of any format.** No heading,
+front-matter, or requirement-ID checks; no splitting, maps, summaries, or AI.
+Documents have no `structure` or `requirements` fields. *Why:* a small
+pipeline; acceptance does not imply readability or correctness.
 
-Use a source-appropriate locator: requirement ID, heading path, page, sheet/cell,
-line range, or another precise location. Ingest does not require source structure.
-[Architecture §6.4.2](ARCHITECTURE.md#642-file-admission-and-citations) owns admission.
+**S-26. Provenance is optional.** Original-source and converter fields may be
+omitted individually. Missing values stay absent. *Why:* simpler registration.
 
-Updated 2026-10-03 by user choice to accept documents of any format.
+**S-37. One document concept; collections group documents.** Manuals, notes, and
+requirements use the same form: name and description. Collections are named,
+unversioned sets of existing documents with a stable ID.
 
-### S-07. A project version is the complete pin set; there is no repo-side lockfile
+**S-41. Metadata edits create complete manifest revisions.** A document has a
+stable ID and a fixed body. Every metadata edit writes a full new manifest
+linked to the previous one. References pin ID and body and show current
+metadata, including from old boards. Document metadata never restricts
+attachment. Changed bytes need a new document. *Why:* one save path, full
+history, no rewriting of consumers.
 
-A project pins its board and specifications transitively. A repository lockfile
-cannot represent concurrent sessions using different project versions from one
-checkout, so selection stays per session.
-[Architecture §6.7](ARCHITECTURE.md#67-resolve).
+**S-11. Versions are stored whole and never rewritten.** Editing starts from a
+snapshot but stores a complete result. Schema literals are a table; old literals
+stay readable and are never migrated in place. *Why:* immutable pins.
 
-Settled 2026-08-20; amended for S-13.
+### Boards and projects
 
-### S-08. PDF → markdown conversion is out of scope
+**S-12. Parts are identified by role.** For example `safety-companion`.
+Reference designators go in `aliases`. Vendor peripheral names stay unchanged so
+they match source documents.
 
-Accept files as supplied, including externally converted Markdown. Maintaining a
-converter would expand the
-project beyond context assembly. Optional conversion provenance supports tracing
-errors; conversion confidentiality remains the user's responsibility.
+**S-13. Board is hardware; project is the program.** *Why:* one board ships to
+several customers; keeping customer identity out of the board keeps it shareable.
 
-Settled 2026-08-20; supersedes D-01.
+**S-31. Board schema.** Assembly documents, separate `vendor` and `part`,
+cross-domain `aliases`, and free-text `notes`. Register maps, nets, build flags,
+and lifecycle status are excluded.
 
-### S-09. The brief is open and metadata only
+**S-34. A project pins one or more boards.** Including one board at several
+versions; the same version twice is rejected.
 
-Generate one always-visible brief from metadata only, with the program codename
-instead of customer identity. The generator cannot read document bodies (I-6).
-The brief describes the selected session context; field visibility remains G17.
+**S-36. No precedence among project documents.** *Why:* not needed yet. If it
+returns, a human declares it (S-15).
 
-The assumption that the remaining metadata is safe to expose is under review
-in G17; metadata-only generation does not prove it.
-[Security §5.5](SECURITY-MODEL.md#55-brief-visibility-and-its-assumptions).
+### Pods
 
-Settled 2026-08-20.
+**S-38. Pods replace access labels.** One folder per pod, optionally one Git
+repository. References stay within the owning pod or `public`. `public` is the
+permanent default. The Git host and filesystem own access. *Why:* access was
+already enforced by repository permissions; a second layer added only
+confusion. [Architecture §6](ARCHITECTURE.md#6-pods-and-sharing).
 
-### S-10. Version labels are opaque; lineage is declared
+### Interface
 
-Store labels verbatim: no ordering, parsing, wildcards, or “latest”. Companies use
-incompatible version conventions. Lineage is an explicit `derives_from` and
-free-text `relation`; a bare name lists versions. This is I-7.
+**S-27. Ingestion is a TUI.** Shared validation and registration stay free of
+widgets so a future native macOS app can reuse them. No local web frontend.
 
-### S-11. Versions are stored whole and authored by delta
+**S-28. Boards and projects use a TUI and editable JSON drafts.** Both share
+validation and registration. Review resolves selectors to pins.
 
-Start editing from a selected snapshot, but store the complete result. Existing
-pins survive and reads need no inheritance resolution. Features and other
-unchanged declarations carry forward without being entered again.
+**S-29. Always choose explicitly.** No default board or project is remembered
+or preselected.
 
-### S-12. Parts are identified by role
+**S-30. The bare command is a dashboard.** One card per category, Vim-style
+navigation with an explicit editing mode, no Ctrl shortcuts or command palette.
+Black and green theme that survives 16-color terminals.
 
-Identify a part by its design role, such as `safety-companion`. Reference
-designators belong in `aliases`, not the identity or display name. Keep vendor
-peripheral names unchanged so they remain searchable in source documents.
+**S-32. Guided editor with raw JSON as the escape hatch.** Fields the form does
+not show, such as lineage, pass through unchanged. Legacy boards are shown but
+edited only as JSON.
 
-### S-13. Board is hardware; Project is the session unit
+### Sessions
 
-A board describes hardware. A project combines a board version with customer
-specifications, features, precedence, and compartments. Separate models let
-multiple customer programs share hardware without putting customer identity in
-the public board manifest.
+**S-07. Selection is per session; no repository lockfile.** *Why:* one checkout
+can host several sessions on different project versions.
 
-Settled 2026-08-20; amended 2026-09-25 by S-34 (several boards) and S-36 (no precedence).
+**S-23. Hooks register and orient; they never provision.** The start hook
+registers the session and says what is loaded. It never waits for input and
+never reads document bodies.
 
-### S-14. Projects use boards and documents; features are compatibility data
+**S-39. Container agents use host provisioning and request files.** Planned.
+[Agents in containers](CONTAINERS.md).
 
-Project authoring focuses on pinned boards and documents. Collections organize
-related documents and can populate a project's document list. One shared picker
-offers documents and collections together, without a separate collection action.
-Choosing a collection in a project saves `{pod, collection, digest}`: stable
-collection identity plus the original snapshot digest. Normal project reads
-follow the collection's current approved membership and metadata; historical
-resolution uses the recorded digest. Saving a collection updates the effective
-document set of referencing projects without rewriting their manifests. Direct
-document attachments remain independent; overlaps are deduplicated on resolution.
-Missing or invalid dependencies fail the complete resolution. Project registration
-rejects collection changes made after its review.
-
-This revises the initial expand-on-selection behavior at the user's request on
-2026-10-04. Already expanded projects retain their direct references; no grouping
-is inferred. Boards and parts still expand selected groups. Collection editors
-offer individual documents only; collections do not contain collections.
-
-Normal project creation and editing do not expose feature controls or require a
-`features` field. Existing declarations remain intact, validated, and editable
-through raw JSON. No automatic feature-to-collection migration occurs: a document
-group does not express `required` / `not-used`, requirement IDs, hardware mappings,
-or feature relationships. Those fields are not added to collections.
-
-Implementation, verification, and compliance tracking remain outside Caiman.
-Revisit structured feature authoring only when a concrete consumer justifies its
-maintenance cost. [Project fields](STORAGE.md#project-fields).
-
-Settled 2026-08-20; revised 2026-10-04 by explicit user decision to simplify
-projects around documents and collections.
-
-### S-15. Declared relationships are rendered, never inferred
-
-Humans declare lineage, precedence, and feature relationships with explanations.
-Caiman renders them without inferring contractual meaning or detecting conflicts.
-A deviation can name amended requirement IDs so search returns both documents.
-
-Settled 2026-08-20. This is I-8.
-
-### S-16. Classification asks whose secret this is, not how secret it is
-
-Use public access or exactly one named compartment per document, not sensitivity
-levels (S-33). A project must include that compartment to select the document. The initial policy treats
-ordinary vendor documentation as public and customer specifications as
-compartmented; restricted vendor material can also use compartments.
-[Security §3](SECURITY-MODEL.md#3-classification) owns the rules.
-
-Settled 2026-08-20; replaces the tier scale.
-
-### S-17. Licensed standards are not hosted
-
-Do not host ISO, AUTOSAR, or MISRA content. Customer documents may cite those
-standards, but Caiman does not redistribute them. Identity-only standard stubs
-were considered and dropped as unnecessary for the assumed specification sets.
-
-Settled 2026-08-20.
-
-### S-18. The filesystem is the interface; there is no server in the MVP
-
-Materialize ordinary files and let the agent search them. Exact register and
-requirement identifiers suit lexical search; a service would add maintenance
-and tool context without an established need.
-
-Concept-based questions may still need semantic retrieval. Published comparisons
-were mixed, so the decision depends on Caiman's own tasks: record misses and
-revisit when identifier-unknown queries repeatedly defeat search and selective
-reading. D-03 remains deferred. A pluggable retrieval backend is an option if
-that trigger fires; do not add splitting or generated maps to ingest by default.
-
-Settled 2026-08-20; supersedes D-06/D-11. Trigger updated 2026-09-15 for S-25.
-
-### S-19. The human selects context; Caiman holds no agent policy
-
-The human chooses the session's context and the processing environment suitable
-for its documents. Caiman does not attest models or enforce their authorization.
-The former agent map and open/sealed materialization modes are retired under the
-pod model. S-39 defines host-authorized context choices and per-session switching.
-
-Settled 2026-08-20; agent map removed 2026-09-15; aligned with pods and S-39
-on 2026-10-04.
-
-### S-20. Documents are linked from a content-addressed cache, not copied
-
-Prefer filesystem clones or read-only hardlinks to repeated large copies; copy
-across filesystems when necessary. The cache is compartment-scoped and document
-directories cannot be symlinks, because ordinary recursive search may skip them.
-[Storage §7.3](STORAGE.md#73-materialize) owns the mechanics (I-9).
-
-Settled 2026-08-20.
-
-### S-21. A filesystem content-addressed store, laid out as an OCI subset
-
-Store blobs and manifests by digest, refs by name, and compartments in separate
-trees. At this scale a database is unnecessary; the OCI-like layout leaves a
-registry migration possible. [STORAGE.md](STORAGE.md) owns the format.
-
-Settled 2026-09-14; resolves D-10 and the MVP backend choice. D-02 remains the
-future migration decision.
-
-### S-22. Git transport for the store
-
-The 2026-09-14 design changed from per-compartment repositories to one private
-repository for a single engineer. **S-33 supersedes that topology**: team access
-varies by customer/project, so the planned backend uses one private repository
-per compartment, plus a private public-material repository. Ingest never pushes;
-publication remains separate and reviewed. This resolves the G23 conflict with
-I-3. S-35 adopts the protocol; [Storage §6.6](STORAGE.md#66-team-storage-one-git-repository-per-compartment) owns it.
-
-Settled 2026-09-14; topology superseded 2026-09-24 by user instruction.
-
-### S-23. Session integration uses portable workspace adapters
-
-Harness hooks translate session events into workspace registration and context
-instructions. The workspace adapter uses request/result files to reach the host
-TUI; provisioning logic and store access stay on the host. The container does not
-need the Caiman package or a host Python path. Start hooks provide choices so the
-agent can ask the user; they never wait for interactive input or provision inline.
-Hooks never block tools or fail a session (I-10). Detailed read auditing is
-separate from the initial context workflow.
-[Session context](CONTAINER-CONTEXT.md) owns the adapter contract.
-
-Settled 2026-09-14; amended 2026-10-04 by S-39.
-
-### S-24. Audit has two layers: what could be read, and what was read
-
-The materialization log records the available document set. Hook access logs
-record observed reads and are incomplete: shell reads, missing hooks, and
-unverified subagent coverage leave gaps. Absence of a record is not proof of
-non-access. Both logs contain sensitive metadata and stay outside repositories.
-[Security §9](SECURITY-MODEL.md#9-audit) owns the audit contract.
-
-Settled 2026-09-14.
-
-### S-25. Ingest registers one unchanged file of any format
-
-Register one readable file byte-for-byte, including binary, empty, extensionless,
-and non-UTF-8 inputs. Do not enforce headings, unique heading paths, front matter,
-or requirement IDs. Documents have no structure or requirement-pattern metadata.
-Do not split, rewrite, summarize, generate maps, or call AI during ingest.
-Preserve the extension in the manifest file path (`document` plus the source's
-final extension), and keep the original basename in `original_filename`.
-Existing snapshots and their paths remain unchanged.
-
-Acceptance does not establish conversion fidelity, retrieval quality, or support
-for reading a format. [Architecture §6.4](ARCHITECTURE.md#64-ingest) owns workflow.
-
-Updated 2026-10-03 by user choice.
-
-### S-26. Original-source and converter provenance are optional
-
-The document file and metadata are required; original-source and
-converter provenance are optional, including individual fields. Unknown values
-stay absent and never imply public access or local conversion. Record only the
-input file basename as `original_filename`, plus its computed digest/size.
-This trades missing provenance for a simpler registration workflow.
-[Storage §6.4.1](STORAGE.md#641-document-version) owns the fields.
-
-Settled 2026-09-15 by user instruction.
-
-### S-27. Ingestion uses a TUI; the future GUI is a native macOS app
-
-Use an ingestion TUI with explicit labels, validation, review, and cancellation.
-A long flag list or sidecar is not the initial interface; noninteractive ingest
-is deferred. Shared validation and registration must remain independent of
-widgets for a future native macOS app. No local web frontend is planned.
-[Architecture §6.4.3](ARCHITECTURE.md#643-registration-and-reading-workflow).
-
-Settled 2026-09-15 by user instruction; resolves D-09.
-
-### S-28. Board and project authoring use a TUI and editable JSON drafts
-
-Support both a TUI and editable JSON drafts over shared validation and
-registration. Review resolves selectors to immutable pins; new-version authoring
-copies a full snapshot. [README.md](../README.md#configure-boards-and-projects) owns commands;
-[Storage §6.4](STORAGE.md#64-manifest-schemas) owns fields.
-S-30 supersedes the original orange terminal styling; S-32 refines board editing.
-
-Settled 2026-09-15 by user instruction; resolves G13 and Architecture Gap B.
-
-### S-29. Create boards and projects on demand; choose them explicitly every time
-
-Create boards and projects on demand, including during ingestion. Always ask
-which configuration to use; never save or preselect a default. Document lists
-may start empty. Reusing configuration metadata does not classify a document
-or update existing pins.
-
-Remember only compartments from explicitly chosen projects, without discovering
-others by scanning. Use “compartment” consistently: the brief “access group”
-rename caused confusion with errors and stored fields; “ip” was ambiguous in
-firmware and “counterparty” did not justify a schema rename.
-
-Settled 2026-09-15; amended 2026-09-16 to remove forced setup/saved selection
-and restore “compartment”. [First launch](../README.md#first-launch-and-document-ingestion).
-
-### S-30. The bare command is a dashboard with shared Vim-style navigation
-
-Bare `caiman` opens a dashboard with one card per category. Boards and projects
-each have Create and View: viewing opens the category's cards, creating is the
-add card at the end of them, and editing starts from the viewed item. JSON utility commands remain directly
-available. Use shared Vim-style navigation with an explicit text-editing mode,
-a single mode hint, and no Ctrl shortcuts or command palette.
-
-The current theme is black with green accents and outlined fields. This replaced
-the original orange styling. [Keyboard navigation](../README.md#keyboard-navigation)
-owns controls; S-32 owns the board editing decision.
-
-Settled 2026-09-15; dashboard scope, controls, and colours amended 2026-09-16;
-category cards amended 2026-09-25.
-
-### S-31. The board schema is `caiman.board.v2`; schema literals are a table
-
-Adopt board v2 to support assembly documents, separate vendor/part identity,
-cross-domain aliases, and unstructured notes. Industry-parity fields such as
-register maps, nets, build flags, and lifecycle status remain excluded.
-[Board fields](STORAGE.md#board-fields) owns authoring fields;
-[Storage §6.4](STORAGE.md#64-manifest-schemas) owns serialized forms.
-
-Use a table of accepted schema literals. New writes use `caiman.board.v2`,
-`caiman.document.v1`, and `caiman.project.v1`; readers accept legacy slash
-spellings. Preserve declared literals and old snapshots byte-for-byte. A missing
-literal defaults to the current schema; never infer it from the body.
-
-Settled 2026-09-18 by user instruction; resolves D-13. The breaking authoring
-change is accepted; stored v1 boards remain valid without migration.
-
-### S-32. Boards are edited in a guided form; raw JSON is the escape hatch
-
-Edit boards in a guided form, with raw JSON in Vim available for the whole
-current draft. Preserve fields the form does not render. Show legacy v1 boards
-and `from`/`to` links without authoring them in the form, to avoid migration or
-lost endpoints. Validation, pin resolution, diff review, and registration remain
-shared with raw editing.
-
-Lineage stays out of the form and passes through unchanged; edit it in JSON or
-with `new-version`. Vendor completion suggests spellings but accepts any value.
-[Editing guide](../README.md#edit-an-existing-board-or-project) owns the workflow.
-
-Settled 2026-09-18; amended 2026-09-19 to omit lineage controls, lead parts with
-their name, and suggest vendor spellings.
-
-### S-33. Each document has one compartment; compartments are repository boundaries
-
-A document is explicitly public or belongs to exactly one compartment. Reject
-multiple entries, including duplicates, on ingestion, registration and read.
-Keep the existing array representation with zero public/one private entry so
-valid stored snapshots keep their bytes and hashes. Legacy multi-compartment
-documents require explicit re-ingestion and repinning, not silent narrowing.
-Historical scope rule: superseded by pods. Current project dependencies stay
-within the owning pod and public; S-39 defines session selection.
-
-Use one private Git repository per compartment; do not introduce a separate
-access-domain abstraction. This replaces the initial AND/intersection proposal
-and the subsequently discussed OR/replication option: neither is needed for a
-single-compartment document. Repository permissions enforce teammate access.
-The classification portion is superseded by pods; S-39 owns session selection.
-No transport is implemented by this historical decision. [Security §3](SECURITY-MODEL.md#3-classification)
-owns the rule; [Storage §6.6](STORAGE.md#66-team-storage-one-git-repository-per-compartment) owns the transport.
-
-Settled 2026-09-24 by user instruction; resolves G23's repository-boundary choice.
-
-### S-34. A project pins one or more boards; realized parts name their board version
-
-A program may run on several boards, or on one board at several versions, so a
-project lists `boards` instead of one `board`. Pinning the same name and version
-twice is rejected. Role names are chosen per board and need not be unique across
-boards, so each `realized_on` entry is `{board, version, role}` and is checked
-against the named board version only. Labels match exactly (I-7). An object
-rather than a `board/role` string, because version labels are free text and
-could contain any separator.
-
-New writes use `caiman.project.v2`. Stored v1 projects remain valid and are never
-rewritten; editors open them restated with their single board spelled out, and
-registering the edit writes a new v2 snapshot. Ingestion takes its board from a
-project only when the project pins exactly one; otherwise the board stays an
-explicit choice. [Project fields](STORAGE.md#project-fields) owns the fields.
-
-Settled 2026-09-25 by user instruction; amends S-13 and the project literal in S-31.
-
-### S-35. Team storage: per-compartment Git publication and a Merkle DAG
-
-Adopt the team storage design. Each compartment's private repository carries a
-managed `caiman-store` branch. Publication is a reviewed plan, sent
-dependency-first and root-last, and application refs carry generations so
-concurrent publishers conflict instead of overwriting. Fetch verifies every
-object before advancing the local view. Document-set and context digests
-identify what a session selected, separately from its local receipt. There is no
-service. Git holds whole history and cannot delete what was fetched; that cost
-is accepted until the triggers in Storage §12.1. Configuration ownership,
-classified boards, a classified brief, and the hardlink fallback remain open.
-None of them is resolved by this decision. [Storage](STORAGE.md) owns the design;
-§14 sets the phases. The earlier proposal document is merged into it.
-
-Settled 2026-09-25 by user instruction; builds on S-22 and S-33.
-
-### S-36. Projects declare no precedence among documents, for now
-
-Remove `precedence` from `caiman.project.v2`; it is not needed yet. A v2 project
-that declares it, even as an empty list, is rejected. A feature's governing
-document must be one of the project's `documents`. Stored v1 projects keep their
-declared precedence and are never rewritten; editors restate them with any
-document pinned only in precedence moved to `documents`, so no pin is lost,
-while order and notes are dropped and shown in the review diff.
-
-If precedence returns, it is declared by a human and never computed (I-8, S-15);
-this decision removes the field, not that rule. D-12 assumed deviations sit at
-the top of the declared order; until it is resolved, a deviation is an ordinary
-project document that names the requirement IDs it amends, so `grep` still
-returns it with the base requirement.
-
-Settled 2026-09-25 by user instruction; amends S-13 and S-34.
-
-### S-37. Documents and collections share one gallery
-
-All file roles use one document concept, identified by a name and description.
-Agents can interpret purpose from those fields and the source; Caiman adds no
-AI dependency or role inference during ingestion. Optional requirement-ID
-validation remains a capability of any document. New registrations use
-`caiman.document.v2`; existing v1 snapshots and refs remain readable unchanged.
-
-The Documents gallery has single document cards, persistent stacked collection
-cards, and separate add cards. Collections select existing documents and have
-no user-facing version. Saves create content-addressed snapshots with exact
-member digests and a stable collection reference. Focus uses a separate dotted
-shadow. Collection storage and access rules are in `STORAGE.md` §6.4.1a.
-
-Settled 2026-10-01 by user instruction.
-
-### S-38. Public is the permanent default; references stay within one pod plus public
-
-Initialize with public as the default and disallow changing or removing it.
-Artifacts reference their owning pod or public, and public stays self-contained.
-This limits the dependency graph to the current pod plus public, including
-transitive board dependencies. Legacy default preferences are ignored; stored
-snapshots are never rewritten. [PODS.md](PODS.md) owns the current rules.
-
-Settled 2026-10-04 by user instruction; narrows the earlier arbitrary cross-pod model.
-
-### S-39. Host provisioning with independent context for each session
-
-Accepted by the user on 2026-10-04; resolves D-14. Caiman and its pods stay on the
-host. The host TUI initializes a worktree, publishes selectable contexts, and
-listens for workspace-adapter requests while open. Each session has its own
-context folder. Both TUI selection and agent requests use the same host
-provisioner; the agent rereads and acknowledges the installed revision.
-
-This supports multiple selections in one worktree without putting the store or
-full Caiman installation inside containers. Session folders are not permission
-boundaries. Worktree/container creation and harness interruption stay external.
-The detailed design and remaining implementation choices have one owner:
-[CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md). Amended for host agents by S-40.
-
-### S-40. Host agents load context through the start hook and the Caiman CLI
-
-When the coding agent runs on the host, it uses Caiman directly instead of the
-S-39 request-file protocol. The start hook registers the session, creating the
-worktree's `.caiman/` folder on first use (no separate initialization step), and
-tells the agent what is loaded or that it must ask. The agent asks the user,
-then runs `caiman session list` and `caiman session load`; a bare name lists
-versions and never loads one (I-7). The load returns only after the complete
-context is installed, so there is no acknowledgement step. A per-session lock
-serializes changes. Little caiman lists only sessions the hook registered.
-
-This removes the listener, catalog, and adapter for the common local case. The
-agent can run any Caiman command against any local pod; session folders were
-never permission boundaries (S-19). Agents in containers still need the S-39
-protocol, which remains planned.
-
-Settled 2026-10-05 by user instruction; amends S-39 for host agents.
+**S-40. Host agents load context with the CLI.** The start hook creates
+`.caiman/` on first use. The agent asks the user, then runs `caiman session
+list` and `caiman session load`. Loading returns when the context is complete,
+so there is no acknowledgement step. *Why:* no listener or adapter is needed
+when the agent runs on the host.
 
 ## Open
 
-### D-02. When to move the store to an OCI registry
+**D-02. Moving the store to an OCI registry.** Git cannot delete history. Move
+when that becomes the binding constraint, such as a counterparty requiring
+demonstrable deletion.
 
-The backend is decided (S-21) and the remote is git (S-22). The original trigger
-— compartment separation needing real authentication — has been met, and git
-answered it more cheaply than a registry would have.
+**D-03. Search index backend.** Not needed (S-18). If logged misses ever justify
+one, the leaning is Postgres with full-text and vector search.
 
-What a registry would still add: immutability enforced by the system rather than
-by this design's conventions, retention as configuration rather than discipline,
-and **deletion that actually deletes**, which git cannot do (`STORAGE.md` §9.5).
+**D-04. Build the layer or adopt a platform.** Leaning build, but revisit if
+basic document and board handling consumes the effort meant for program
+context. Test platforms with real documents (G01, G04).
 
-Revised trigger:
+**D-07. Harness strategy.** Choose harnesses on verified session IDs,
+resume/fork/subagent events, hook activation, and transcript handling.
 
-> Move to a registry when history permanence becomes the binding constraint —
-> compartment corrections happening often enough that irreversible pushes are a
-> recurring incident, or a counterparty requiring demonstrable deletion.
-
-*Open: nothing to decide until then. Recorded so the trigger is not forgotten,
-and so the reason it changed is visible.*
-
-### D-03. Index backend — deferred, not chosen
-
-S-18 removed the semantic index from the MVP, so this is off the critical path.
-It becomes live only if the miss log shows search and selective reading of
-source documents failing on real tasks (S-18).
+**D-12. How deviations are represented.** Today a deviation is an ordinary
+document that names the requirement IDs it amends.
 
 | Option | For | Against |
 |---|---|---|
-| **Postgres + pgvector + FTS** | One service; hybrid lexical and semantic; trivial ops | Weaker ranking than dedicated engines at scale |
-| **OpenSearch** | Strong hybrid retrieval; Onyx's ACL filter applies directly | Another cluster to operate |
-| **Qdrant / Weaviate / Milvus** | Good vector stores | Vector-only; you still need lexical alongside |
+| Ordinary document | No new machinery; cites like anything else | No structured query for amended requirements |
+| Structured amendments on requirement IDs | Exact lookup; cheap incremental additions | Second content path; hand entry invites mislabels |
+| Document plus a declared amendment index | Real citation and exact lookup | Two things to keep in sync |
 
-Indexed volume here would be tens of thousands of chunks, not hundreds of
-millions.
-
-*Leaning: Postgres if ever needed. Do not build speculatively — the trigger is in
-S-18 and requires logged misses. Note an existing MIT-licensed server with a
-pluggable backend may remove the need to choose at all.*
-
-### D-04. Build the context layer, or adopt a platform?
-
-Compare building the layer with adopting a firmware platform or a general document
-system. The trade-off is control over program/version/compartment models versus
-maintaining ingestion and hardware structure ourselves. Product capabilities
-must be tested with our documents, not inferred from marketing.
-
-The historical landscape is in [Roadmap’s historical survey](ROADMAP.md#competitive-landscape-historical); G01–G05 track
-validation. Leaning: build the small layer, but revisit if basic document and
-board handling consumes the effort intended for program context.
-
-### D-07. Harness strategy
-
-Harness choice remains open. The harness owns agent/model selection, worktree
-and container creation, and agent execution. Caiman integrates through the
-workspace adapter and host TUI defined by S-39, without requiring a store or
-Caiman installation in the agent environment.
-
-Evaluate reliable session identity, resume/fork/subagent events, hook activation,
-per-session model selection, and transcript handling before adopting a harness.
-The manual path is host TUI selection for an explicit session followed by reading
-that session's brief. It uses the same provisioner and pins.
-
-Historical candidate surveys are not current recommendations. Choose a harness
-on verified capabilities; do not build a launcher as part of context provisioning.
-
-### D-08. Sample / test projects
-
-Selected, following the request to replace synthetic demonstration hardware:
-Zephyr's micro:bit sound sample at v4.2.0, plus Adafruit's MacroPad keyboard/mouse
-and tone-keypad examples. [Dataset guide](../fixtures/README.md) owns usage,
-provenance, exact source commits, file-level licensing, and modeling limitations.
-
-The micro:bit v1.3 and v2 firmware-facing models change the MCU, sensor population,
-button/display wiring, and sound route. The v1 model needs an external piezo;
-the v2 uses its built-in speaker. These provide concrete "right fact, wrong
-board" cases. MacroPad's HID and tone applications share one board snapshot but
-require different features. Board models deliberately omit unsupported BOM or
-register details rather than inventing them.
-
-The normative layer remains explicitly Caiman-authored: acceptance baselines
-and a micro:bit R2 deviation amending two R1 hardware requirements. These are not
-customer contracts or official upstream specifications. Both sound releases
-remain available with immutable pins. No automatic precedence or conflict
-inference is introduced; D-12 remains separate.
-
-Upstream files use Apache-2.0, MIT, or Unlicense, checked at file level and bundled
-with notices. The examples are all public; named project compartments are schema
-requirements and demonstration groupings, not assertions of confidentiality.
-Synthetic private inputs remain in unit tests for isolation checks. No actual
-customer documents or restricted vendor manuals may be committed. The earlier
-Gaggiuino candidate is not used.
-
-The offline loader validates the entire graph in a temporary store before
-adding missing objects. It preserves existing refs, refuses name/version
-conflicts, reuses unchanged document digests, and remembers the explicitly
-imported demo compartments. It does not push or install firmware.
-
-### D-12. How program deviations are represented
-
-For now, assume deviations arrive as a single document at the top of the declared
-precedence order, naming the requirement IDs it amends so `grep` surfaces the
-override. That is enough for the MVP and is what the current design assumes.
-S-36 has since removed declared precedence; a deviation is an ordinary project
-document in the meantime. This question stays open.
-
-It will not hold forever. Deviations are often a spreadsheet or a letter, they
-arrive incrementally over a program's life, and they may be per-part-number
-rather than per-program.
-
-| Option | For | Against |
-|---|---|---|
-| **A document, like any other** | Zero new machinery; registers unchanged and cites identically | Incremental deviations mean re-ingesting a growing document; no structured "which requirements are amended" query |
-| **Structured amendments on requirement IDs** | Exact override lookup; incremental additions are cheap | A second content path, and hand entry is where mislabels happen |
-| **Both — document is the artifact, amendments a declared index over it** | Citation stays to the real document; override lookup is exact | Two things to keep in sync; a future index needs an explicit authoring decision and is not part of S-25 ingest |
-
-*Leaning: the third, once the first becomes painful. Do not build before there is
-a real deviation document to look at.*
-
-
----
-
-## Retired
-
-### D-14. When and where documents are provisioned into a worktree
-
-Resolved 2026-10-04 by S-39. The accepted workflow provisions from the host into
-independent session context folders and supports explicit switching through the
-TUI or adapter requests. [CONTAINER-CONTEXT.md](CONTAINER-CONTEXT.md) is the
-canonical design. The earlier shared-worktree context proposal is retired;
-its text remains available in Git history.
-
-### D-09. Front-end form factor *(resolved 2026-09-15 by S-27)*
-
-The MVP requires a TUI for document ingestion. The future GUI is a native macOS
-app for authoring and curation. Both use shared validation and registration
-operations; no local web frontend is planned. S-28 now defines board/project editing through a TUI and JSON drafts. The
-Mac app's schedule remains to be designed.
-
-This changes the human authoring interface, not the filesystem interface used
-by coding agents. Semantic retrieval remains deferred under S-18, and a separate
-human-facing documentation browser remains a non-goal.
-
-
-### D-13. How far the board schema should follow industry board descriptions *(resolved 2026-09-18 by S-31)*
-
-The survey compared software-facing board formats (devicetree, CMSIS-Pack,
-PlatformIO and others) with hardware-facing EDA/BOM formats. It identified four
-local gaps: assembly documents, explanations on links, cross-domain identifiers,
-and separate vendor/part fields.
-
-Options were leaving v1 unchanged, adding notes only, adopting the full v2
-proposal, or matching industry schemas. The user chose v2 on 2026-09-18 (S-31).
-The field contract now lives in [Storage's board schema](STORAGE.md#642-board-version),
-rather than a second draft here.
-
-Future schema revisions should consider the remaining naming differences:
-`document.issuer` versus `part.vendor`, and project `precedence[].note` versus
-board `notes`. Do not rename fields in existing snapshots. G14 still tracks
-import paths; choosing the target schema did not decide an importer.
-
-### D-01. PDF → markdown parser *(retired 2026-08-20, superseded by S-08)*
-
-Originally the highest-risk component: everything downstream inherits a parser's
-errors, and layout-aware parsers are known to drop content silently. The plan was
-a bake-off between LlamaParse, Docling, MinerU, OpenDataLoader, and PaddleOCR
-against a real reference manual, leaning toward a local parser for confidential
-material regardless of how candidates scored on public documents.
-
-Retired because conversion left scope. The risk did not disappear, it moved: it
-now lives in the user's choice of converter, and Caiman addresses what it still
-can — optionally recording converter identity so a bad conversion can be traced
-when that information is supplied (S-26), and
-rejecting documents whose content lacks resolvable locators. The confidentiality
-observation survives as a security note: a compartmented document must not be
-sent to a hosted converter, and Caiman cannot enforce that.
-
-### D-05. Routing enforcement *(resolved 2026-08-20 by S-19)*
-
-Weighed a self-hosted AI gateway, a separate OS user with stdio transport, a
-sealed sandbox containing the harness, and doing nothing under a zero-retention
-agreement. All four tried to enforce, at read time, a judgement the human had
-already made at session start.
-
-Resolved by moving the decision to the human and making it consequential through
-differential materialization. The gateway and separate-uid options survive as
-optional hardening in `SECURITY-MODEL.md` §11.
-
-### D-06. MCP tool granularity *(retired 2026-08-20, superseded by S-18)*
-
-Weighed few fat tools against many thin ones, settling on roughly five fat
-working tools plus a session-startup trio. Moot once the server left the MVP: six
-of seven duplicated file operations the harness performs better, and the seventh
-(semantic search) was already first on the cut list. If a server is ever built
-for semantic fallback it will have one tool, and this will not need reopening.
-
-### D-10. Board and project version representation *(resolved 2026-09-14 by S-21)*
-
-A canonical JSON manifest is the source of truth and the thing that is hashed;
-its digest is what a project version pins. No relational index for the MVP — at
-tens of boards and projects, reading manifests beats maintaining a derived view,
-and one can be added later without touching the source of truth.
-
-### D-11. What the harness calls at session start *(resolved 2026-08-20 by S-18)*
-
-Weighed shelling out to the CLI against an MCP call against both. Resolved to the
-CLI by S-18, which removed the server. The byte-identical-output concern that
-motivated "both" disappeared with it.
-
----
-
-## Recording a decision
-
-Resolved: move to **Settled** with a one-paragraph rationale and the date, and a
-pointer to the design document that implements it. Do not restate the design
-here.
-
-Made unnecessary by scope: move to **Retired** with what the risk was and where
-it went.
-
-Keep rejected options visible. Future-you will want to know what was already
-considered and why it lost.
+Leaning: the third, once the first becomes painful. Wait for a real deviation
+document.

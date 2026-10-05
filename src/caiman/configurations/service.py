@@ -385,7 +385,7 @@ class ConfigurationService:
     def unregister(self, kind: str, manifest: dict, digest: str, *, pod: str = "public") -> tuple[Path, ...]:
         """Remove a configuration's name/version refs; its manifest object stays.
 
-        Objects are never deleted (STORAGE.md §8.5), so anything pinned to the
+        Objects are never deleted (docs/STORAGE.md §2), so anything pinned to the
         digest still resolves (I-4). Refuses if any ref no longer names
         ``digest``: the configuration changed after it was shown.
         """

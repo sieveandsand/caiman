@@ -350,7 +350,7 @@ def test_load_digest_rejects_malformed_pins(setup, digest):
 
 def test_board_level_document_pins_the_assembly(tmp_path, setup):
     """A board user guide is issued by the board vendor and names the assembly,
-    which no part instance can express (D-13)."""
+    which no part instance can express (S-31)."""
     store, service, _ = setup
     guide = document(tmp_path, store, part="demo", text="# Guide\n\n## Connectors\nSynthetic text\n")
     data = board(document(tmp_path, store))

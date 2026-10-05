@@ -127,7 +127,7 @@ def test_forged_prepared_manifests_rejected(document, metadata, field, value):
 
 
 def test_document_schema_literal_is_current_and_older_spellings_still_read(tmp_path):
-    """The literal is a table entry, not an f-string over kind and number (D-13)."""
+    """The literal is a table entry, not an f-string over kind and number (S-31)."""
     path = tmp_path / 'manual.md'
     path.write_text('# Manual\n\n## Registers\nSynthetic text\n')
     prepared = prepare_document(path, {
