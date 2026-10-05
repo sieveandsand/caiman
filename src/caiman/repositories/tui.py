@@ -11,7 +11,7 @@ from caiman.ui.theme import TERMINAL_CSS, apply_theme
 
 
 OPERATIONS = {'create': 'New local pod', 'add': 'Clone pod', 'initialize': 'Connect Git',
-              'sync': 'Sync pod', 'default': 'Set default pod', 'remove': 'Disconnect Git', 'unregister': 'Remove pod'}
+              'sync': 'Sync pod', 'remove': 'Disconnect Git', 'unregister': 'Remove pod'}
 
 
 class RepoManagerApp(NavigationApp):
@@ -68,7 +68,7 @@ class RepoManagerApp(NavigationApp):
 
     def show_action(self):
         action = self.operation
-        choose = action in {'remove', 'sync', 'default', 'unregister'}
+        choose = action in {'remove', 'sync', 'unregister'}
         self.query_one('#remove-fields').display = choose
         self.query_one('#repository-fields').display = not choose
         self.query_one('#remote').display = action in {'create', 'add', 'initialize'}
@@ -132,10 +132,10 @@ class RepoManagerApp(NavigationApp):
             if event.button.id in {'review', 'create', 'clone'}:
                 self.invalidate()
                 action = self.operation
-                pod = (self.query_one('#repository', Select).value if action in {'remove', 'sync', 'default', 'unregister'}
+                pod = (self.query_one('#repository', Select).value if action in {'remove', 'sync', 'unregister'}
                                else self.query_one('#pod', Input).value.strip())
                 if not isinstance(pod, str) or not pod:
-                    raise ValueError('Choose a pod' if action in {'remove', 'sync', 'default', 'unregister'} else 'Enter a pod')
+                    raise ValueError('Choose a pod' if action in {'remove', 'sync', 'unregister'} else 'Enter a pod')
                 remote = self.query_one('#remote', Input).value.strip()
                 push = False
                 self.plan = await asyncio.to_thread(self.manager.prepare, action, pod, remote, push)

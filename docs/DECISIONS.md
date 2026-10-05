@@ -24,7 +24,7 @@ rules in S-25 and I-5. [PODS.md](PODS.md) describes compatibility.
 ## Pods replace access labels and compartments (2026-10-01)
 
 User-approved: one local folder per pod, optionally one Git repository per pod.
-`public` is an ordinary default pod. Caiman removes its separate authorization
+`public` is the permanent default pod. Caiman removes its separate authorization
 layer, discovers local pods, and pins cross-pod dependencies without copying
 them. Each configuration has one owning pod. This supersedes the access and
 compartment portions of S-16, S-22, S-29, S-33, and S-35. Existing immutable
@@ -440,6 +440,16 @@ member digests and a stable collection reference. Focus uses a separate dotted
 shadow. Collection storage and access rules are in `STORAGE.md` §6.4.1a.
 
 Settled 2026-10-01 by user instruction.
+
+### S-38. Public is the permanent default; references stay within one pod plus public
+
+Initialize with public as the default and disallow changing or removing it.
+Artifacts reference their owning pod or public, and public stays self-contained.
+This limits the dependency graph to the current pod plus public, including
+transitive board dependencies. Legacy default preferences are ignored; stored
+snapshots are never rewritten. [PODS.md](PODS.md) owns the current rules.
+
+Settled 2026-10-04 by user instruction; narrows the earlier arbitrary cross-pod model.
 
 ## Open
 

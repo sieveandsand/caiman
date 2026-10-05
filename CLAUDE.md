@@ -42,7 +42,9 @@ A change that violates one of these is a bug even if every test passes.
 
 A pod is a local folder, optionally its own Git repository. The Git host owns
 remote access; local filesystem availability owns local access. `public` is an
-ordinary default pod. Do not reintroduce document access labels, session
+permanent default pod, available at initialization and never replaceable or
+removable. References may target only the owning pod or `public`; public artifacts
+reference only public. This also applies to transitive dependencies. Do not reintroduce document access labels, session
 membership lists, or public-only board/collection rules. [PODS.md](docs/PODS.md)
 owns the current model and supersedes older compartment policy sections.
 
@@ -232,7 +234,7 @@ src/caiman/
 
 Tests live under `tests/`, public example datasets under `fixtures/`, and design
 documentation under `docs/`. Session materialization remains planned; create
-new feature packages when their implementation arrives. The default pod is a local preference; no board or project is a remembered default.
+new feature packages when their implementation arrives. The default pod is permanently `public`; no board or project is a remembered default.
 
 No `server/`. If semantic fallback is ever built (S-18) it arrives as one tool
 behind one server, and not before search and selective reading of the source documents have

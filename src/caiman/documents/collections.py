@@ -45,7 +45,7 @@ class CollectionService:
         self._validate(manifest)
         members = []
         for pin in manifest['documents']:
-            selected, _ = self.documents._document(pin, pinned=True)
+            selected, _ = self.documents._document(pin, pinned=True, owner=target)
             members.append(selected)
         manifest['documents'] = [json.loads(value) for value in sorted({canonical_json(pin) for pin in members})]
         return {'manifest': manifest, 'digest': digest(canonical_json(manifest)),
@@ -102,4 +102,6 @@ class CollectionService:
 
     def members(self, record, *, pods=None):
         manifest = self.load_digest(record['pod'], record['digest'])
+        for pin in manifest['documents']:
+            self.store.pods.check_reference(record['pod'], pin['pod'])
         return [self.documents.document_record(pin, pinned=True) for pin in manifest['documents']]

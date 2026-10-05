@@ -28,8 +28,10 @@ def draft(documents, pod='public'):
 def test_labels_and_dependencies_fail_before_writes(tmp_path):
     store = Store(tmp_path / 'store'); service = CollectionService(store)
     pin = document(tmp_path, store, 'alpha')
-    for pod in ('public', 'alpha', 'beta'):
-        assert service.prepare(draft([pin], pod))['pod'] == pod
+    assert service.prepare(draft([pin], 'alpha'))['pod'] == 'alpha'
+    for pod in ('public', 'beta'):
+        with pytest.raises(ValueError, match='cross-pod reference'):
+            service.prepare(draft([pin], pod))
     with pytest.raises(ValueError):
         service.prepare({**draft([pin]), 'labels': {}})
     assert not list(store.root.rglob('collections'))

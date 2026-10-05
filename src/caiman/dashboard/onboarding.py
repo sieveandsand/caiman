@@ -252,7 +252,6 @@ CATEGORY_MENUS = {
                         ('Codex', 'Add Caiman hook', 'hooks-codex')]),
     'repos': ('Pods', [('New pod', 'Create a local folder', 'repo-create'),
                                ('Sync pod', 'Fetch and publish changes', 'repo-sync'),
-                               ('Default pod', 'Choose where new items go', 'repo-default'),
                                ('Disconnect Git', 'Keep local files and history', 'repo-remove'),
                                ('Connect Git', 'Enable Git; optional remote', 'repo-initialize'),
                                ('Clone pod', None, 'repo-add')]),
@@ -405,7 +404,6 @@ class CategoryApp(NavigationApp):
                 yield Static('Choose a pod', id='selected-pod', markup=False)
                 with Grid(id='pod-actions'):
                     yield Button('Sync', id='repo-sync', variant='primary', disabled=True)
-                    yield Button('Set default', id='repo-default', disabled=True)
                     yield Button('Connect Git', id='repo-initialize', disabled=True)
                     yield Button('Disconnect Git', id='repo-remove', disabled=True)
                     yield Button('Remove pod', id='repo-unregister', disabled=True)
@@ -447,10 +445,8 @@ class CategoryApp(NavigationApp):
             rows.index = next((i for i, record in enumerate(records) if record['pod'] == selected_pod),
                               0 if records else None)
             status = self.query_one('#pod-status', Static)
-            missing_default = records[0].get('missing_default') if records else None
-            status.update(f'Default pod {missing_default} is unavailable. Select a pod and choose Set default.'
-                          if missing_default else '' if records else 'No pods yet.')
-            status.display = bool(missing_default) or not records
+            status.update('Public is the permanent default pod.')
+            status.display = True
             self.update_pod_actions()
         except (OSError, ValueError) as error:
             self.query_one('#pod-status').display = True
@@ -473,13 +469,12 @@ class CategoryApp(NavigationApp):
         self.selected_pod = record['pod'] if record else None
         self.query_one('#selected-pod', Static).update('Actions for ' + record['name'] if record else 'Choose a pod')
         self.query_one('#repo-sync', Button).disabled = not record or not record['branch']
-        self.query_one('#repo-default', Button).disabled = not record or record['default']
         remote = bool(record and record['remote'])
         self.query_one('#repo-initialize', Button).display = not remote
         self.query_one('#repo-initialize', Button).disabled = not record
         self.query_one('#repo-remove', Button).display = remote
         self.query_one('#repo-remove', Button).disabled = not remote
-        self.query_one('#repo-unregister', Button).disabled = not record
+        self.query_one('#repo-unregister', Button).disabled = not record or record['default']
 
     async def on_event(self, event):
         # ListView consumes arrows itself, so route them before forwarding to
@@ -525,7 +520,7 @@ class CategoryApp(NavigationApp):
         if event.button.id == 'refresh-status':
             await self.refresh_status()
             return
-        if event.button.id in {'repo-sync', 'repo-default', 'repo-initialize', 'repo-remove', 'repo-unregister'}:
+        if event.button.id in {'repo-sync', 'repo-initialize', 'repo-remove', 'repo-unregister'}:
             if self.selected_pod and not event.button.disabled:
                 self.exit({'action': event.button.id, 'pod': self.selected_pod})
             return

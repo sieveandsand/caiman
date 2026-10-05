@@ -4,8 +4,9 @@ A pod is a local folder of Caiman documents, collections, boards, and projects.
 It can optionally be shared through one Git repository. Caiman has no access
 labels, authorized-compartment lists, or application membership checks. Local
 files are available through the filesystem; the Git host controls remote reads
-and writes. `public` is the initial default pod name, with no special permission
-or repository-visibility meaning.
+and writes. `public` is the permanent default pod, with no repository-visibility meaning.
+It is available from initialization and cannot be replaced or removed. Switching
+the current gallery tab or choosing a destination pod never changes the default.
 
 This design supersedes the compartment/access rules in the older storage,
 security, and architecture design sections. Those sections remain historical
@@ -16,7 +17,7 @@ materialization. Pod Git sync is separate from future workspace materialization.
 
 ```text
 store/
-  .pods.json                   local default-pod preference
+  .pods.json                   legacy preference (ignored)
   public/
     pod.json                   schema, stable id, display name
     blobs/sha256/<prefix>/<digest>
@@ -37,8 +38,9 @@ store/
 
 Pods are discovered from headers or existing store folders containing refs.
 Browsing an empty store shows a virtual `public` tab without writing files.
-Creation or the first save creates the folder/header. IDs initially use the
-chosen pod slug; retain the ID when renaming a folder or changing its display
+Creation or the first save creates the public folder/header as well as the
+chosen destination. Read-only browsing keeps initialization virtual. IDs initially
+use the chosen pod slug; retain the ID when renaming a folder or changing its display
 name. IDs must be unique within a store; cloning a second copy of an existing
 ID is rejected. A clone may have a different local folder name. No paths or
 credentials are embedded in document manifests.
@@ -72,8 +74,20 @@ board/part attachment. See [DOCUMENT-METADATA.md](DOCUMENT-METADATA.md).
 Board pins use `{ "pod": "alpha", "digest": "sha256:…" }` with name/version.
 Document references use `{ "pod": "alpha", "document": "stable-id", "blob": "sha256:…" }`.
 Named refs or manifest digests are resolved at authoring time.
-References can cross any locally available pods. An unqualified ambiguous name
-requires an explicit pod; Caiman never substitutes a different version.
+An artifact may reference its own pod or `public` only. Here “current pod” means
+that artifact's owning/destination pod, not a remembered global preference.
+`public` artifacts reference only `public`; two distinct non-public pods cannot
+reference each other. This applies to board and project pins, assembly and part
+documents, project and feature documents, and collection members. Project board
+dependencies obey the same rule recursively, so a public board cannot introduce
+a dependency on another non-public pod.
+
+Unqualified authoring selectors search only the owning pod and public. An
+ambiguous name requires an explicit pod; Caiman never substitutes a different
+version. Validation runs during preparation and again at save time. Historical
+snapshots remain byte-for-byte unchanged and visible in catalogs, but incompatible
+references cannot be reused when preparing a configuration or resolving collection
+members. Local availability alone does not make a reference valid.
 
 Catalogs can show projects and collections whose dependencies are unavailable.
 Preparing or reconstructing their complete contents fails with a missing
@@ -88,7 +102,7 @@ Documents, Projects, and Boards have one tab per pod, including empty pods.
 New records use the active tab. Press `/` anywhere in a gallery for the next pod, or `[` and `]` for the
 previous and next pods. On the tab bar, use Left/Right or `h` / `l` to switch and `j` to enter the
 cards. Tab and Shift+Tab move between controls. Forms show a single Pod field. The Pods page offers local
-creation, cloning, Git connection, sync, default selection, disconnection, and removal.
+creation, cloning, Git connection, sync, disconnection, and removal.
 New pod asks for a pod name and an optional Git remote. Back cancels; Create
 creates the pod and returns to the pod list without a review step. Supplying a
 remote enables Git locally; use Sync to commit and share the pod.
@@ -96,9 +110,9 @@ Clone pod asks for a local pod name and a repository URL. Back cancels; Clone
 clones the pod and returns to the pod list without a review step.
 All local pods are available without entering authorization names.
 
-The Pods page isolates Git errors to the affected pod. If the configured default
-pod is missing, it still lists available pods and lets you select a replacement
-with **Set default**; browsing does not rewrite the preference.
+The Pods page isolates Git errors to the affected pod. The default is always
+the stable pod ID `public`, even after its folder or display name changes. Legacy
+`.pods.json` default preferences are ignored. Attempts to change the default fail.
 
 Git working-tree status and publication status are separate. A clean working
 tree can still have unpushed commits. The list reports the last sync failure,
@@ -110,7 +124,6 @@ pod's local Git configuration and is not shared with teammates.
 
 ```bash
 caiman pod create alpha
-caiman pod default alpha
 caiman pod connect alpha git@example.com:team/alpha.git
 caiman pod sync alpha
 caiman pod clone team-alpha git@example.com:team/alpha.git
@@ -160,7 +173,9 @@ local folders are adapted without contacting a remote.
 
 `tests/test_pods.py` covers local availability, one owner, cross-pod dependencies,
 legacy byte preservation, renamed clone folders, two-writer Git sync, conflicts,
-failed publication, binary document round-trips, document tabs, and default selection.
+failed publication, binary document round-trips, document tabs, and the fixed
+public default. `tests/test_pod_policy.py` covers reference boundaries and default
+protection.
 `tests/test_document_metadata_retirement.py` covers retired-field rejection and
 legacy snapshot compatibility, including cross-pod pins after metadata edits. Repository tests cover
 invalid URLs, unsafe paths, remote format admission, review invalidation, and
@@ -181,7 +196,6 @@ Removal moves the folder, including all content and Git history, into
 `store/.removed-pods/<stable-id>/<unique-id>/`; no files or remote repositories
 are deleted. Historical snapshots remain unchanged but may have unavailable
 dependencies. Move the archived folder back under the store root to restore it.
-Removing the default selects `public` if available, otherwise another remaining
-pod, and clears the preference if none remain. Create a pod and use **Set default**
-to establish a default again. `caiman pod remove <pod>` uses the same checks;
+The public pod cannot be removed. Removing another pod never changes the default.
+`caiman pod remove <pod>` uses the same checks;
 `caiman pod disconnect <pod>` continues to disconnect only Git.

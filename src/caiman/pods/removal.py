@@ -7,6 +7,8 @@ from caiman.documents.usages import document_pins
 
 def check_removal(store, pod):
     owner = store.pods.resolve(pod)['id']
+    if owner == 'public':
+        raise ValueError('The default public pod cannot be removed')
     if owner not in {record['id'] for record in store.pods.list()}:
         raise ValueError('Pod is unavailable')
     configurations = ConfigurationService(store)

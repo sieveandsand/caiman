@@ -34,22 +34,22 @@ def apply(manager, action, pod, remote=''):
 
 def test_no_labels_one_owner_and_cross_pod_dependencies(tmp_path):
     root = tmp_path / 'store'
-    doc = add_document(root, tmp_path, 'manuals')
+    doc = add_document(root, tmp_path, 'public')
     service = ConfigurationService(Store(root))
-    assert {d['pod'] for d in service.list_documents()} == {'manuals'}
-    assert service.list_documents(pods=['public']) == []
+    assert {d['pod'] for d in service.list_documents()} == {'public'}
+    assert service.list_documents(pods=['alpha']) == []
     board = service.prepare('board', {'board': 'demo', 'version': 'A', 'parts': [
         {'role': 'mcu', 'vendor': 'synthetic', 'part': 'chip', 'documents': [
-            {'pod': 'manuals', 'digest': doc.manifest_digest}]}]}, pod='hardware')
+            {'pod': 'public', 'digest': doc.manifest_digest}]}]}, pod='alpha')
     service.register(board)
     project = service.prepare('project', {'project': 'flight', 'version': 'A', 'customer': 'Demo',
-        'spec_set': 'A', 'boards': [{'name': 'demo', 'version': 'A', 'pod': 'hardware'}],
+        'spec_set': 'A', 'boards': [{'name': 'demo', 'version': 'A', 'pod': 'alpha'}],
         'documents': [], 'features': []}, pod='alpha')
     service.register(project)
     assert 'labels' not in service.list_documents()[0]['manifest']
     assert 'pods' not in project.manifest
     assert len(list(root.glob('*/refs/projects/flight/A'))) == 1
-    (root / 'manuals').rename(tmp_path / 'unavailable')
+    (root / 'public').rename(tmp_path / 'unavailable')
     assert service.list_configs('project')[0]['pod'] == 'alpha'
     with pytest.raises(ValueError, match='unavailable'):
         service.prepare('project', project.manifest, pod='alpha')
@@ -148,11 +148,11 @@ async def test_document_tabs_filter_and_new_document_uses_active_pod(tmp_path):
 async def test_ingest_and_collection_default_pod_forms(tmp_path):
     from caiman.documents.tui import IngestApp
     from caiman.documents.collection_tui import CollectionApp
-    store = Store(tmp_path); store.pods.set_default('alpha')
+    store = Store(tmp_path); store.pods.ensure('alpha')
     for app in (IngestApp(tmp_path), CollectionApp(root=tmp_path)):
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.query_one('#pod', Select).value == 'alpha'
+            assert app.query_one('#pod', Select).value == 'public'
             assert not app.query('#visibility') and not app.query('#access')
 
 
@@ -192,8 +192,8 @@ def test_pod_cli_local_create_default_and_filtered_catalog(tmp_path, capsys):
     from caiman.cli.commands import main
     root = tmp_path / 'store'
     assert main(['pod', 'create', 'alpha', '--store', str(root)]) == 0
-    assert main(['pod', 'default', 'alpha', '--store', str(root)]) == 0
-    assert Store(root).pods.default == 'alpha'
+    assert main(['pod', 'default', 'alpha', '--store', str(root)]) == 1
+    assert Store(root).pods.default == 'public'
     add_document(root, tmp_path, 'alpha')
     capsys.readouterr()
     assert main(['documents', '--store', str(root), '--pod', 'public']) == 0

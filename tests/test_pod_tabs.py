@@ -31,7 +31,6 @@ async def test_pod_tabs_keyboard_mouse_empty_and_selection(tmp_path, kind):
         store.register(prepare_document(source, {
             'name': 'same', 'issuer': 'Example', 'part': 'chip', 'version': 'A'}, pod=pod))
     store.pods.ensure('empty')
-    store.pods.set_default('alpha')
     if kind == 'document':
         app, card_type = DocumentCatalogApp(root=store.root), DocumentCard
     elif kind == 'board':
@@ -48,6 +47,9 @@ async def test_pod_tabs_keyboard_mouse_empty_and_selection(tmp_path, kind):
         assert hint.count('/ next pod') == 1
         assert 'h/l tabs' not in hint and 'j cards' not in hint
         assert set(app.tab_pods.values()) == {'public', 'alpha', 'beta', 'empty'}
+        tabs.active = next(key for key, pod in app.tab_pods.items() if pod == 'alpha')
+        await pilot.pause()
+        await pilot.press('j')
         assert app.active_pod == 'alpha'
         assert app.focused is app.query_one(card_type)
         # The literal slash shown in the guide works from card focus.

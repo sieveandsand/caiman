@@ -61,11 +61,11 @@ class ConfigurationService:
         _hex(digest)
         return digest
 
-    def _document(self, selector: dict, *, pinned: bool = False, historical: bool = False) -> tuple[dict, dict]:
-        selected, _, manifest = self._resolve_document(selector, pinned=pinned, historical=historical)
+    def _document(self, selector: dict, *, pinned: bool = False, historical: bool = False, owner=None) -> tuple[dict, dict]:
+        selected, _, manifest = self._resolve_document(selector, pinned=pinned, historical=historical, owner=owner)
         return selected, manifest
 
-    def _resolve_document(self, selector: dict, *, pinned=False, historical=False):
+    def _resolve_document(self, selector: dict, *, pinned=False, historical=False, owner=None):
         """Return the reference, actual stored revision digest, and manifest together."""
         from caiman.documents.revisions import DocumentRevisions
         result = deepcopy(selector)
@@ -78,6 +78,10 @@ class ConfigurationService:
             raise StoreError('Stored document selectors must contain a document ID, blob and pod')
         relative = _ref_path(result['ref']) if 'ref' in result else None
         candidates = {self.store.pods.resolve(result['pod'])['id']} if 'pod' in result else self.store.pods.selected()
+        if owner is not None:
+            if 'pod' in result:
+                self.store.pods.check_reference(owner, result['pod'])
+            candidates &= self.store.pods.reference_pods(owner)
         matches = []
         for pod in sorted(candidates):
             if 'document' in result:
@@ -160,33 +164,36 @@ class ConfigurationService:
                 raise StoreError('Stored document selectors must contain document ID, blob and pod')
         return manifest
 
-    def _pin(self, kind: str, manifest: dict, *, pinned: bool = False) -> dict:
+    def _pin(self, kind: str, manifest: dict, *, owner: str, pinned: bool = False) -> dict:
         result = deepcopy(manifest)
         if kind == "board":
             if 'documents' in result:
-                result['documents'] = [self._document(pin, pinned=pinned)[0] for pin in result['documents']]
+                result['documents'] = [self._document(pin, pinned=pinned, owner=owner)[0] for pin in result['documents']]
             for part in result['parts']:
-                part['documents'] = [self._document(pin, pinned=pinned)[0] for pin in part.get('documents', [])]
+                part['documents'] = [self._document(pin, pinned=pinned, owner=owner)[0] for pin in part.get('documents', [])]
             return result
-        allowed = self.store.pods.selected()
+        allowed = self.store.pods.reference_pods(owner)
         boards = []
         # Each selector is resolved to its own digest once, here; a later
         # repoint of the version ref never reaches a registered project (I-4).
         for board_selector in project_boards(result):
             location = board_selector.get("pod")
+            if location is not None:
+                self.store.pods.check_reference(owner, location)
             if "digest" not in board_selector:
                 if pinned:
                     raise StoreError("Stored board selector must contain immutable digest")
-                matches = [r for r in self.list_configs("board", pods=[location] if location else None)
+                matches = [r for r in self.list_configs("board", pods=[location] if location else allowed)
                            if (r["name"], r["version"]) == (board_selector["name"], board_selector["version"])]
                 if len(matches) != 1:
                     raise StoreError("Board dependency is missing or ambiguous; choose its pod")
                 board_selector.update(digest=matches[0]["digest"], pod=matches[0]["pod"])
             location = board_selector.get("pod", "public")  # Legacy boards lived in public.
+            self.store.pods.check_reference(owner, location)
             board = self._read_config("board", location, board_selector["digest"], allowed)
             if not pinned or "pod" in board_selector:
                 board_selector["pod"] = self.store.pods.resolve(location)["id"]
-            self._pin("board", board, pinned=True)
+            self._pin("board", board, owner=location, pinned=True)
             if board["board"] != board_selector["name"] or board["version"] != board_selector["version"]:
                 raise StoreError("Pinned board identity does not match project declaration")
             boards.append(board)
@@ -196,14 +203,14 @@ class ConfigurationService:
                 continue
             documents = []
             for selector in result.get(field, []):
-                selected, _ = self._document(selector, pinned=pinned)
+                selected, _ = self._document(selector, pinned=pinned, owner=owner)
                 documents.append(selected)
                 governing.append(selected)
             result[field] = documents
         for feature in result.get("features", []):
             documents = []
             for selector in feature.get("governed_by", []):
-                selected, _ = self._document(selector, pinned=pinned)
+                selected, _ = self._document(selector, pinned=pinned, owner=owner)
                 def identity(pin):
                     return (pin['pod'], pin.get('document', pin.get('digest')), pin.get('blob'))
                 if not any(identity(selected) == identity(entry) for entry in governing):
@@ -229,7 +236,7 @@ class ConfigurationService:
         data = manifest_view(data)
         location = self.store.pods.resolve(target)["id"]
         manifest = validate_board(data) if kind == "board" else validate_project(data)
-        manifest = self._pin(kind, manifest)
+        manifest = self._pin(kind, manifest, owner=location)
         # Different input refs/revisions may resolve to the same stable document.
         manifest = validate_board(manifest) if kind == 'board' else validate_project(manifest)
         return PreparedConfig(kind, manifest, _digest(manifest), location)
@@ -245,7 +252,7 @@ class ConfigurationService:
         an existing target label, as when a board edit declares a new version.
         """
         manifest = validate_board(prepared.manifest) if prepared.kind == 'board' else validate_project(prepared.manifest)
-        if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, pinned=True):
+        if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, owner=prepared.pod, pinned=True):
             raise StoreError('Configuration changed after review; prepare it again')
         with self.store.locked():
             return self._register(prepared, replaces=replaces, require_new_label=require_new_label)
@@ -253,7 +260,7 @@ class ConfigurationService:
     def _register(self, prepared, *, replaces=None, require_new_label=False):
         _kind(prepared.kind)
         manifest = validate_board(prepared.manifest) if prepared.kind == "board" else validate_project(prepared.manifest)
-        if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, pinned=True):
+        if _digest(manifest) != prepared.digest or manifest != self._pin(prepared.kind, manifest, owner=prepared.pod, pinned=True):
             raise StoreError("Configuration changed after review; prepare it again")
         pods = (self.store.pods.resolve(prepared.pod)["id"],)
         refs = tuple(self._config_path(prepared.kind, manifest[prepared.kind], manifest["version"], pod)

@@ -54,9 +54,9 @@ run firmware on a device.
 
 A **pod** is a folder of documents and configurations, optionally shared through
 its own Git repository. The Git host handles sharing permissions. `public` is
-the initial default pod name; it has no special access behavior. Documents,
-collections, boards, and projects each belong to one pod and can reference
-artifacts in other pods. See [Pods](docs/PODS.md) for the current backend design.
+the permanent default pod; it cannot be changed or removed. References may
+target only the owning pod or public, and public stays self-contained. Documents,
+collections, boards, and projects each belong to one pod. See [Pods](docs/PODS.md) for the current backend design.
 
 The home screen shows one card per category: Documents, Boards, Projects,
 Hooks, and Pods. Opening Documents, Boards, or Projects shows that
@@ -184,11 +184,11 @@ Cancelling before registration writes no version; loading a JSON file never
 modifies that file.
 
 **Refresh catalog** lists documents from every local pod. Boards and projects
-can both pin documents across pods. Selecting a board or project during ingestion reuses metadata but
+can both pin documents in their own pod or public. Selecting a board or project during ingestion reuses metadata but
 does not add the document to its existing pins. Adopt it through a configuration
 edit. A customer's name is not automatically a document's publisher.
 
-Caiman discovers local pods automatically. The default pod is a local preference;
+Caiman discovers local pods automatically. The default pod is permanently public;
 there is no remembered default board or project and no application membership list.
 
 ### Keyboard navigation

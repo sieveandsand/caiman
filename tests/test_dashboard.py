@@ -57,8 +57,6 @@ async def test_pod_keyboard_navigation_reaches_all_controls(tmp_path, width, up,
         await pilot.press('enter')
         assert app.focused.id == 'repo-sync'
         await pilot.press(right)
-        assert app.focused.id == 'repo-default'
-        await pilot.press(right)
         assert app.focused.id == 'repo-initialize'
         await pilot.press(right)
         assert app.focused.id == 'repo-unregister'
@@ -74,7 +72,7 @@ async def test_pod_keyboard_navigation_reaches_all_controls(tmp_path, width, up,
 
 
 @pytest.mark.parametrize('width', [45, 100])
-@pytest.mark.parametrize('action', ['sync', 'default', 'initialize', 'remove', 'unregister', 'create', 'add'])
+@pytest.mark.parametrize('action', ['sync', 'initialize', 'remove', 'unregister', 'create', 'add'])
 async def test_pod_buttons_target_selection(tmp_path, width, action):
     from caiman.dashboard.onboarding import CategoryApp
     from caiman.repositories.service import RepoManager
@@ -88,7 +86,7 @@ async def test_pod_buttons_target_selection(tmp_path, width, action):
         assert not app.query('.card-face')
         assert app.query_one('#repo-create').region.y < app.query_one('#pod-list').region.y
         assert app.query_one('#repo-sync').disabled
-        assert app.query_one('#repo-default').disabled
+        assert not app.query('#repo-default')
         await pilot.press('j')
         await pilot.pause()
         assert 'alpha' in str(app.query_one('#selected-pod', Static).render())

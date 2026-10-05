@@ -1,7 +1,7 @@
 """Pod discovery and stable identity, including existing store folders.
 
 Headers travel with a pod. Folder names and display names may change without
-changing its ID. The default is a local preference, never an access level.
+changing its ID. The default is always public, never an access level.
 """
 import json
 from pathlib import Path
@@ -38,10 +38,11 @@ class PodRegistry:
                 records.append({'id': data['id'], 'name': data['name'], 'path': path})
         if len({r['id'] for r in records}) != len(records):
             raise ValueError('Duplicate pod ID; register only one local copy of each pod')
-        if (not any(r['id'] == 'public' for r in records)
-                and not (self.store.root / '.removed-pods' / 'public').exists()):
+        if not any(r['id'] == 'public' for r in records):
+            if any(r['path'].name == 'public' for r in records):
+                raise ValueError('The public folder is occupied by another pod; move that folder to restore public')
             records.insert(0, {'id': 'public', 'name': 'public', 'path': self.store.root / 'public'})
-        return records
+        return sorted(records, key=lambda record: record['id'] != 'public')
 
     def resolve(self, value):
         if not valid_identifier(value):
@@ -57,28 +58,34 @@ class PodRegistry:
 
     @property
     def configured_default(self):
-        """Read the preference even when its pod is no longer available."""
-        path = self.store.root / '.pods.json'
-        if not path.exists():
-            return 'public'
-        data = json.loads(self.store._read(path))
-        if not isinstance(data, dict) or set(data) != {'default'}:
-            raise ValueError('Invalid pod preferences')
-        return self.resolve(data['default'])['id'] if data['default'] is not None else None
+        """The public default is fixed; legacy preferences are ignored."""
+        return 'public'
 
     @property
     def default(self):
-        pod = self.configured_default
-        if pod not in {r['id'] for r in self.list()}:
-            raise ValueError('Default pod is unavailable; create a pod or choose Set default')
-        return pod
+        return 'public'
 
     def set_default(self, pod):
-        record = self.ensure(pod)
-        self.store._atomic_write(self.store.root / '.pods.json', canonical_json({'default': record['id']}), immutable=False)
+        if self.resolve(pod)['id'] != 'public':
+            raise ValueError('The default pod is always public and cannot be changed')
+        self.ensure('public')
+
+    def reference_pods(self, owner):
+        """Only the owning pod and public can supply dependencies."""
+        return {self.resolve(owner)['id'], 'public'}
+
+    def check_reference(self, owner, target):
+        from caiman.storage.store import StoreError
+        target = self.resolve(target)['id']
+        if target not in self.reference_pods(owner):
+            raise StoreError(f'Invalid cross-pod reference: {owner} → {target}; '
+                             'references must stay in the current pod or public')
+        return target
 
     def ensure(self, pod, *, name=None):
         record = self.resolve(pod)
+        if record['id'] != 'public':
+            self.ensure('public')
         path = record['path'] / 'pod.json'
         if not path.exists():
             self.store._atomic_write(path, canonical_json({'schema': 'caiman.pod.v1',

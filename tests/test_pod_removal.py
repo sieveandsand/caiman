@@ -11,13 +11,28 @@ from caiman.dashboard.onboarding import CategoryApp
 from test_pods import add_document, apply
 
 
+def legacy_register(service, kind, data, pod):
+    from caiman.configurations.models import validate_board, validate_project
+    from caiman.documents.models import canonical_json
+    from caiman.documents.ingest import digest
+    from caiman.storage.store import _component
+    manifest = (validate_board if kind == 'board' else validate_project)(data)
+    content = canonical_json(manifest)
+    value = digest(content)
+    service.store.pods.ensure(pod)
+    service.store._write_object(pod, 'manifests', value, content)
+    ref = service.store.pod_path(pod) / 'refs' / (kind + 's') / _component(manifest[kind]) / _component(manifest['version'])
+    service.store._atomic_write(ref, (value + '\n').encode(), immutable=False)
+    from caiman.configurations.service import PreparedConfig, ConfigRegistration
+    return PreparedConfig(kind, manifest, value, pod), ConfigRegistration(value, (ref,))
+
+
 def board(manager, tmp_path):
     doc = add_document(manager.store.root, tmp_path, 'manuals')
     service = ConfigurationService(manager.store)
-    prepared = service.prepare('board', {'board': 'demo', 'version': 'A', 'parts': [
+    prepared, registration = legacy_register(service, 'board', {'board': 'demo', 'version': 'A', 'parts': [
         {'role': 'mcu', 'vendor': 'synthetic', 'part': 'chip', 'documents': [
             {'pod': 'manuals', 'digest': doc.manifest_digest}]}]}, pod='hardware')
-    registration = service.register(prepared)
     return service, prepared, registration
 
 
@@ -40,10 +55,9 @@ def test_current_and_historical_references(tmp_path):
 def test_current_project_keeps_historical_board_dependencies_live(tmp_path):
     manager = RepoManager(tmp_path / 'store')
     service, prepared, registration = board(manager, tmp_path)
-    project = service.prepare('project', {'project': 'flight', 'version': 'A', 'customer': 'Demo',
-        'spec_set': 'A', 'boards': [{'name': 'demo', 'version': 'A', 'pod': 'hardware'}],
+    project, _ = legacy_register(service, 'project', {'project': 'flight', 'version': 'A', 'customer': 'Demo',
+        'spec_set': 'A', 'boards': [{'name': 'demo', 'version': 'A', 'pod': 'hardware', 'digest': prepared.digest}],
         'documents': [], 'features': []}, pod='programs')
-    service.register(project)
     for ref in registration.ref_paths:
         ref.unlink()
     for pod in ('manuals', 'hardware'):
@@ -56,8 +70,14 @@ def test_collection_added_after_review_blocks_apply(tmp_path):
     doc = add_document(manager.store.root, tmp_path, 'manuals')
     plan = manager.prepare('unregister', 'manuals')
     collections = CollectionService(manager.store)
-    collections.register(collections.prepare({'name': 'Guides', 'documents': [
-        {'pod': 'manuals', 'digest': doc.manifest_digest}]}, pod='library'))
+    from caiman.documents.models import canonical_json
+    from caiman.documents.ingest import digest
+    manifest = {'schema': 'caiman.collection.v1', 'id': 'guides', 'name': 'Guides',
+                'description': '', 'documents': [{'pod': 'manuals', 'digest': doc.manifest_digest}]}
+    content = canonical_json(manifest); value = digest(content)
+    manager.store.pods.ensure('library')
+    manager.store._write_object('library', 'manifests', value, content)
+    manager.store._atomic_write(collections._ref('library', 'guides'), (value + '\n').encode(), immutable=False)
     with pytest.raises(ValueError, match='Collection: library/Guides'):
         manager.apply(plan)
     assert manager.local_path('manuals').exists()
@@ -66,17 +86,11 @@ def test_collection_added_after_review_blocks_apply(tmp_path):
 def test_renamed_default_and_last_pod_removal(tmp_path):
     manager = RepoManager(tmp_path)
     apply(manager, 'create', 'alpha')
-    apply(manager, 'default', 'alpha')
     (tmp_path / 'alpha').rename(tmp_path / 'renamed')
     apply(manager, 'unregister', 'renamed')
     assert manager.store.pods.default == 'public'
-    apply(manager, 'unregister', 'public')
-    assert manager.store.pods.list() == []
-    assert manager.store.pods.configured_default is None
-    with pytest.raises(ValueError, match='Default pod is unavailable'):
-        _ = manager.store.pods.default
-    apply(manager, 'create', 'public')
-    apply(manager, 'default', 'public')
+    with pytest.raises(ValueError, match='public pod cannot be removed'):
+        apply(manager, 'unregister', 'public')
     assert manager.store.pods.default == 'public'
 
 
@@ -127,14 +141,15 @@ async def test_galleries_after_last_pod_removed(tmp_path, kind):
     from caiman.boards.gallery import BoardGalleryApp
     from caiman.configurations.gallery import ProjectGalleryApp
     manager = RepoManager(tmp_path)
-    apply(manager, 'unregister', 'public')
+    apply(manager, 'create', 'alpha')
+    apply(manager, 'unregister', 'alpha')
     app = (DocumentCatalogApp(root=tmp_path) if kind == 'documents' else
            BoardGalleryApp(tmp_path) if kind == 'boards' else ProjectGalleryApp(root=tmp_path))
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert not app.query('.card-face')
         status = app.query_one('#status' if kind == 'documents' else '#gallery-status', Static)
-        assert 'create a pod' in str(status.render())
+        assert app.active_pod == 'public'
+        assert 'create a pod' not in str(status.render())
 
 
 def test_git_files_preserved_and_internal_references_leave_together(tmp_path):

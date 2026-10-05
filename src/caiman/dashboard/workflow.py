@@ -65,7 +65,7 @@ def run_workflow(root: Path, source_path: Path | None = None, *, ingest=False) -
             run_little_caiman(root)
             action = None
             continue
-        if action in {'repo-add', 'repo-remove', 'repo-initialize', 'repo-create', 'repo-sync', 'repo-default', 'repo-unregister'}:
+        if action in {'repo-add', 'repo-remove', 'repo-initialize', 'repo-create', 'repo-sync', 'repo-unregister'}:
             from caiman.repositories.tui import RepoManagerApp
 
             options = {'pod': action_pod} if action_pod else {}

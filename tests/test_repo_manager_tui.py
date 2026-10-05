@@ -22,36 +22,20 @@ async def test_broken_neighbor_does_not_block_healthy_sync(tmp_path):
     assert manager._git(manager.local_path('healthy'), 'rev-parse', 'HEAD')
 
 
-async def test_missing_default_can_be_replaced_from_pods_page(tmp_path):
+async def test_public_default_has_no_change_control(tmp_path):
     from caiman.dashboard.onboarding import CategoryApp
     from caiman.repositories.service import RepoManager
-    from textual.widgets import ListView
     manager = RepoManager(tmp_path / 'store')
-    manager.apply(manager.prepare('default', 'missing'))
-    preference = (manager.store.root / '.pods.json').read_bytes()
-    manager.local_path('missing').rename(tmp_path / 'moved')
     app = CategoryApp('repos', store_root=manager.store.root)
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert 'Default pod missing is unavailable' in str(app.query_one('#pod-status', Static).render())
-        assert app.query_one('#pod-list', ListView).highlighted_child.record['pod'] == 'public'
-        assert not app.query_one('#repo-default').disabled
-        app.query_one('#repo-default').press()
-        await pilot.pause()
-    assert app.return_value == {'action': 'repo-default', 'pod': 'public'}
-    assert (manager.store.root / '.pods.json').read_bytes() == preference
-    app = RepoManagerApp(store_root=manager.store.root, action='default', pod='public')
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.query_one('#review').press()
-        await pilot.pause()
-        app.query_one('#apply').press()
-        await pilot.pause()
+        assert 'permanent default' in str(app.query_one('#pod-status', Static).render())
+        assert not app.query('#repo-default')
+        assert app.query_one('#repo-unregister').disabled
     assert manager.store.pods.default == 'public'
-    assert all(r['missing_default'] is None for r in manager.list_status())
 
 
-@pytest.mark.parametrize('action', ['initialize', 'sync', 'default', 'remove'])
+@pytest.mark.parametrize('action', ['initialize', 'sync', 'remove'])
 async def test_selected_pod_is_carried_into_review(tmp_path, action):
     from caiman.repositories.service import RepoManager
     manager = RepoManager(tmp_path)
@@ -134,7 +118,13 @@ async def test_clone_directly_and_retry_missing_remote(tmp_path):
         assert 'Clone needs a remote' in str(app.query_one('#status', Static).render())
         assert not app.query_one('#clone').disabled
         app.query_one('#remote', Input).value = str(source.local_path('demo'))
-        app.query_one('#clone').press(); await pilot.pause()
+        app.query_one('#clone').press()
+        # Git runs in a background thread; one UI pause need not finish a clone.
+        import asyncio
+        async with asyncio.timeout(10):
+            while app.is_running:
+                await pilot.pause()
+                await asyncio.sleep(0.02)
         assert not app.is_running
     assert (root / 'local-demo/pod.json').exists()
     assert app.manager.local_path('demo') == root / 'local-demo'
@@ -152,11 +142,4 @@ async def test_connect_git_and_default_pod(tmp_path):
         app.query_one('#apply').press(); await pilot.pause()
         assert (tmp_path / 'alpha/.git').exists()
         assert not app.query('#operation')
-    app = RepoManagerApp(store_root=tmp_path, action='default')
-    async with app.run_test(size=(100, 38)) as pilot:
-        await pilot.pause()
-        app.query_one('#repository', Select).value = 'alpha'
-        await pilot.pause()
-        app.query_one('#review').press(); await pilot.pause()
-        app.query_one('#apply').press(); await pilot.pause()
-        assert app.manager.store.pods.default == 'alpha'
+    assert app.manager.store.pods.default == 'public'

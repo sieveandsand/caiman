@@ -138,9 +138,9 @@ def test_feature_pin_uses_project_document_after_catalog_ref_repoint(tmp_path, s
 def test_documents_attach_across_pods_without_part_matching(tmp_path, setup):
     store, service, _ = setup
     selector = document(tmp_path, store, pods=('beta',), part='spec')
-    prepared = service.prepare('project', project({**selector, 'pod': 'beta'}))
+    prepared = service.prepare('project', project({**selector, 'pod': 'beta'}, pods=('beta',)))
     assert prepared.manifest['documents'][0]['pod'] == 'beta'
-    attached = service.prepare('board', board({**selector, 'pod': 'beta'}))
+    attached = service.prepare('board', board({**selector, 'pod': 'beta'}), pod='beta')
     assert attached.manifest['parts'][0]['documents'][0]['pod'] == 'beta'
 
 
@@ -173,7 +173,7 @@ def test_review_mutation_and_blob_corruption_fail_before_new_writes(tmp_path, se
 def test_ambiguous_ref_requires_pod(tmp_path, setup):
     store, service, _ = setup
     selector = document(tmp_path, store, pods=("alpha",), part="spec")
-    document(tmp_path, store, pods=("beta",), part="spec", text="# Different\nText\n")
+    document(tmp_path, store, pods=("public",), part="spec", text="# Different\nText\n")
     data = project(selector, pods=("alpha", "beta"))
     with pytest.raises(StoreError, match="Ambiguous"):
         service.prepare("project", data)
@@ -247,7 +247,7 @@ def test_catalog_omits_documents_in_other_pods(tmp_path, setup):
     records = service.list_documents(pods={"alpha"})
     assert {entry["manifest"]["part"] for entry in records} == {"visible"}
     assert len(service.list_documents(pods={"alpha", "program"})) == 2
-    assert service.prepare("project", project({**restricted, "pod": "program"})).manifest["documents"][0]["pod"] == "program"
+    assert service.prepare("project", project({**restricted, "pod": "program"}, pods=("program",))).manifest["documents"][0]["pod"] == "program"
 
 
 def test_version_catalog_omits_project_with_additional_pods(tmp_path, setup):
@@ -264,10 +264,10 @@ def test_version_catalog_omits_project_with_additional_pods(tmp_path, setup):
 def test_unqualified_ref_ignores_undeclared_pod_for_public_alternative(tmp_path, setup):
     store, service, ref = setup
     document(tmp_path, store, pods=('program',))
-    with pytest.raises(ValueError, match='Ambiguous'):
-        service.prepare('project', project(ref))
-    saved = service.prepare('project', project({**ref, 'pod': 'program'}))
-    assert saved.manifest['documents'][0]['pod'] == 'program'
+    saved = service.prepare('project', project(ref))
+    assert saved.manifest['documents'][0]['pod'] == 'public'
+    with pytest.raises(ValueError, match='cross-pod reference'):
+        service.prepare('project', project({**ref, 'pod': 'program'}))
 
 
 def test_catalog_does_not_hide_corrupt_restricted_manifest(tmp_path, setup):

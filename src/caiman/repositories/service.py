@@ -66,7 +66,7 @@ class RepoPlan:
         elif self.action == 'unregister':
             lines.append('Remove from Caiman. Keep all files and Git history in .removed-pods under the store folder.')
             lines.append('Historical snapshots remain unchanged; their removed dependencies become unavailable.')
-            lines.append('If this is the default pod, use another available pod, or clear the default if none remain.')
+            lines.append('The default public pod cannot be removed.')
         elif self.action == 'remove':
             lines.append('Keep local data and Git history; remove the remote connection.')
         return '\n'.join(lines)
@@ -190,6 +190,8 @@ class RepoManager:
     def prepare(self, action, pod, remote='', push=False):
         if action not in {'create', 'add', 'initialize', 'remove', 'sync', 'default', 'unregister'}:
             raise ValueError('Unknown pod operation')
+        if action == 'default':
+            raise ValueError('The default pod is always public and cannot be changed')
         path = self.local_path(pod)
         if action == 'unregister':
             from caiman.pods.removal import check_removal
@@ -388,17 +390,6 @@ class RepoManager:
         existed = plan.local_path.exists()
         if existed:
             plan.local_path.rename(destination)
-        try:
-            if self.store.pods.configured_default == plan.pod:
-                remaining = self.store.pods.list()
-                replacement = next((r['id'] for r in remaining if r['id'] == 'public'),
-                                   remaining[0]['id'] if remaining else None)
-                self.store._atomic_write(self.store.root / '.pods.json',
-                                         canonical_json({'default': replacement}), immutable=False)
-        except (OSError, ValueError):
-            if existed:
-                destination.rename(plan.local_path)
-            raise
 
     def _git(self, path, *args, allow_missing=False, raw=False):
         env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}

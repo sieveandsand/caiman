@@ -12,8 +12,9 @@ def test_pods_are_local_folders_not_authorization(tmp_path):
     store.pods.ensure('alpha')
     assert store.pods.selected() == {'public', 'alpha'}
     assert store.pods.selected(['alpha']) == {'alpha'}
-    store.pods.set_default('alpha')
-    assert store.pods.default == 'alpha'
+    with pytest.raises(ValueError, match='always public'):
+        store.pods.set_default('alpha')
+    assert store.pods.default == 'public'
 
 
 @pytest.mark.parametrize('name', ['../alpha', '', '/tmp/alpha', 'a/b'])
