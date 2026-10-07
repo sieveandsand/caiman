@@ -201,9 +201,18 @@ def resolve_context(store: Store, kind: str, name: str, version: str, pod: str |
 
 
 def document_location(manifest: dict) -> Path:
-    """`issuer/part/name@version/document.<ext>`: the path is the citation (ARCHITECTURE §5)."""
+    """`issuer/part/name@version/<original filename>`: the path is the citation (ARCHITECTURE §5)."""
     issuer, scope, name, version = document_ref(manifest).parts
-    return Path(issuer, scope, f'{name}@{version}', manifest['files'][0]['path'])
+    return Path(issuer, scope, f'{name}@{version}', _materialized_filename(manifest))
+
+
+def _materialized_filename(manifest: dict) -> str:
+    """The uploaded filename when it is a plain name; the stored `document.<ext>` otherwise."""
+    filename = manifest.get('original_filename')
+    if (isinstance(filename, str) and filename not in {'', '.', '..'} and not filename.startswith('.')
+            and Path(filename).name == filename and '\\' not in filename and filename.isprintable()):
+        return filename
+    return manifest['files'][0]['path']
 
 
 def document_set_digest(documents: list[dict]) -> str:

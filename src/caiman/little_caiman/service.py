@@ -245,7 +245,7 @@ class Resolver:
                     return TREE
                 continue
             parts = path.relative_to(root).parts
-            if location == 'workspace' and len(parts) >= 2 and (parts[-1] == 'document' or parts[-1].startswith('document.')) and '@' in parts[-2]:
+            if location == 'workspace' and len(parts) >= 2 and '@' in parts[-2] and not path.is_dir():
                 name, version = parts[-2].split('@', 1)
                 return DocumentRef(path, '/'.join((*parts[:-2], name)), version, location)
             if (location == 'store' and len(parts) == 5 and parts[1:3] == ('blobs', 'sha256')

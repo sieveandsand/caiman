@@ -33,7 +33,7 @@ DOCUMENTS = '.caiman/sessions/claude-abc12345/context/documents'
 @pytest.fixture
 def workspace(tmp_path):
     cwd = tmp_path / 'firmware'
-    document = cwd / DOCUMENTS / 'oem-alpha' / 'flash-spec@3.2' / 'document.md'
+    document = cwd / DOCUMENTS / 'oem-alpha' / 'flash-spec@3.2' / 'flash-spec.md'
     document.parent.mkdir(parents=True)
     document.write_text(DOCUMENT)
     document.chmod(0o444)
@@ -64,7 +64,7 @@ def claude_session(tmp_path, cwd, entries):
 
 def test_claude_reads_searches_and_edits_are_attributed_to_sections(tmp_path, workspace):
     cwd, document, store = workspace
-    relative = f'{DOCUMENTS}/oem-alpha/flash-spec@3.2/document.md'
+    relative = f'{DOCUMENTS}/oem-alpha/flash-spec@3.2/flash-spec.md'
     session = claude_session(tmp_path, cwd, [
         claude_call('Read', {'file_path': str(document), 'offset': 5, 'limit': 3}, cwd),
         claude_call('Read', {'file_path': str(document)}, cwd),
@@ -169,7 +169,7 @@ def test_claude_subagent_transcripts_count_toward_the_session(tmp_path, workspac
 
 def test_codex_code_mode_commands_and_patches(tmp_path, workspace):
     cwd, document, store = workspace
-    relative = f'{DOCUMENTS}/oem-alpha/flash-spec@3.2/document.md'
+    relative = f'{DOCUMENTS}/oem-alpha/flash-spec@3.2/flash-spec.md'
     transcript = tmp_path / 'rollout.jsonl'
     exec_input = f'text(await tools.exec_command({{cmd:{json.dumps("nl -ba " + relative + " | sed -n 5,7p")}, workdir:{json.dumps(str(cwd))}}}));'
     write_lines(transcript, [

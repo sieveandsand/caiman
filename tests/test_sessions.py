@@ -113,11 +113,11 @@ def test_load_project_installs_the_complete_read_only_set_with_a_metadata_only_b
     assert (state['revision'], state['documents'], state['pod']) == (1, 2, 'alpha')
     context = folder(worktree) / 'context'
     files = tree(context)
-    assert files['documents/example/mcu/manual@Rev%201/document.md'] == MANUAL
-    assert files['documents/customer/kestrel/spec@R1/document.pdf'].endswith(SECRET.encode())
+    assert files['documents/example/mcu/manual@Rev%201/manual.md'] == MANUAL
+    assert files['documents/customer/kestrel/spec@R1/spec.pdf'].endswith(SECRET.encode())
     assert set(files) == {'project.md', 'project.json', 'documents/_index.md',
-                          'documents/example/mcu/manual@Rev%201/document.md',
-                          'documents/customer/kestrel/spec@R1/document.pdf'}
+                          'documents/example/mcu/manual@Rev%201/manual.md',
+                          'documents/customer/kestrel/spec@R1/spec.pdf'}
     for path in context.rglob('*'):
         assert not path.is_symlink()
         if path.is_file():
