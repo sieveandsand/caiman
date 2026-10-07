@@ -197,7 +197,9 @@ sequenceDiagram
 The hook never prompts, never provisions, and never reads document bodies
 (S-23). A load returns only after the whole context is installed. A per-session
 lock serializes loads. Sessions are independent: two agents in one worktree can
-load different projects. Resuming a session keeps its folder and context.
+load different projects. Resuming a session keeps its folder and context; the
+next start in a worktree deletes the other sessions there idle for 14 days
+(S-41).
 
 Resolution expands each board's assembly and part documents (routed from the
 board's pod), then the project's direct documents and current collection
@@ -210,12 +212,22 @@ The installed context:
 
 ```text
 .caiman/sessions/claude-SESSION_ID/context/
+├── .ignore         "!*": ripgrep may search this folder when given its path
 ├── project.md      brief: name, version, snapshot digest, boards and parts, document paths
 ├── project.json    resolved identities: snapshot, boards, every document and blob
 └── documents/
     ├── _index.md   the complete installed set
     └── ISSUER/PART_OR_PROGRAM/NAME@VERSION/document.EXT   read-only copy
 ```
+
+Agents search one session by naming its folder: `rg -n PATTERN
+.../context/documents`. In a Git worktree, `.caiman/.gitignore` keeps every
+session out of searches from the worktree root, so one session's search never
+returns another's documents. Ripgrep applies that rule even to a named path;
+the context's `.ignore` lifts it inside that folder only. The start hook and
+the brief both give the folder's absolute path. Tools that ignore ignore files,
+such as a plain `grep -r` from the root or a file glob, still see every session
+(S-19).
 
 The path is part of the citation. The brief is built from manifests only and
 names the project by codename (I-6). A citation carries the document, its
@@ -278,7 +290,7 @@ invisible. Every surface that shows usage says so.
 | Remote pod access | Git host permissions | Anyone who could read a repository keeps its history |
 | Local access | OS permissions | Processes running as the same user can read everything |
 | Dependency routes | Owning pod plus `public` | Routes, not permissions; an agent may read other files |
-| Session folders | Separate directories, per-session lock | Separate selections, not permissions |
+| Session folders | Separate directories, per-session lock; searches name one session's folder | Separate selections, not permissions; tools that ignore ignore files see every session |
 | Installed files | Mode `0444`; `.caiman/.gitignore` contains `*` | The owner can chmod; an existing commit cannot be retracted |
 | Store integrity | Digest checked on every read; no symlinked refs or directories | Assumes one writer, not a hostile local process |
 

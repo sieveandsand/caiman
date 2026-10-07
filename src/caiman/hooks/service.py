@@ -11,6 +11,8 @@ import stat
 import sys
 import tempfile
 
+from caiman.hooks.skill import SKILL
+
 
 HARNESS_NAMES = {'claude': 'Claude Code', 'codex': 'Codex'}
 CAIMAN_HANDLER = re.compile(r'-m caiman\b.*\bsession (?:start|hook)\b')
@@ -45,6 +47,7 @@ class HookPlan:
     path: Path
     before: bytes | None
     after: bytes
+    unchanged: str = 'Caiman hook already installed.'
 
     @property
     def changed(self):
@@ -55,7 +58,19 @@ class HookPlan:
         return ''.join(difflib.unified_diff(
             (self.before or b'').decode('utf-8').splitlines(keepends=True),
             self.after.decode('utf-8').splitlines(keepends=True),
-            fromfile=str(self.path), tofile=str(self.path))) or 'Caiman hook already installed.'
+            fromfile=str(self.path), tofile=str(self.path))) or self.unchanged
+
+
+def skill_path(harness: str, home: Path) -> Path:
+    """User-level, so no firmware repository gains files (I-3)."""
+    if harness not in HARNESS_NAMES:
+        raise ValueError('Choose Claude Code or Codex')
+    return home / f'.{harness}' / 'skills' / 'caiman' / 'SKILL.md'
+
+
+def prepare_skill(harness: str, home: Path) -> HookPlan:
+    path = skill_path(harness, home.expanduser().absolute())
+    return HookPlan(path, _read(path), SKILL.encode('utf-8'), 'Caiman skill already installed.')
 
 
 def prepare_hook(harness: str, directory: Path, store_root: Path) -> HookPlan:
@@ -134,11 +149,13 @@ def session_context(store_root: Path, folder: Path, state: dict | None) -> str:
                 f'`{cli} session list` (add a name to see its versions). Never choose a '
                 f'version yourself. Load the user\'s choice with `{load}`, then continue '
                 'with their request.')
-    brief = folder / 'context' / 'project.md'
+    from caiman.sessions.service import search_hint
+
+    brief, documents = folder / 'context' / 'project.md', folder / 'context' / 'documents'
     return (f"Caiman: this session ({name}) has {state['kind']} {state['name']} @ "
             f"{state['version']} loaded (revision {state['revision']}). Read {brief} before "
-            'answering hardware or requirement questions; its documents are under '
-            f"{folder / 'context' / 'documents'}. To switch, ask the user which board or "
+            f'answering hardware or requirement questions; its documents are under {documents}. '
+            f'{search_hint(documents)} To switch, ask the user which board or '
             f'project and version, then run `{load}` and reread the brief.')
 
 
@@ -148,7 +165,7 @@ def session_hook(store_root: Path, harness: str, event: dict, env=os.environ) ->
     Returns the hook's stdout, or None when there is nothing to say. Never prompts,
     never provisions, never reads document content (S-23, I-10).
     """
-    from caiman.sessions.service import find_workspace, read_state, register_session
+    from caiman.sessions.service import find_workspace, prune_sessions, read_state, register_session
 
     if not store_root.is_dir() or not isinstance(event, dict):
         return None
@@ -157,6 +174,11 @@ def session_hook(store_root: Path, harness: str, event: dict, env=os.environ) ->
     root = find_workspace(Path(project)) or Path(project)
     folder = register_session(root, harness, event.get('session_id'),
                               source=event.get('source', ''), transcript=event.get('transcript_path'))
+    try:
+        prune_sessions(root, folder.name)
+    except Exception:
+        # Cleanup is housekeeping; it must never cost the agent its orientation (I-10).
+        pass
     if env_file := env.get('CLAUDE_ENV_FILE'):
         # Later Bash commands in this session find their own folder without guessing.
         with open(env_file, 'a', encoding='utf-8') as stream:

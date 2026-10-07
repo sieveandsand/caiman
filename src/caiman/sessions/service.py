@@ -6,13 +6,14 @@ version's complete pinned document set into that session's `context/` folder.
 Session folders separate selections, not permissions (S-19).
 """
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import tempfile
 import uuid
@@ -30,7 +31,9 @@ SESSION_SCHEMA = 'caiman.session.v1'
 STATE_SCHEMA = 'caiman.session-state.v1'
 CONTEXT_SCHEMA = 'caiman.session-context.v1'
 SESSION_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
+SESSION_FOLDER = re.compile(rf'(?:{"|".join(HARNESSES)})-{SESSION_ID.pattern}')
 KINDS = ('board', 'project')
+PRUNE_AFTER = timedelta(days=14)
 
 
 def _now() -> str:
@@ -126,6 +129,59 @@ def register_session(root: Path, harness: str, session_id: str, *, source: str =
         data['transcript_path'] = transcript
     _write_json(path, data)
     return folder
+
+
+def _last_active(folder: Path) -> datetime | None:
+    """The later of the last start and the last load; None when either is unreadable."""
+    stamps = []
+    for name, key in (('session.json', 'last_start'), ('state.json', 'installed_at')):
+        try:
+            value = (_read_json(folder / name) or {}).get(key)
+            if value is not None:
+                stamps.append(datetime.fromisoformat(value))
+        except (OSError, TypeError, ValueError):
+            return None
+    if not stamps or any(stamp.tzinfo is None for stamp in stamps):
+        return None
+    return max(stamps)
+
+
+def _idle(folder: Path, now: datetime, after: timedelta) -> bool:
+    last = _last_active(folder)
+    return last is not None and now - last > after
+
+
+def prune_sessions(root: Path, keep: str, *, now: datetime | None = None,
+                   after: timedelta = PRUNE_AFTER) -> list[str]:
+    """Delete other sessions idle longer than `after` (S-41).
+
+    Skips the starting session, folders Caiman did not name, sessions with
+    unreadable times, and any session whose lock is held (an install is running).
+    """
+    now = now or datetime.now(timezone.utc)
+    sessions = Path(root) / CAIMAN / 'sessions'
+    if sessions.is_symlink() or not sessions.is_dir():
+        return []
+    removed = []
+    for folder in sorted(sessions.iterdir()):
+        if (folder.name == keep or folder.is_symlink() or not folder.is_dir()
+                or not SESSION_FOLDER.fullmatch(folder.name) or not _idle(folder, now, after)):
+            continue
+        try:
+            fd = os.open(folder / '.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        except OSError:
+            continue
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Recheck under the lock: the session may have resumed or loaded meanwhile.
+            if _idle(folder, now, after):
+                shutil.rmtree(folder)
+                removed.append(folder.name)
+        except OSError:
+            continue
+        finally:
+            os.close(fd)
+    return removed
 
 
 def is_registered(folder: Path) -> bool:
@@ -237,7 +293,14 @@ def count(n: int) -> str:
     return f'{n} document' + ('' if n == 1 else 's')
 
 
-def _brief(resolved: dict, revision: int, entries: list[dict]) -> str:
+def search_hint(documents: Path) -> str:
+    """Searches name the session's folder: from the worktree root, `.caiman/` is ignored."""
+    return ('Search only this session\'s documents by naming their folder, for example '
+            f'`rg -n PATTERN {shlex.quote(str(documents))}`. A search from the repository '
+            'root skips `.caiman/`, and other session folders hold other sessions\' selections.')
+
+
+def _brief(resolved: dict, revision: int, entries: list[dict], documents: Path) -> str:
     """Metadata only: names, versions, roles, part numbers, paths (I-6)."""
     kind, name, version = resolved['kind'], resolved['name'], resolved['version']
     lines = [f'# {name} @ {version}', '',
@@ -248,7 +311,7 @@ def _brief(resolved: dict, revision: int, entries: list[dict]) -> str:
         lines += [f'  - {part.get("role", "")}: {part_identity(part)}' for part in board['parts']]
     lines += ['', '## Documents', '',
               f'{count(len(entries))} installed under `documents/`; '
-              '`documents/_index.md` lists every one. Search them with `rg` or `grep -r`.',
+              '`documents/_index.md` lists every one.', search_hint(documents),
               'Each path encodes issuer, part, document, and version. Cite facts as '
               '(document path, version, locator such as a heading, page, or requirement ID).', '']
     lines += [f'- `{entry["path"]}`' for entry in entries]
@@ -292,7 +355,11 @@ def _build(store: Store, staging: Path, resolved: dict, revision: int) -> dict:
     _write_readonly(staging / 'documents' / '_index.md', _index(entries).encode())
     _write_readonly(staging / 'project.json',
                     (json.dumps(identity, ensure_ascii=False, indent=2) + '\n').encode())
-    _write_readonly(staging / 'project.md', _brief(resolved, revision, entries).encode())
+    documents = staging.parent / 'context' / 'documents'
+    _write_readonly(staging / 'project.md', _brief(resolved, revision, entries, documents).encode())
+    # `.caiman/.gitignore` hides every session from ripgrep, even given a path; this
+    # whitelist overrides it here, so naming this folder searches it and no other.
+    _write_readonly(staging / '.ignore', b'!*\n')
     return identity
 
 

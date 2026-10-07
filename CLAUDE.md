@@ -231,7 +231,7 @@ src/caiman/
   dashboard/      # home screen, setup, workflow state, and dashboard actions
   pods/           # pod discovery, identity, reference routes, removal checks
   repositories/   # per-pod Git transport and the Pods TUI
-  hooks/          # harness hook installation, the start callback, and TUI
+  hooks/          # harness hook and skill installation, the start callback, and TUI
   sessions/       # per-session context folders: registration, resolution, installation
   little_caiman/  # read-only sidecar: a session's managed-document use, from its transcript
   storage/        # immutable blobs, manifests, refs, locking, and journaled publication

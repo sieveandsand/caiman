@@ -145,10 +145,14 @@ dependencies before the pod itself. The Git host controls who can read and push.
 ## Agent sessions
 
 1. **Hooks → Claude Code** (or **Codex**): pick the project directory, review
-   the settings diff, install. Claude Code uses `.claude/settings.local.json`;
-   Codex uses `.codex/hooks.json` (trust it in `/hooks`). Restart the harness.
+   the settings and skill diffs, install. Claude Code uses
+   `.claude/settings.local.json` and `~/.claude/skills/caiman/`; Codex uses
+   `.codex/hooks.json` (trust it in `/hooks`) and `~/.codex/skills/caiman/`.
+   Codex runs hooks inside its sandbox, so under `-s read-only` the session is
+   never registered. Restart the harness.
 2. Start a session. The hook creates `.caiman/` (Git-ignored) and registers the
-   session. If nothing is loaded, the agent asks you what to load.
+   session. If nothing is loaded, the agent asks you what to load. Other
+   sessions in the worktree idle for 14 days are deleted.
 3. The agent runs:
 
 ```bash

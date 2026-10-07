@@ -306,6 +306,12 @@ WORKTREE/.caiman/
   delete the journal. The next load finishes or rolls back an interrupted
   install, then removes leftovers.
 - Installed documents are copies written `0444`.
+- **Pruning.** Each start deletes the other session folders idle for 14 days:
+  no `last_start` or `installed_at` in that window. A held `.lock`, unreadable
+  times, or a name that is not `HARNESS-SESSION_ID` keeps the folder (S-41).
+- **`context/.ignore`** contains `!*`. `.gitignore` hides `.caiman/` from Git and
+  from searches at the worktree root; this whitelist lets ripgrep search one
+  session's context when given its path (Architecture §5).
 
 ## 7. Integrity checks
 

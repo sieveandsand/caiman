@@ -1,10 +1,14 @@
 """Session registration from the start hook, and host-side context loading."""
 
+from datetime import datetime, timedelta, timezone
+import fcntl
 import io
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
+import subprocess
 
 import pytest
 
@@ -12,7 +16,8 @@ from caiman.cli.commands import main
 from caiman.configurations.service import ConfigurationService
 from caiman.documents.ingest import prepare_document
 from caiman.hooks.service import session_hook
-from caiman.sessions.service import load_context, read_state, recover, register_session
+from caiman.sessions.service import (load_context, prune_sessions, read_state, recover,
+                                     register_session, search_hint)
 from caiman.storage.store import Store
 
 
@@ -115,9 +120,10 @@ def test_load_project_installs_the_complete_read_only_set_with_a_metadata_only_b
     files = tree(context)
     assert files['documents/example/mcu/manual@Rev%201/manual.md'] == MANUAL
     assert files['documents/customer/kestrel/spec@R1/spec.pdf'].endswith(SECRET.encode())
-    assert set(files) == {'project.md', 'project.json', 'documents/_index.md',
+    assert set(files) == {'.ignore', 'project.md', 'project.json', 'documents/_index.md',
                           'documents/example/mcu/manual@Rev%201/manual.md',
                           'documents/customer/kestrel/spec@R1/spec.pdf'}
+    assert files['.ignore'] == b'!*\n'
     for path in context.rglob('*'):
         assert not path.is_symlink()
         if path.is_file():
@@ -127,10 +133,13 @@ def test_load_project_installs_the_complete_read_only_set_with_a_metadata_only_b
         assert SECRET not in files[name].decode() and 'Synthetic customer' not in files[name].decode()
     brief = files['project.md'].decode()
     assert 'kestrel @ dvt-1' in brief and 'application-mcu: example/mcu' in brief
+    # Searches name this session's folder; the repository root skips `.caiman/`.
+    assert f'rg -n PATTERN {context / "documents"}' in brief
     assert 'Synthetic customer' not in json.dumps(read_state(folder(worktree)))
     resumed = start(root, worktree, source='resume')
     assert 'project kestrel @ dvt-1 loaded (revision 1)' in resumed
     assert str(context / 'project.md') in resumed and SECRET not in resumed
+    assert f'rg -n PATTERN {context / "documents"}' in resumed
 
 
 def test_bare_name_lists_versions_and_writes_nothing(library, monkeypatch, capsys):
@@ -177,6 +186,87 @@ def test_switching_one_session_leaves_another_unchanged(library):
     assert switched['revision'] == 2 and switched['document_set'] != first['document_set']
     assert tree(folder(worktree, 's2')) == before
     assert not list(folder(worktree, 's1').glob('.staging-*')) and not list(folder(worktree, 's1').glob('.previous-*'))
+
+
+def test_search_hint_quotes_a_folder_with_spaces(tmp_path):
+    documents = tmp_path / 'my firmware' / '.caiman' / 'sessions' / 'claude-s1' / 'context' / 'documents'
+    assert f"rg -n PATTERN '{documents}'" in search_hint(documents)
+
+
+@pytest.mark.skipif(not (shutil.which('rg') and shutil.which('git')), reason='needs rg and git')
+def test_ripgrep_finds_only_the_named_sessions_documents_in_a_git_worktree(library):
+    root, worktree, *_ = library
+    subprocess.run(['git', 'init', '-q', str(worktree)], check=True)
+    start(root, worktree, 's1')
+    start(root, worktree, 's2')
+    load_context(root, folder(worktree, 's1'), 'board', 'demo-board', 'Rev A')
+    load_context(root, folder(worktree, 's2'), 'project', 'kestrel', 'dvt-1')
+
+    def rg(*args):
+        result = subprocess.run(['rg', '-l', *args], cwd=worktree, stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True)
+        return sorted(Path(line).resolve() for line in result.stdout.splitlines())
+
+    # A search from the worktree root reaches no session, even with --hidden.
+    assert rg('Serial port') == rg('--hidden', 'Serial port') == []
+    # Naming a session's folder searches that session and no other.
+    documents = folder(worktree, 's1') / 'context' / 'documents'
+    assert rg('Serial port', str(documents)) == [(documents / 'example/mcu/manual@Rev%201/manual.md').resolve()]
+    assert rg('REQ-SECRET', str(documents)) == []
+
+
+def age(session, days, *, loaded_days=None):
+    """Backdate a session's last start and, optionally, its last load."""
+    stamp = lambda d: (datetime.now(timezone.utc) - timedelta(days=d)).isoformat(timespec='seconds')
+    path = session / 'session.json'
+    path.write_text(json.dumps(dict(json.loads(path.read_text()), last_start=stamp(days))))
+    if loaded_days is not None:
+        path = session / 'state.json'
+        path.write_text(json.dumps(dict(json.loads(path.read_text()), installed_at=stamp(loaded_days))))
+
+
+def test_start_prunes_other_sessions_idle_past_the_window(library):
+    root, worktree, *_ = library
+    for name in ('idle', 'loaded', 'recent', 'self'):
+        start(root, worktree, name)
+    load_context(root, folder(worktree, 'idle'), 'board', 'demo-board', 'Rev A')
+    load_context(root, folder(worktree, 'loaded'), 'board', 'demo-board', 'Rev A')
+    age(folder(worktree, 'idle'), 15, loaded_days=15)
+    age(folder(worktree, 'loaded'), 15, loaded_days=2)  # a recent load counts as activity
+    age(folder(worktree, 'recent'), 13)
+    age(folder(worktree, 'self'), 30)
+    stray = worktree / '.caiman' / 'sessions' / 'notes'
+    stray.mkdir()
+    os.utime(stray, (0, 0))
+    context = start(root, worktree, 'self', source='resume')
+    assert 'No board or project is loaded' in context
+    remaining = sorted(p.name for p in (worktree / '.caiman' / 'sessions').iterdir())
+    # Never the starting session, and never a folder Caiman did not name.
+    assert remaining == ['claude-loaded', 'claude-recent', 'claude-self', 'notes']
+
+
+def test_prune_skips_a_session_mid_install_or_with_unreadable_times(library):
+    root, worktree, *_ = library
+    for name in ('busy', 'corrupt', 'self'):
+        start(root, worktree, name)
+    age(folder(worktree, 'busy'), 30)
+    (folder(worktree, 'corrupt') / 'session.json').write_text('{"last_start": "yesterday-ish"')
+    fd = os.open(folder(worktree, 'busy') / '.lock', os.O_RDWR | os.O_CREAT)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        assert prune_sessions(worktree, 'claude-self') == []
+    finally:
+        os.close(fd)
+    assert folder(worktree, 'busy').is_dir() and folder(worktree, 'corrupt').is_dir()
+    assert prune_sessions(worktree, 'claude-self') == ['claude-busy']
+
+
+def test_a_failed_prune_never_fails_the_start(library, monkeypatch):
+    root, worktree, *_ = library
+    def broken(*args, **kwargs):
+        raise OSError('disk on fire')
+    monkeypatch.setattr('caiman.sessions.service.prune_sessions', broken)
+    assert 'No board or project is loaded' in start(root, worktree)
 
 
 def test_unregistered_session_or_unknown_version_writes_nothing(library):

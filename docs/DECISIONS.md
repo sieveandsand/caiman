@@ -137,6 +137,22 @@ list` and `caiman session load`. Loading returns when the context is complete,
 so there is no acknowledgement step. *Why:* no listener or adapter is needed
 when the agent runs on the host.
 
+**S-41. Idle sessions are pruned at the next start.** Each start in a worktree
+deletes the other session folders there that have not started or loaded for 14
+days. It skips a session whose lock is held, one whose times are unreadable, and
+any folder Caiman did not name. A session resumed after that finds nothing
+loaded and asks again. *Why:* every session folder is one more set of
+documents a careless search or file listing can reach; no extra hook is needed,
+and both harnesses can resume within the window.
+
+**S-42. A user-level skill carries the procedure; the hook carries the
+session.** The hook screen installs `caiman/SKILL.md` under `~/.claude/skills`
+or `~/.codex/skills` beside the hook, reviewed as a diff. It names no paths:
+the start message gives the session folder and this machine's command. *Why:*
+agents without it browsed `.caiman/sessions/` and cited another session's
+documents; installing in the user's home adds nothing to firmware repositories
+(I-3).
+
 ## Open
 
 **D-02. Moving the store to an OCI registry.** Git cannot delete history. Move

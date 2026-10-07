@@ -7,7 +7,8 @@ import pytest
 from textual.widgets import Button, Input, Static
 
 from caiman.cli.commands import main
-from caiman.hooks.service import install_hook, prepare_hook, settings_path
+from caiman.hooks.service import install_hook, prepare_hook, prepare_skill, settings_path
+from caiman.hooks.skill import SKILL
 from caiman.hooks.tui import HooksApp
 
 
@@ -106,24 +107,49 @@ def test_generated_command_runs_with_quoted_path(tmp_path, harness):
     assert (worktree / '.caiman' / 'sessions' / f'{harness}-s1' / 'session.json').is_file()
 
 
+@pytest.mark.parametrize('harness, folder', [('claude', '.claude/skills'), ('codex', '.codex/skills')])
+def test_skill_installs_in_the_users_home_and_is_idempotent(tmp_path, harness, folder):
+    plan = prepare_skill(harness, tmp_path)
+    assert plan.path == tmp_path / folder / 'caiman' / 'SKILL.md'
+    assert not plan.path.exists() and '+name: caiman' in plan.preview  # Preview never writes.
+    assert install_hook(plan)
+    assert plan.path.read_text() == SKILL
+    assert not install_hook(prepare_skill(harness, tmp_path))
+    assert 'Caiman skill already installed.' in prepare_skill(harness, tmp_path).preview
+    plan.path.write_text('edited by hand')
+    assert '-edited by hand' in prepare_skill(harness, tmp_path).preview
+
+
+def test_skill_names_no_machine_paths_and_keeps_the_rules():
+    head, body = SKILL.split('\n---\n', 1)
+    assert head.startswith('---\nname: caiman\ndescription: ')
+    assert '/Users/' not in SKILL and 'python' not in SKILL
+    body = ' '.join(body.split())
+    for rule in ('Never choose a version yourself', 'Never open, list, or search other folders',
+                 '(document path, version, locator)', 'rg -n PATTERN', 'read-only'):
+        assert rule in body
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('harness', ['claude', 'codex'])
 async def test_hook_screen_preview_install_and_cancel(tmp_path, harness):
-    app = HooksApp(harness=harness, store_root=tmp_path, directory=tmp_path)
-    path = settings_path(harness, tmp_path)
+    home = tmp_path / 'home'
+    app = HooksApp(harness=harness, store_root=tmp_path, directory=tmp_path, home=home)
+    path, skill = settings_path(harness, tmp_path), prepare_skill(harness, home).path
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause()
         assert app.query_one('#install', Button).disabled
         await pilot.click('#prepare')
-        assert not path.exists()
+        assert not path.exists() and not skill.exists()
+        assert str(skill) in str(app.query_one('#preview', Static).render())
         assert not app.query_one('#install', Button).disabled
         await pilot.click('#install')
-        assert path.exists()
+        assert path.exists() and skill.read_text() == SKILL
         assert 'Installed' in str(app.query_one('#status', Static).render())
         await pilot.press('q')
     other = tmp_path / 'other'
     other.mkdir()
-    app = HooksApp(harness=harness, store_root=tmp_path, directory=other)
+    app = HooksApp(harness=harness, store_root=tmp_path, directory=other, home=home)
     async with app.run_test() as pilot:
         await pilot.click('#prepare')
         app.query_one('#directory', Input).value = str(tmp_path)
@@ -131,3 +157,17 @@ async def test_hook_screen_preview_install_and_cancel(tmp_path, harness):
         assert app.query_one('#install', Button).disabled
         await pilot.press('q')
     assert not settings_path(harness, other).exists()
+
+
+@pytest.mark.asyncio
+async def test_hook_screen_installs_a_missing_skill_beside_an_existing_hook(tmp_path):
+    home = tmp_path / 'home'
+    install_hook(prepare_hook('claude', tmp_path, tmp_path))
+    app = HooksApp(harness='claude', store_root=tmp_path, directory=tmp_path, home=home)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.click('#prepare')
+        assert 'Caiman hook already installed.' in str(app.query_one('#preview', Static).render())
+        assert not app.query_one('#install', Button).disabled
+        await pilot.click('#install')
+        assert prepare_skill('claude', home).path.read_text() == SKILL
+        await pilot.press('q')
