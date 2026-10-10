@@ -47,7 +47,7 @@ Importing is idempotent; a conflicting name and version stops it. See
 | **Document** | One file, stored byte-for-byte, with a name, description, issuer, part or program, and version |
 | **Collection** | A named set of documents |
 | **Board** | Hardware: parts identified by role, links between them, and their documents |
-| **Project** | A program: one or more board versions plus its documents and collections |
+| **Project** | A program: pinned board versions plus its documents and collections; it needs at least one board or one document |
 | **Pod** | The folder that owns these items; optionally one Git repository. `public` is the permanent default |
 | **Session** | One agent conversation, with its own installed context |
 

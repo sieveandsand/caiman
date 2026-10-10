@@ -105,8 +105,8 @@ flowchart TB
 - **Board.** Hardware only: parts identified by role (S-12), vendor and part
   number, silicon revision, aliases, links between parts, and attached
   documents. No customer identity, so several programs can share one board (S-13).
-- **Project.** A program: one or more pinned board versions, program documents,
-  and live collection references. It carries the customer name; agents see only
+- **Project.** A program: pinned board versions, program documents, and live
+  collection references, with at least one board or one document. It carries the customer name; agents see only
   the codename (I-6).
 - **Collection.** A named set of documents. A project that references a
   collection follows its current membership. Boards and parts expand a chosen

@@ -179,7 +179,7 @@ fields. The guided editor shows them read-only; edit them as raw JSON.
 
 | Field | Rule |
 |---|---|
-| `project`, `version`, `customer`, `boards`, `documents` | Required. `project` is the codename shown to agents; `customer` never leaves the manifest |
+| `project`, `version`, `customer`, `boards`, `documents` | Required. `project` is the codename shown to agents; `customer` never leaves the manifest. `boards` or `documents` may be an empty list, but not both |
 | `boards[]` | `name`, `version`, and at save time `pod` and `digest`. One board may appear at several versions, but not the same version twice |
 | `documents[]` | Document selectors, or collection references `{pod, collection, digest}` |
 | `derives_from`, `relation` | Optional, both or neither |

@@ -389,7 +389,7 @@ def validate_project(data: dict) -> dict:
     else:
         if 'board' in data:
             validator.error('board', 'One board object is the caiman.project.v1 shape; list pinned boards under boards')
-        for index, board in enumerate(validator.sequence(data.get('boards'), 'boards', True)):
+        for index, board in enumerate(validator.sequence(data.get('boards'), 'boards')):
             path = f'boards.{index}'
             if _board_selector(board, validator, path):
                 # The same board may be pinned at several versions; the same
@@ -400,6 +400,9 @@ def validate_project(data: dict) -> dict:
                 pinned.add(identity)
     allowed = set()
     validator.selectors(data.get('documents'), 'documents', allowed, collections=True)
+    # Either one may start empty and be filled in by a later edit, but not both.
+    if not legacy and data.get('boards') == [] and data.get('documents') == []:
+        validator.error('boards', 'Pin at least one board or add at least one document')
     if legacy:
         validator.selectors(data.get('precedence', []), 'precedence', allowed, ('note',))
     names = set()

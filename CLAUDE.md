@@ -28,8 +28,8 @@ Three framing facts constrain most changes:
   hardware-in-the-loop execution are permanently somebody else's job (S-01).
 - **The filesystem is the interface.** No server, no index, no process between
   the agent and the documents (S-18).
-- **A Board is hardware; a Project is a program**: one or more board versions
-  plus a program document set in one owning pod. Collections group documents;
+- **A Board is hardware; a Project is a program**: pinned board versions plus
+  a program document set in one owning pod, with at least one of either. Collections group documents;
   existing feature declarations are kept as compatibility data (S-13, S-14, S-34, S-36).
 
 ---

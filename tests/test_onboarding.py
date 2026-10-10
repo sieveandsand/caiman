@@ -61,7 +61,7 @@ async def test_cancel_setup_does_not_create_store(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_project_requires_an_explicitly_chosen_board(tmp_path):
+async def test_project_requires_a_chosen_board_or_a_document(tmp_path):
     root = tmp_path / 'store'
     service = ConfigurationService(Store(root))
     service.register(service.prepare('board', {'board': 'demo', 'version': 'v1',
@@ -74,7 +74,7 @@ async def test_project_requires_an_explicitly_chosen_board(tmp_path):
         await pilot.click('#next')
         await wait_for(pilot, lambda: not app.busy)
         assert not app.reviewing
-        assert 'Choose the board' in str(app.query_one('#status').render())
+        assert 'Choose a board version or add a document' in str(app.query_one('#status').render())
 
 
 @pytest.mark.asyncio

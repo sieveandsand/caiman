@@ -86,8 +86,9 @@ several customers; keeping customer identity out of the board keeps it shareable
 cross-domain `aliases`, and free-text `notes`. Register maps, nets, build flags,
 and lifecycle status are excluded.
 
-**S-34. A project pins one or more boards.** Including one board at several
-versions; the same version twice is rejected.
+**S-34. A project pins any number of boards.** Including one board at several
+versions; the same version twice is rejected. A project needs at least one board
+or one document; either can be added by a later edit.
 
 **S-36. No precedence among project documents.** *Why:* not needed yet. If it
 returns, a human declares it (S-15).

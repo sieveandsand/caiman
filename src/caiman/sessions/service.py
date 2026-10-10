@@ -309,6 +309,8 @@ def _brief(resolved: dict, revision: int, entries: list[dict], documents: Path) 
     for pod, _, board in resolved['boards']:
         lines.append(f'- {board["board"]} @ {board["version"]} (pod {pod})')
         lines += [f'  - {part.get("role", "")}: {part_identity(part)}' for part in board['parts']]
+    if not resolved['boards']:
+        lines.append('- None pinned.')
     lines += ['', '## Documents', '',
               f'{count(len(entries))} installed under `documents/`; '
               '`documents/_index.md` lists every one.', search_hint(documents),

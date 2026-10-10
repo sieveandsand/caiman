@@ -94,7 +94,7 @@ class SetupApp(NavigationApp):
                     yield from self.field('refdes', 'Schematic reference (optional; stored as aliases.refdes)')
                 else:
                     yield Label('Boards')
-                    yield Static('Mark every board version this program runs on with Space. '
+                    yield Static('Mark every board version this program runs on with Space, or leave none and add documents. '
                                  '↑↓ / j/k move · Space selects · Tab continues.', classes='hint')
                     yield SelectionList(id='board-choice')
                     yield from self.field('customer', 'Customer')
@@ -156,7 +156,7 @@ class SetupApp(NavigationApp):
             ])
             selector.highlighted = 0 if self.boards else None
             self.query_one('#status', Static).update(
-                f'{len(self.boards)} registered boards.' if self.boards else 'No boards registered. Create a board first.')
+                f'{len(self.boards)} registered boards.' if self.boards else 'No boards registered. Add documents now, or pin boards later.')
         except (OSError, ValueError) as error:
             self.query_one('#status', Static).update(str(error))
         finally:
@@ -205,8 +205,8 @@ class SetupApp(NavigationApp):
             data.update(parts=[part], links=[])
         else:
             chosen = sorted(self.query_one('#board-choice', SelectionList).selected)
-            if not chosen:
-                raise ValueError('Choose the board versions this project uses')
+            if not chosen and not self.documents:
+                raise ValueError('Choose a board version or add a document; the other can be added later')
             boards = [{'name': self.boards[index]['manifest']['board'], 'version': self.boards[index]['manifest']['version'],
                        'digest': self.boards[index]['digest'], 'pod': self.boards[index].get('pod', 'public')} for index in chosen]
             data.update(customer=self.text('customer'),

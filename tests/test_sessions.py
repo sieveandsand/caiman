@@ -111,6 +111,20 @@ def test_missing_store_or_malformed_input_is_silent(library, monkeypatch, capsys
     assert not (worktree / '.caiman').exists()
 
 
+def test_load_project_without_boards_installs_its_documents(library):
+    root, worktree, _, project_doc = library
+    service = ConfigurationService(Store(root))
+    service.register(service.prepare('project', {
+        'project': 'kestrel', 'version': 'concept', 'customer': 'Synthetic customer', 'pod': 'alpha',
+        'boards': [], 'documents': [{'digest': project_doc.manifest_digest, 'pod': 'alpha'}]}))
+    start(root, worktree)
+    state = load_context(root, folder(worktree), 'project', 'kestrel', 'concept')
+    assert state['documents'] == 1
+    files = tree(folder(worktree) / 'context')
+    assert 'documents/customer/kestrel/spec@R1/spec.pdf' in files
+    assert '## Boards\n\n- None pinned.\n' in files['project.md'].decode()
+
+
 def test_load_project_installs_the_complete_read_only_set_with_a_metadata_only_brief(library):
     root, worktree, *_ = library
     start(root, worktree)

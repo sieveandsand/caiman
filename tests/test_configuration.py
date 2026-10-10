@@ -109,8 +109,18 @@ def test_board_manifests_must_match_each_selector(project, board):
         validate_project_links(project, [board, board])
 
 
+def test_project_needs_a_board_or_a_document(project):
+    project['features'] = []
+    documents_only = deepcopy(project) | {'boards': []}
+    assert validate_project(documents_only)['boards'] == []
+    validate_project_links(documents_only, [])
+    boards_only = deepcopy(project) | {'documents': []}
+    assert validate_project(boards_only)['documents'] == []
+    with pytest.raises(ValidationError, match='at least one board or'):
+        validate_project(project | {'boards': [], 'documents': []})
+
+
 @pytest.mark.parametrize('mutation', [
-    lambda x: x.update(boards=[]),
     lambda x: x['boards'].append(dict(x['boards'][0])),
     lambda x: x['boards'].append({'name': 'synthetic', 'version': '../opaque', 'digest': 'sha256:' + 'a' * 64}),
     lambda x: x.update(board=x['boards'][0]),
