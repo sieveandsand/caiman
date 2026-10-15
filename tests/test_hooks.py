@@ -122,7 +122,8 @@ def test_generated_end_command_removes_only_the_loaded_context(tmp_path):
     result = run(end, event | {'hook_event_name': 'SessionEnd', 'reason': 'prompt_input_exit'})
     assert (result.returncode, result.stdout) == (0, '')
     assert not (folder / 'context').exists() and not (folder / 'state.json').exists()
-    assert (folder / 'session.json').is_file()
+    record = json.loads((folder / 'session.json').read_text())
+    assert record['context_removed'] is True and record['last_end'] >= record['last_start']
     # Another session, a worktree without `.caiman/`, a bad ID, or bad input: exit 0, create nothing.
     elsewhere = tmp_path / 'elsewhere'
     elsewhere.mkdir()

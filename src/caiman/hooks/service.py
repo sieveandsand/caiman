@@ -225,7 +225,7 @@ def session_end(harness: str, event: dict, env=os.environ) -> bool:
     Never creates `.caiman/` or registers a session, never reads document content,
     and never delays the harness beyond the lock an install in progress holds (I-10).
     """
-    from caiman.sessions.service import find_workspace, is_registered, session_folder, session_name, unload_context
+    from caiman.sessions.service import end_session, find_workspace, is_registered, session_folder, session_name
 
     if not isinstance(event, dict):
         return False
@@ -234,4 +234,4 @@ def session_end(harness: str, event: dict, env=os.environ) -> bool:
     if root is None:
         return False
     folder = session_folder(root, session_name(harness, event.get('session_id')))
-    return is_registered(folder) and unload_context(folder)
+    return is_registered(folder) and end_session(folder)

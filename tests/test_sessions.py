@@ -16,7 +16,7 @@ from caiman.cli.commands import main
 from caiman.configurations.service import ConfigurationService
 from caiman.documents.ingest import prepare_document
 from caiman.hooks.service import session_hook
-from caiman.sessions.service import (is_registered, load_context, prune_sessions, read_state, recover,
+from caiman.sessions.service import (end_session, is_registered, load_context, prune_sessions, read_state, recover,
                                      register_session, search_hint, unload_context)
 from caiman.storage.store import Store
 
@@ -136,6 +136,24 @@ def test_unloading_removes_the_context_and_keeps_the_session(library):
     assert 'No board or project is loaded' in start(root, worktree)
     assert not unload_context(session)
     assert load_context(root, session, 'project', 'kestrel', 'dvt-1')['documents'] == 2
+
+
+def test_ending_records_when_and_whether_the_context_was_removed(library):
+    root, worktree, *_ = library
+    start(root, worktree)
+    session = folder(worktree)
+    record = lambda: json.loads((session / 'session.json').read_text())
+    assert {'last_end', 'context_removed'}.isdisjoint(record())
+    load_context(root, session, 'project', 'kestrel', 'dvt-1')
+    assert end_session(session)
+    first = record()
+    assert first['context_removed'] is True and datetime.fromisoformat(first['last_end']).tzinfo
+    assert first['schema'] == 'caiman.session.v1' and first['session_id'] == 's1'
+    # A resumed start keeps the record; an end with nothing loaded says so.
+    start(root, worktree, source='resume')
+    assert record()['context_removed'] is True and record()['last_source'] == 'resume'
+    assert not end_session(session)
+    assert record()['context_removed'] is False and not (session / 'context').exists()
 
 
 def test_load_project_installs_the_complete_read_only_set_with_a_metadata_only_brief(library):

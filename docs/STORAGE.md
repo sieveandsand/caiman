@@ -287,7 +287,8 @@ WORKTREE/.caiman/
 ├── .gitignore                 "*"
 ├── workspace.json             {"schema": "caiman.workspace.v1", "id": UUID}
 └── sessions/HARNESS-SESSION_ID/
-    ├── session.json           harness, session_id, created_at, last_start, last_source, transcript_path
+    ├── session.json           harness, session_id, created_at, last_start, last_source, transcript_path,
+    │                          last_end, context_removed
     ├── state.json             loaded revision, kind, name, version, pod, digest, document_set, documents, installed_at
     ├── .lock                  per-session flock
     ├── install.json           present only during an install
@@ -307,7 +308,9 @@ WORKTREE/.caiman/
   install, then removes leftovers.
 - **Unload.** The optional end hook (S-43) renames `context` to
   `.previous-ended-*`, deletes it, and removes `state.json`; `session.json`
-  stays, so pruning still applies.
+  stays, so pruning still applies. It then sets `last_end` and
+  `context_removed`, which says whether that end removed a loaded context.
+  A later start keeps both until the next end replaces them.
 - Installed documents are copies written `0444`.
 - **Pruning.** Each start deletes the other session folders idle for 14 days:
   no `last_start` or `installed_at` in that window. A held `.lock`, unreadable

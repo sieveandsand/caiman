@@ -448,3 +448,14 @@ def unload_context(folder: Path) -> bool:
                 retired.unlink()
         state.unlink(missing_ok=True)
         return True
+
+
+def end_session(folder: Path) -> bool:
+    """The end hook (S-43): remove the context, then record when and whether it went."""
+    removed = unload_context(folder)
+    path = folder / 'session.json'
+    data = _read_json(path)
+    if data is not None:
+        data.update(last_end=_now(), context_removed=removed)
+        _write_json(path, data)
+    return removed

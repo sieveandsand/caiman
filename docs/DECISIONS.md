@@ -157,7 +157,8 @@ documents; installing in the user's home adds nothing to firmware repositories
 **S-43. An optional end hook removes a session's context.** In Claude Code the
 hook screen always adds the start hook and can also add a `SessionEnd` hook. It
 removes the ending session's installed context and keeps the session folder
-registered; a resumed session asks what to load again. It never creates
+registered; a resumed session asks what to load again. `session.json` records
+`last_end` and whether that end removed a context. It never creates
 `.caiman/`, never registers a session, and exits 0 on any failure (I-10). Codex
 has no session-end event, so it gets only the start hook. *Why:* an ended
 session's documents otherwise stay reachable until pruning (S-41). The cost is
