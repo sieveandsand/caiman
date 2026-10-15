@@ -257,9 +257,8 @@ def resolve_context(store: Store, kind: str, name: str, version: str, pod: str |
 
 
 def document_location(manifest: dict) -> Path:
-    """`issuer/part/name@version/<original filename>`: the path is the citation (ARCHITECTURE §5)."""
-    issuer, scope, name, version = document_ref(manifest).parts
-    return Path(issuer, scope, f'{name}@{version}', _materialized_filename(manifest))
+    """`issuer/part/name/version/<original filename>`: the path is the citation (ARCHITECTURE §5)."""
+    return document_ref(manifest) / _materialized_filename(manifest)
 
 
 def _materialized_filename(manifest: dict) -> str:
@@ -314,7 +313,7 @@ def _brief(resolved: dict, revision: int, entries: list[dict], documents: Path) 
     lines += ['', '## Documents', '',
               f'{count(len(entries))} installed under `documents/`; '
               '`documents/_index.md` lists every one.', search_hint(documents),
-              'Each path encodes issuer, part, document, and version. Cite facts as '
+              'Each path is `documents/ISSUER/PART/DOCUMENT/VERSION/FILE`. Cite facts as '
               '(document path, version, locator such as a heading, page, or requirement ID).', '']
     lines += [f'- `{entry["path"]}`' for entry in entries]
     return '\n'.join(lines) + '\n'
@@ -429,3 +428,23 @@ def load_context(store_root: Path, folder: Path, kind: str, name: str, version: 
         finally:
             recover(folder)
     return state
+
+
+def unload_context(folder: Path) -> bool:
+    """Remove the installed context; the session stays registered (S-43). True if one was there."""
+    with _locked(folder):
+        recover(folder)
+        context, state = folder / 'context', folder / 'state.json'
+        present = context.exists() or context.is_symlink()
+        if not present and not state.exists():
+            return False
+        if present:
+            # One rename takes every document out of reach; `recover` clears an interrupted delete.
+            retired = folder / f'.previous-ended-{uuid.uuid4().hex}'
+            os.rename(context, retired)
+            if retired.is_dir() and not retired.is_symlink():
+                shutil.rmtree(retired)
+            else:
+                retired.unlink()
+        state.unlink(missing_ok=True)
+        return True

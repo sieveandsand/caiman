@@ -305,6 +305,9 @@ WORKTREE/.caiman/
   `context` to `.previous-N`, rename staging to `context`, write `state.json`,
   delete the journal. The next load finishes or rolls back an interrupted
   install, then removes leftovers.
+- **Unload.** The optional end hook (S-43) renames `context` to
+  `.previous-ended-*`, deletes it, and removes `state.json`; `session.json`
+  stays, so pruning still applies.
 - Installed documents are copies written `0444`.
 - **Pruning.** Each start deletes the other session folders idle for 14 days:
   no `last_start` or `installed_at` in that window. A held `.lock`, unreadable

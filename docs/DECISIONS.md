@@ -154,6 +154,15 @@ agents without it browsed `.caiman/sessions/` and cited another session's
 documents; installing in the user's home adds nothing to firmware repositories
 (I-3).
 
+**S-43. An optional end hook removes a session's context.** In Claude Code the
+hook screen always adds the start hook and can also add a `SessionEnd` hook. It
+removes the ending session's installed context and keeps the session folder
+registered; a resumed session asks what to load again. It never creates
+`.caiman/`, never registers a session, and exits 0 on any failure (I-10). Codex
+has no session-end event, so it gets only the start hook. *Why:* an ended
+session's documents otherwise stay reachable until pruning (S-41). The cost is
+that little caiman can no longer show which documents an ended session used.
+
 ## Open
 
 **D-02. Moving the store to an OCI registry.** Git cannot delete history. Move

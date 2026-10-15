@@ -5,8 +5,11 @@ keeps only tool-call inputs that name a managed document: the path, a line
 range, and whether the call read, searched, or edited it. Tool results, prompts,
 and shell command text are never kept, shown, or written anywhere (I-10).
 
+A managed document is one the session's current load installed, as its
+`project.json` lists it. A new load recounts the transcript against the new set.
+
 Absence of a record is not proof a document was not read. Reads through
-scripts, variables, a changed shell directory, other processes, or anything
+scripts, command substitution, unknown variables, other processes, or anything
 outside the harness are invisible here.
 """
 
@@ -15,7 +18,7 @@ from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import sqlite3
@@ -35,9 +38,24 @@ READ_DEFAULT_LIMIT = 2000
 
 SEARCHERS = {'rg', 'grep', 'egrep', 'fgrep', 'ag', 'ack', 'git'}
 EDITORS = {'rm', 'mv', 'chmod', 'chown', 'truncate', 'tee', 'touch', 'ed', 'vi', 'vim', 'nvim', 'nano', 'emacs'}
-SEPARATORS = {'|', '||', '&&', ';', '&', '(', ')', '|&', ';;'}
+# Commands that show names, sizes, or digests, never a document's text.
+LOOKERS = {'ls', 'stat', 'file', 'find', 'fd', 'du', 'wc', 'tree', 'test', '[', 'realpath', 'readlink',
+           'basename', 'dirname', 'echo', 'printf', 'md5', 'md5sum', 'shasum', 'sha256sum', 'cksum', 'popd'}
+DIRECTORY_CHANGES = {'cd', 'pushd'}
+SEPARATORS = {'|', '||', '&&', ';', '&', '|&', ';;', '\n'}
 REDIRECTS = {'>', '>>', '>|', '&>'}
+INPUTS = {'<', '<<', '<&', '>&'}
 WRAPPERS = {'sudo', 'command', 'exec', 'env', 'time', 'nice', 'xargs'}
+KEYWORDS = {'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', '!', '{', '}'}
+DECLARERS = {'export', 'local', 'declare', 'readonly', 'typeset'}
+PUNCTUATION = '();<>|&\n'
+# Longest first, so a run such as `;\n` or `)\n` splits into the operators it holds.
+OPERATORS = ('&&', '||', ';;', '|&', '>>', '>|', '&>', '>&', '<<', '<&', *PUNCTUATION)
+ASSIGNMENT = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)=(.*)', re.DOTALL)
+VARIABLE = re.compile(r'\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))')
+GLOB = re.compile(r'[*?[]')
+# The most values one shell word may stand for after variable expansion.
+EXPANSIONS = 64
 EDIT_TOOLS = {'Edit': 'file_path', 'MultiEdit': 'file_path', 'Write': 'file_path',
               'NotebookEdit': 'notebook_path'}
 SHELL_TOOLS = {'shell', 'shell_command', 'exec_command', 'local_shell', 'container.exec'}
@@ -161,14 +179,20 @@ def loaded_contents(session: Session) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _installed_parts(path) -> tuple[str, ...] | None:
+    """`documents/ISSUER/PART/NAME/VERSION/FILE` as its six encoded parts, or None."""
+    parts = PurePosixPath(path).parts if isinstance(path, str) else ()
+    if len(parts) != 6 or parts[0] != 'documents' or any(part in {'.', '..'} for part in parts):
+        return None
+    return parts
+
+
 def document_label(path: str) -> tuple[str, str]:
-    """`documents/nxp/s32k344/manual@rev-4/document.pdf` → (`nxp/s32k344`, `manual @ rev-4`)."""
-    folders = Path(path).parts[1:-1]
-    if not folders:
-        return '', path
-    name, _, version = folders[-1].rpartition('@')
-    scope = '/'.join(unquote(part) for part in folders[:-1])
-    return scope, (f'{unquote(name)} @ {unquote(version)}' if name else unquote(folders[-1]))
+    """`documents/nxp/s32k344/manual/rev%204/manual.pdf` → (`nxp/s32k344`, `manual @ rev 4`)."""
+    if (parts := _installed_parts(path)) is None:
+        return '', unquote(path)
+    issuer, part, name, version = map(unquote, parts[1:5])
+    return f'{issuer}/{part}', f'{name} @ {version}'
 
 
 def list_sessions(home: Path | None = None, limit: int = 30) -> list[Session]:
@@ -200,27 +224,40 @@ def list_sessions(home: Path | None = None, limit: int = 30) -> list[Session]:
 
 @dataclass(frozen=True)
 class DocumentRef:
-    """Identity from the path alone, as the planned access log derives it."""
+    """A managed document's identity and display names; never its content."""
 
     path: Path
-    name: str
+    title: str
+    scope: str
     version: str | None
     location: str  # 'workspace' or 'store'
     pod: str | None = None
 
-    @property
-    def title(self) -> str:
-        return self.name.rsplit('/', 1)[-1]
 
-    @property
-    def scope(self) -> str:
-        return self.name.rsplit('/', 1)[0] if '/' in self.name else ''
+def installed_ref(documents: Path, entry) -> DocumentRef | None:
+    """One `project.json` document entry, decoded for display."""
+    if not isinstance(entry, dict) or (parts := _installed_parts(entry.get('path'))) is None:
+        return None
+    issuer, part, name, version = map(unquote, parts[1:5])
+    pod = entry.get('pod') if isinstance(entry.get('pod'), str) else None
+    return DocumentRef(documents.joinpath(*parts[1:]), name, f'{issuer}/{part}', version, 'workspace', pod)
 
 
 class Resolver:
-    def __init__(self, documents: Path | None, store_root: Path | None):
+    """Paths named in tool calls → the documents this session's load installed, or store blobs.
+
+    Only the installed set counts. A path's shape never makes it a document, so
+    words that merely resolve inside a document's folder are not reads.
+    """
+
+    def __init__(self, documents: Path | None, store_root: Path | None, contents: dict | None = None):
         self.workspace = Path(os.path.abspath(documents)) if documents else None
         self.store = Path(os.path.abspath(store_root)) if store_root else None
+        self.installed: dict[Path, DocumentRef] = {}
+        if self.workspace is not None and isinstance(contents, dict):
+            for entry in contents.get('documents') or []:
+                if (ref := installed_ref(self.workspace, entry)) is not None:
+                    self.installed[ref.path] = ref
 
     @staticmethod
     def absolute(raw: str, base: Path | None) -> Path | None:
@@ -233,31 +270,63 @@ class Resolver:
             path = base / path
         return Path(os.path.normpath(path))
 
-    def identify(self, path: Path):
-        """A DocumentRef, TREE for a directory or glob of managed documents, or None."""
-        wildcard = any(character in str(path) for character in '*?[')
-        for root, location in ((self.workspace, 'workspace'), (self.store, 'store')):
-            if root is None:
-                continue
-            if path != root and not path.is_relative_to(root):
-                # The session's `context/` holds only its documents and brief; broader parents are too noisy to count.
-                if location == 'workspace' and path == root.parent:
-                    return TREE
-                continue
-            parts = path.relative_to(root).parts
-            if location == 'workspace' and len(parts) >= 2 and '@' in parts[-2] and not path.is_dir():
-                name, version = parts[-2].split('@', 1)
-                return DocumentRef(path, '/'.join((*parts[:-2], name)), version, location)
-            if (location == 'store' and len(parts) == 5 and parts[1:3] == ('blobs', 'sha256')
-                    and re.fullmatch(r'[0-9a-f]{64}', parts[4])):
-                return DocumentRef(path, f'{parts[0]}/blob-{parts[4][:12]}', None, location, parts[0])
-            if wildcard or path == root or path.is_dir():
-                return TREE
-            return None
-        return None
+    def matching(self, pattern: Path, folders: bool = False) -> list[DocumentRef]:
+        """Installed documents a glob names, or that sit in a folder it names."""
+        return [ref for path, ref in self.installed.items() if path.match(str(pattern))
+                or (folders and any(parent.match(str(pattern)) for parent in path.parents))]
+
+    def identify(self, path: Path, kind: str) -> list:
+        """What one named path reaches for a read, search, or edit.
+
+        An installed document's exact path names it, and a glob names each one it
+        matches. A folder is searched or edited, never read. A search reaching
+        more than one document, or the whole context, is TREE.
+        """
+        if (ref := self.installed.get(path)) is not None:
+            return [ref]
+        wildcard = bool(GLOB.search(str(path)))
+        if self.store is not None and (path == self.store or path.is_relative_to(self.store)):
+            parts = path.relative_to(self.store).parts
+            if len(parts) == 5 and parts[1:3] == ('blobs', 'sha256') and re.fullmatch(r'[0-9a-f]{64}', parts[4]):
+                return [DocumentRef(path, f'blob-{parts[4][:12]}', parts[0], None, 'store', parts[0])]
+            return [TREE] if kind == 'search' and (wildcard or path.is_dir()) else []
+        if self.workspace is None:
+            return []
+        if path in (self.workspace, self.workspace.parent):
+            # The session's `context/` holds only its documents and brief.
+            return [TREE] if kind == 'search' else []
+        if wildcard:
+            covered = self.matching(path, folders=kind != 'read')
+        elif kind != 'read' and path.is_relative_to(self.workspace):
+            covered = [ref for installed, ref in self.installed.items() if installed.is_relative_to(path)]
+        else:
+            return []
+        return [TREE] if kind == 'search' and len(covered) > 1 else covered
 
 
 # ── Usage ───────────────────────────────────────────────────────────────────
+
+def _tokens(command: str) -> list[str]:
+    """Shell words, with each operator and line break as its own token."""
+    # A trailing comment swallows its line break; doubling each keeps one as a separator.
+    command = command.replace('\\\n', ' ').replace('\n', '\n\n')
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=PUNCTUATION)
+        lexer.whitespace = ' \t\r'
+        lexer.whitespace_split = True
+        words = list(lexer)
+    except ValueError:
+        return command.split()
+    tokens = []
+    for word in words:
+        while word and set(word) <= set(PUNCTUATION):
+            operator = next(operator for operator in OPERATORS if word.startswith(operator))
+            tokens.append(operator)
+            word = word[len(operator):]
+        if word:
+            tokens.append(word)
+    return tokens
+
 
 @dataclass
 class DocumentUsage:
@@ -293,6 +362,11 @@ class UsageTracker:
         self._sequence = 0
         self._outlines: dict[Path, tuple] = {}
         self._integrity: dict[Path, tuple] = {}
+        self._contents: tuple | None = None
+        folder = session.documents.parent.parent if session.documents else None
+        # The start hook exports these to every later Claude Code command (`CLAUDE_ENV_FILE`).
+        self._exported = ({'CAIMAN_SESSION': [folder.name], 'CAIMAN_WORKSPACE': [str(folder.parents[2])]}
+                          if folder else {})
 
     @property
     def has_workspace(self) -> bool:
@@ -305,10 +379,29 @@ class UsageTracker:
 
     def poll(self) -> bool:
         """Read any newly appended transcript lines; True if usage changed."""
+        reloaded = self._follow_load()
         before = (self._sequence, self.tree_searches)
         for path in self.session.transcripts():
             self._read(path)
-        return before != (self._sequence, self.tree_searches)
+        return reloaded or before != (self._sequence, self.tree_searches)
+
+    def _follow_load(self) -> bool:
+        """When a load replaces the installed set, count the whole transcript again against it."""
+        contents = self.session.documents.parent / 'project.json' if self.session.documents else None
+        try:
+            status = contents.stat() if contents else None
+        except OSError:
+            status = None
+        key = (status.st_ino, status.st_mtime_ns, status.st_size) if status else None
+        if key == self._contents:
+            return False
+        self._contents = key
+        self.resolver = Resolver(self.session.documents, self.store_root,
+                                 loaded_contents(self.session) if key else None)
+        cleared = bool(self.documents or self.tree_searches)
+        self.documents, self.tree_searches = {}, 0
+        self._offsets, self._partial, self._cwd = {}, {}, {}
+        return cleared
 
     def _read(self, path: Path) -> None:
         try:
@@ -412,48 +505,122 @@ class UsageTracker:
 
     # Shell commands are classified, never retained.
 
-    def _shell(self, command, cwd: Path | None, stamp: str) -> None:
+    def _shell(self, command, cwd: Path | None, stamp: str, variables: dict | None = None) -> None:
         if isinstance(command, list):
             command = shlex.join(str(part) for part in command)
         if not isinstance(command, str):
             return
-        try:
-            lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-            lexer.whitespace_split = True
-            tokens = list(lexer)
-        except ValueError:
-            tokens = command.split()
-        hits, program, flags, previous = [], None, [], None
+        tokens = _tokens(command)
+        # This command's own shell state only: harness shells keep no variables
+        # between calls, and none of it outlives this method (I-10).
+        base, variables = cwd, {**self._exported, **(variables or {})}
+        hits, saved, moved, loop = [], [], False, None
+        program, flags, previous = None, [], None
         for index, token in enumerate(tokens):
-            if token in SEPARATORS:
-                program, flags, previous = None, [], token
+            if token == '(':
+                # A subshell or `$(…)`: its directory and variables end with it.
+                saved.append((base, dict(variables), program, flags, moved))
+                program, flags, previous, moved = None, [], token, False
                 continue
-            if program is None and (token in WRAPPERS or re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', token)):
+            if token == ')':
+                if saved:
+                    base, variables, program, flags, moved = saved.pop()
                 previous = token
+                continue
+            if token in SEPARATORS:
+                if loop is not None and loop[0]:
+                    variables[loop[0]] = self._loop_values(loop[1], variables, base)
+                program, flags, previous, moved, loop = None, [], token, False, None
                 continue
             if program is None:
+                if token in WRAPPERS or token in KEYWORDS:
+                    previous = token
+                    continue
+                if assignment := ASSIGNMENT.fullmatch(token):
+                    self._assign(assignment, variables, base)
+                    previous = token
+                    continue
                 program = os.path.basename(token)
-                if program in {'bash', 'sh', 'zsh'} and '-c' in tokens[index + 1:index + 2]:
-                    self._shell(tokens[index + 2] if index + 2 < len(tokens) else '', cwd, stamp)
+                if program == 'for':
+                    loop = [None, []]
+                elif program in DIRECTORY_CHANGES and (index + 1 == len(tokens) or set(tokens[index + 1]) <= set(PUNCTUATION)):
+                    base, moved = Path.home(), True
+                elif program == 'popd':
+                    base = None
+                elif program in {'bash', 'sh', 'zsh'} and re.fullmatch(r'-[a-z]*c[a-z]*', tokens[index + 1] if index + 1 < len(tokens) else ''):
+                    self._shell(tokens[index + 2] if index + 2 < len(tokens) else '', base, stamp, variables)
                 previous = token
                 continue
-            if token.startswith('-'):
+            if loop is not None:
+                if loop[0] is None:
+                    loop[0] = token
+                elif loop[1] or token != 'in':
+                    loop[1].append(token)
+            elif program in DECLARERS:
+                if assignment := ASSIGNMENT.fullmatch(token):
+                    self._assign(assignment, variables, base)
+            elif program in DIRECTORY_CHANGES:
+                if token == '-':
+                    base, moved = None, True
+                elif not token.startswith('-') and not moved:
+                    values = self._expand(token, variables, base)
+                    base = self.resolver.absolute(values[0], base) if values and len(values) == 1 else None
+                    moved = True
+            elif token.startswith('-'):
                 flags.append(token)
-            elif token not in REDIRECTS:
-                target = self.resolver.identify(path) if (path := self.resolver.absolute(token, cwd)) else None
-                if target is not None:
-                    if previous in REDIRECTS or program in EDITORS or (
-                            program in {'sed', 'perl'} and any(flag.startswith('-i') for flag in flags)):
-                        hits.append((target, 'edit'))
-                    elif program in SEARCHERS:
-                        hits.append((target, 'search'))
-                    else:
-                        hits.append((target, 'read'))
+            elif token not in REDIRECTS and token not in INPUTS:
+                if previous in REDIRECTS or program in EDITORS or (
+                        program in {'sed', 'perl'} and any(flag.startswith('-i') for flag in flags)):
+                    kind = 'edit'
+                elif program in LOOKERS:
+                    kind = None
+                else:
+                    kind = 'search' if program in SEARCHERS else 'read'
+                for value in (self._expand(token, variables, base) or []) if kind else []:
+                    if path := self.resolver.absolute(value, base):
+                        hits += [(target, kind) for target in self.resolver.identify(path, kind)]
             previous = token
         documents = {target for target, _ in hits if target != TREE}
         lines = self._shell_range(tokens) if len(documents) == 1 else None
         for target, kind in hits:
             self._count(target, kind, lines if kind == 'read' else None, True, stamp)
+
+    def _assign(self, assignment, variables: dict, base: Path | None) -> None:
+        values = self._expand(assignment[2], variables, base)
+        if values is None:
+            variables.pop(assignment[1], None)
+        else:
+            variables[assignment[1]] = values
+
+    @staticmethod
+    def _expand(word: str, variables: dict, base: Path | None) -> list[str] | None:
+        """Every value a word may stand for; None when it uses a variable this command never set."""
+        values, position = [''], 0
+        for match in VARIABLE.finditer(word):
+            name = match[1] or match[2]
+            if name in variables:
+                options = variables[name]
+            elif name == 'PWD' and base is not None:
+                options = [str(base)]
+            elif name == 'HOME':
+                options = [str(Path.home())]
+            else:
+                return None
+            literal = word[position:match.start()]
+            values = [value + literal + option for value in values for option in options][:EXPANSIONS]
+            position = match.end()
+        return [value + word[position:] for value in values]
+
+    def _loop_values(self, words: list[str], variables: dict, base: Path | None) -> list[str]:
+        """`for NAME in WORDS`: each word's values, with globs matched against the installed set."""
+        values = []
+        for word in words:
+            for value in self._expand(word, variables, base) or []:
+                if GLOB.search(value) and (pattern := self.resolver.absolute(value, base)):
+                    values += [str(ref.path) for ref in self.resolver.matching(pattern)]
+                else:
+                    values.append(value)
+        return values[:EXPANSIONS]
 
     @staticmethod
     def _shell_range(tokens: list[str]):
@@ -472,7 +639,7 @@ class UsageTracker:
 
     def _path(self, raw, cwd, kind, lines, shell, stamp) -> None:
         if isinstance(raw, str) and (path := self.resolver.absolute(raw, cwd)):
-            if (target := self.resolver.identify(path)) is not None:
+            for target in self.resolver.identify(path, kind):
                 self._count(target, kind, lines, shell, stamp)
 
     def _count(self, target, kind: str, lines, shell: bool, stamp: str) -> None:

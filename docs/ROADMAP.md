@@ -11,6 +11,7 @@ questions (G-items). Open design choices are in [Decisions](DECISIONS.md#open).
 | Board and project authoring (TUI, JSON drafts, guided editors) | Done |
 | Pods, per-pod Git clone, connect, sync, removal | Done |
 | Start hook for Claude Code and Codex; `caiman session list / load / status` | Done |
+| Optional session end hook that removes the loaded context (Claude Code) | Done |
 | Metadata-only brief and complete per-session install | Done |
 | Little caiman (transcript-based usage view) | Done |
 | Agents in containers ([design](CONTAINERS.md)) | Planned |

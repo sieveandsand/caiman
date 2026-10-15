@@ -349,6 +349,7 @@ class UsageApp(LittleApp):
         super().__init__()
         self.tracker = UsageTracker(session, store_root)
         self.cards: dict[Path, CardFrame] = {}
+        self.mounted_cards = 0
         self.busy = False
 
     def navigation_help(self):
@@ -389,9 +390,13 @@ class UsageApp(LittleApp):
     async def show_documents(self):
         grid = self.query_one('#documents', Grid)
         ranked = [usage.ref.path for usage in self.tracker.ranked()]
+        # A new load recounts against its own documents; the others leave.
+        for key in [key for key in self.cards if key not in self.tracker.documents]:
+            await self.cards.pop(key).remove()
         new = [key for key in ranked if key not in self.cards]
         for key in new:
-            self.cards[key] = CardFrame(DocumentUsageCard(self.tracker, key, index=len(self.cards)))
+            self.cards[key] = CardFrame(DocumentUsageCard(self.tracker, key, index=self.mounted_cards))
+            self.mounted_cards += 1
         if new:
             await grid.mount_all([self.cards[key] for key in new])
         # Most recently touched first; moving keeps focus on the same card.

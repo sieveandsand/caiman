@@ -149,7 +149,9 @@ dependencies before the pod itself. The Git host controls who can read and push.
    `.claude/settings.local.json` and `~/.claude/skills/caiman/`; Codex uses
    `.codex/hooks.json` (trust it in `/hooks`) and `~/.codex/skills/caiman/`.
    Codex runs hooks inside its sandbox, so under `-s read-only` the session is
-   never registered. Restart the harness.
+   never registered. In Claude Code you can also add the session end hook,
+   which removes a session's loaded documents when it ends. Restart the
+   harness.
 2. Start a session. The hook creates `.caiman/` (Git-ignored) and registers the
    session. If nothing is loaded, the agent asks you what to load. Other
    sessions in the worktree idle for 14 days are deleted.
@@ -171,7 +173,8 @@ reinstall it if either moves. If anything goes wrong, the session starts
 normally without Caiman context.
 
 **Little caiman** (`caiman little`) shows which managed documents a session
-read, searched, or edited, from the harness transcript. It stores no content.
+read, searched, or edited, from the harness transcript. It counts only the
+documents the session's current load installed. It stores no content.
 Absence of a record is not proof a document was not read.
 
 ## Store

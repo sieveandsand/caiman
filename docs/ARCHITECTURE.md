@@ -71,7 +71,7 @@ flowchart LR
 | `storage/` | Blobs, manifests, refs, writer lock, journaled ref publication |
 | `pods/`, `repositories/` | Pod discovery and identity; optional Git clone, connect, sync; removal |
 | `sessions/` | Session folders, context resolution, recoverable installation |
-| `hooks/` | Install the harness start hook; produce the start-of-session message |
+| `hooks/` | Install the harness start hook and the optional end hook; produce the start-of-session message |
 | `little_caiman/` | Read-only view of a session's managed-document use, from its transcript |
 | `dashboard/`, `ui/` | Home screen, galleries, shared widgets and navigation |
 | `cli/` | Argument parsing and dispatch |
@@ -217,7 +217,7 @@ The installed context:
 ├── project.json    resolved identities: snapshot, boards, every document and blob
 └── documents/
     ├── _index.md   the complete installed set
-    └── ISSUER/PART_OR_PROGRAM/NAME@VERSION/document.EXT   read-only copy
+    └── ISSUER/PART_OR_PROGRAM/NAME/VERSION/ORIGINAL_FILENAME   read-only copy
 ```
 
 Agents search one session by naming its folder: `rg -n PATTERN
@@ -265,8 +265,10 @@ alpha ──✗──▶ beta     public ──✗──▶ alpha or beta
 
 ## 7. Hooks and observation
 
-Caiman registers one harness callback, `SessionStart`. It registers the session
-and prints a short message. Three rules apply (I-10):
+Caiman always registers `SessionStart`. It registers the session and prints a
+short message. In Claude Code the hook screen can also add `SessionEnd`, which
+removes the ending session's `context/` and `state.json` and keeps the session
+registered (S-43). Codex has no session-end event. Three rules apply (I-10):
 
 1. **Never deny a tool call.** Caiman uses no `PreToolUse` gate (S-19).
 2. **Never fail a session.** The command ends in `|| true` with a 5-second
@@ -279,9 +281,16 @@ harness's own transcript and keeps only tool-call inputs that name a managed
 path, plus a line range. Tool results, prompts, and shell command text are never
 stored or shown. It flags an installed file whose bytes match no stored blob.
 
+A managed document is one the session's current `project.json` lists; a path's
+shape never makes it one. Each shell command is followed far enough to resolve
+its own `cd`, `pushd`, subshells, variable assignments, globs, and `for` loops;
+none of that state outlives the command. A new load recounts the transcript
+against the new set, so documents it no longer installs drop out of the view.
+After the end hook removes a context, the session shows no document use.
+
 **Absence of a record is not proof a document was not read.** Reads through
-scripts, variables, other processes, or anything outside the harness are
-invisible. Every surface that shows usage says so.
+scripts, command substitution, unknown variables, other processes, or anything
+outside the harness are invisible. Every surface that shows usage says so.
 
 ## 8. Trust boundaries
 

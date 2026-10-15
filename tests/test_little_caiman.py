@@ -28,15 +28,23 @@ Line eleven.
 '''
 SECRET = 'REQ-FLASH-SECRET-0142'
 DOCUMENTS = '.caiman/sessions/claude-abc12345/context/documents'
+INSTALLED = 'oem-alpha/fc-100/Flash%20spec/3.2/flash-spec.md'
+
+
+def install(documents, *paths):
+    """The `project.json` a load writes beside `documents/`: the installed set."""
+    (documents.parent / 'project.json').write_text(json.dumps(
+        {'documents': [{'path': f'documents/{path}', 'pod': 'oem-alpha'} for path in paths]}))
 
 
 @pytest.fixture
 def workspace(tmp_path):
     cwd = tmp_path / 'firmware'
-    document = cwd / DOCUMENTS / 'oem-alpha' / 'flash-spec@3.2' / 'flash-spec.md'
+    document = cwd / DOCUMENTS / INSTALLED
     document.parent.mkdir(parents=True)
     document.write_text(DOCUMENT)
     document.chmod(0o444)
+    install(cwd / DOCUMENTS, INSTALLED)
     store = tmp_path / 'store'
     digest = hashlib.sha256(DOCUMENT.encode()).hexdigest()
     blob = store / 'oem-alpha' / 'blobs' / 'sha256' / digest[:2] / digest
@@ -64,7 +72,7 @@ def claude_session(tmp_path, cwd, entries):
 
 def test_claude_reads_searches_and_edits_are_attributed_to_sections(tmp_path, workspace):
     cwd, document, store = workspace
-    relative = f'{DOCUMENTS}/oem-alpha/flash-spec@3.2/flash-spec.md'
+    relative = f'{DOCUMENTS}/{INSTALLED}'
     session = claude_session(tmp_path, cwd, [
         claude_call('Read', {'file_path': str(document), 'offset': 5, 'limit': 3}, cwd),
         claude_call('Read', {'file_path': str(document)}, cwd),
@@ -78,7 +86,9 @@ def test_claude_reads_searches_and_edits_are_attributed_to_sections(tmp_path, wo
     tracker = UsageTracker(session, store)
     assert tracker.poll()
     [usage] = tracker.ranked()
-    assert (usage.ref.name, usage.ref.version, usage.ref.title) == ('oem-alpha/flash-spec', '3.2', 'flash-spec')
+    # Identity comes from the installed set, decoded for display.
+    assert (usage.ref.scope, usage.ref.title, usage.ref.version, usage.ref.pod) == (
+        'oem-alpha/fc-100', 'Flash spec', '3.2', 'oem-alpha')
     assert (usage.reads, usage.whole_reads, usage.searches, usage.edits, usage.via_shell) == (3, 1, 1, 1, 1)
     assert usage.sections == {'Flash Controller › Erase': 1, 'Flash Controller › Program': 1}
     # Listing a directory is not a search; only the rg across the tree counts.
@@ -91,11 +101,12 @@ def test_tool_results_and_command_text_are_never_retained(tmp_path, workspace):
     cwd, document, store = workspace
     result = {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'content': f'{document}: {SECRET}'}]}}
     session = claude_session(tmp_path, cwd, [
-        result, claude_call('Bash', {'command': f"grep '{SECRET}' {document}"}, cwd)])
+        result, claude_call('Bash', {'command': f"grep '{SECRET}' {document}"}, cwd),
+        claude_call('Bash', {'command': f'S={SECRET}; D={document}; cat "$D" "$S"'}, cwd)])
     tracker = UsageTracker(session, store)
     tracker.poll()
     [usage] = tracker.ranked()
-    assert (usage.reads, usage.searches) == (0, 1)
+    assert (usage.reads, usage.searches) == (1, 1)
     assert SECRET not in repr(vars(tracker)) and SECRET not in repr(usage)
 
 
@@ -169,7 +180,7 @@ def test_claude_subagent_transcripts_count_toward_the_session(tmp_path, workspac
 
 def test_codex_code_mode_commands_and_patches(tmp_path, workspace):
     cwd, document, store = workspace
-    relative = f'{DOCUMENTS}/oem-alpha/flash-spec@3.2/flash-spec.md'
+    relative = f'{DOCUMENTS}/{INSTALLED}'
     transcript = tmp_path / 'rollout.jsonl'
     exec_input = f'text(await tools.exec_command({{cmd:{json.dumps("nl -ba " + relative + " | sed -n 5,7p")}, workdir:{json.dumps(str(cwd))}}}));'
     write_lines(transcript, [
@@ -186,6 +197,88 @@ def test_codex_code_mode_commands_and_patches(tmp_path, workspace):
     [usage] = tracker.ranked()
     assert (usage.reads, usage.searches, usage.edits) == (1, 1, 1)
     assert usage.sections == {'Flash Controller › Erase': 1}
+
+
+def test_words_in_a_document_folder_are_not_documents(tmp_path, workspace):
+    """Claude keeps a `cd` between calls; every later word then resolves inside the folder."""
+    cwd, document, store = workspace
+    folder = document.parent
+    (folder / 'notes.txt').write_text('Not installed by the load.')
+    session = claude_session(tmp_path, cwd, [
+        claude_call('Bash', {'command': f'cd {folder}'}, cwd),
+        *[claude_call('Bash', {'command': command}, folder) for command in (
+            'echo hello world', 'grep -n Erase flash-spec.md', "sed -n '5,7p' flash-spec.md", 'wc -l *',
+            'git status', 'rg -n "Erase|Program" .', 'ls -la', 'stat flash-spec.md', 'cat notes.txt')]])
+    tracker = UsageTracker(session, store)
+    tracker.poll()
+    [usage] = tracker.ranked()
+    assert usage.ref.path == document
+    assert (usage.reads, usage.whole_reads, usage.searches, usage.edits) == (1, 0, 2, 0)
+    assert usage.sections == {'Flash Controller › Erase': 1}
+    assert tracker.tree_searches == 0
+
+
+def test_codex_workdir_in_a_document_folder_counts_only_the_document(tmp_path, workspace):
+    cwd, document, store = workspace
+    folder = str(document.parent)
+    transcript = tmp_path / 'rollout.jsonl'
+    calls = [f'text(await tools.exec_command({{cmd:{json.dumps(command)}, workdir:{json.dumps(folder)}}}));'
+             for command in ('rg -n "speaker|enable" flash-spec.md', 'sed -n 10,12p flash-spec.md', 'echo done *')]
+    write_lines(transcript, [
+        *[{'type': 'response_item', 'payload': {'type': 'custom_tool_call', 'name': 'exec', 'input': call}}
+          for call in calls],
+        {'type': 'response_item', 'payload': {'type': 'function_call', 'name': 'shell', 'arguments': json.dumps(
+            {'command': ['bash', '-lc', 'head -n 3 flash-spec.md; cat 10,12p'], 'workdir': folder})}}])
+    tracker = UsageTracker(Session('codex', transcript, 'codex-1', cwd, '', 0, cwd / DOCUMENTS), store)
+    tracker.poll()
+    [usage] = tracker.ranked()
+    assert (usage.reads, usage.searches) == (2, 1)
+    assert usage.sections == {'Flash Controller': 1, 'Flash Controller › Program': 1}
+
+
+def test_shell_directories_variables_globs_and_loops_reach_the_document(tmp_path, workspace):
+    cwd, document, store = workspace
+    documents, folder = cwd / DOCUMENTS, document.parent
+    relative = folder.relative_to(cwd)
+    session = claude_session(tmp_path, cwd, [claude_call('Bash', {'command': command}, cwd) for command in (
+        f'D={documents}; head -n 3 "$D/{INSTALLED}"',
+        # The start hook exports the session folder to every Claude Code command.
+        f'cat "$CAIMAN_WORKSPACE/.caiman/sessions/$CAIMAN_SESSION/context/documents/{INSTALLED}"',
+        f'cd {relative} && sed -n 5,7p flash-spec.md',
+        f'export F={document}\ncat "$F"',
+        f"sed -n '10,12p' {documents}/oem-alpha/*/*/3.2/flash-spec.md",
+        f'for f in {folder}/*.md; do grep -n Erase "$f"; done',
+        # The subshell's directory ends with it; the second grep names nothing installed.
+        f'(cd {folder}; grep -c Erase flash-spec.md); grep -c Erase flash-spec.md',
+        # Each line is its own command: this sed is a read, not an argument to rg.
+        f'rg -n Erase README.md  # first the repository\nsed -n 1,1p {relative}/flash-spec.md',
+        # An unknown variable is never guessed; names and listings are not reads.
+        'cat "$UNSET/flash-spec.md"', f'ls -la {document}', f'echo {document}')])
+    tracker = UsageTracker(session, store)
+    tracker.poll()
+    [usage] = tracker.ranked()
+    assert (usage.reads, usage.whole_reads, usage.searches, usage.edits) == (6, 2, 2, 0)
+    assert usage.sections == {'Flash Controller': 2, 'Flash Controller › Erase': 1,
+                              'Flash Controller › Program': 1}
+
+
+def test_only_the_current_load_counts_and_a_new_load_recounts(tmp_path, workspace):
+    cwd, document, store = workspace
+    stray = document.parent / 'stray.md'
+    stray.write_text(DOCUMENT)
+    session = claude_session(tmp_path, cwd, [claude_call('Read', {'file_path': str(document)}, cwd),
+                                             claude_call('Read', {'file_path': str(stray)}, cwd)])
+    tracker = UsageTracker(session, store)
+    assert tracker.poll()
+    # A file beside an installed document is not one, whatever its path looks like.
+    assert [usage.ref.path for usage in tracker.ranked()] == [document]
+    (cwd / DOCUMENTS).parent.joinpath('project.json').unlink()
+    assert tracker.poll()
+    assert tracker.documents == {}
+    install(cwd / DOCUMENTS, INSTALLED, f'{Path(INSTALLED).parent}/stray.md')
+    assert tracker.poll()
+    assert {usage.ref.path for usage in tracker.ranked()} == {document, stray}
+    assert not tracker.poll()
 
 
 def register(cwd, harness, session_id):
@@ -249,7 +342,8 @@ async def test_usage_view_shows_counts_sections_and_the_absence_notice(tmp_path,
         await pilot.pause()
         [card] = app.query(DocumentUsageCard)
         text = card.label.plain
-        assert 'Read 1×' in text and '1× Flash Controller › Erase' in text and 'oem-alpha' in text
+        assert 'Read 1×' in text and '1× Flash Controller › Erase' in text and 'oem-alpha/fc-100' in text
+        assert 'FLASH SPEC' in text and '%20' not in text
         assert 'Modified' not in text
         assert card.region.right <= 40
         assert ABSENCE_NOTICE in str(app.query_one('#notice', Static).render())
@@ -263,6 +357,22 @@ async def test_usage_view_shows_counts_sections_and_the_absence_notice(tmp_path,
         assert 'Searched 1×' in card.label.plain
         await pilot.press('q')
     assert app.return_value is None
+
+
+@pytest.mark.asyncio
+async def test_usage_view_drops_documents_a_new_load_removed(tmp_path, workspace):
+    cwd, document, store = workspace
+    session = claude_session(tmp_path, cwd, [claude_call('Read', {'file_path': str(document)}, cwd)])
+    app = UsageApp(session=session, store_root=store)
+    async with app.run_test(size=(40, 50)) as pilot:
+        await pilot.pause()
+        assert len(app.query(DocumentUsageCard)) == 1
+        for paths, cards in (((), 0), ((INSTALLED,), 1)):
+            install(cwd / DOCUMENTS, *paths)
+            await app.refresh_usage()
+            await pilot.pause()
+            assert len(app.query(DocumentUsageCard)) == cards
+        await pilot.press('q')
 
 
 @pytest.mark.asyncio
@@ -286,11 +396,10 @@ async def test_usage_card_collapses_long_section_lists(tmp_path, workspace):
 def test_resolver_identifies_arbitrary_document_formats(tmp_path, filename):
     from caiman.little_caiman.service import Resolver
 
-    path = tmp_path / 'documents' / 'issuer' / 'manual@v1' / filename
-    ref = Resolver(tmp_path / 'documents', None).identify(path)
-    assert ref.path == path
-    assert ref.name == 'issuer/manual'
-    assert ref.version == 'v1'
+    path = tmp_path / 'documents' / 'issuer' / 'mcu' / 'manual' / 'v1' / filename
+    contents = {'documents': [{'path': f'documents/issuer/mcu/manual/v1/{filename}'}]}
+    [ref] = Resolver(tmp_path / 'documents', None, contents).identify(path, 'read')
+    assert (ref.path, ref.scope, ref.title, ref.version) == (path, 'issuer/mcu', 'manual', 'v1')
 
 
 @pytest.mark.parametrize('filename,content', [
@@ -300,9 +409,10 @@ def test_resolver_identifies_arbitrary_document_formats(tmp_path, filename):
     ('document', b'\x00\n# Binary bytes\n'),
 ])
 def test_binary_reads_do_not_invent_markdown_sections(tmp_path, filename, content):
-    path = tmp_path / DOCUMENTS / 'issuer' / 'manual@v1' / filename
+    path = tmp_path / DOCUMENTS / 'issuer' / 'mcu' / 'manual' / 'v1' / filename
     path.parent.mkdir(parents=True)
     path.write_bytes(content)
+    install(tmp_path / DOCUMENTS, f'issuer/mcu/manual/v1/{filename}')
     session = claude_session(tmp_path, tmp_path, [
         claude_call('Read', {'file_path': str(path), 'offset': 2, 'limit': 1}, tmp_path)])
     tracker = UsageTracker(session, None)
@@ -337,6 +447,7 @@ async def test_cards_show_each_sessions_loaded_context(tmp_path, workspace):
         await pilot.press('q')
     # The usage view follows a switch made while it is open.
     cwd, _, store = workspace
+    (cwd / DOCUMENTS).parent.joinpath('project.json').unlink()
     register(cwd, 'claude', 'abc12345')
     session = claude_session(tmp_path, cwd, [])
     app = UsageApp(session=session, store_root=store)
@@ -368,5 +479,5 @@ def install_contents(cwd, documents):
         'kind': 'project', 'name': 'kestrel', 'version': 'dvt-1', 'revision': 3,
         'boards': [{'name': 'demo-board', 'version': 'Rev A', 'pod': 'public'},
                    {'name': 'demo-board', 'version': 'Rev B', 'pod': 'alpha'}],
-        'documents': [{'path': f'documents/nxp/s32k344/manual%20{n}@Rev%201/document.pdf'}
+        'documents': [{'path': f'documents/nxp/s32k344/manual%20{n}/Rev%201/document.pdf'}
                       for n in range(documents)]}))

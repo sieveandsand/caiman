@@ -154,9 +154,10 @@ binary formats need suitable readers and are never silently omitted.
 
 ### I-10. Hooks observe; they never block, and they log identities only
 
-Caiman registers a harness start hook to configure each session, and little
-caiman reads transcripts to show which managed documents were used. Three rules,
-none negotiable:
+Caiman registers a harness start hook to configure each session, optionally a
+Claude Code end hook that removes the session's loaded context (S-43), and
+little caiman reads transcripts to show which managed documents were used.
+Three rules, none negotiable:
 
 **Never deny a tool call.** `PreToolUse` can block; Caiman does not use it.
 Caiman is not an enforcement boundary (S-19). Session folders separate
@@ -231,7 +232,7 @@ src/caiman/
   dashboard/      # home screen, setup, workflow state, and dashboard actions
   pods/           # pod discovery, identity, reference routes, removal checks
   repositories/   # per-pod Git transport and the Pods TUI
-  hooks/          # harness hook and skill installation, the start callback, and TUI
+  hooks/          # harness hook and skill installation, the start and end callbacks, and TUI
   sessions/       # per-session context folders: registration, resolution, installation
   little_caiman/  # read-only sidecar: a session's managed-document use, from its transcript
   storage/        # immutable blobs, manifests, refs, locking, and journaled publication

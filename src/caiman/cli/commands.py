@@ -111,6 +111,8 @@ def _session_commands(commands) -> None:
         hook = actions.add_parser(name, help='Harness start hook: register the session (reads JSON on stdin)'
                                   if name == 'hook' else argparse.SUPPRESS)
         hook.add_argument('--harness', choices=('claude', 'codex'), default='claude')
+    end = actions.add_parser('end', help="Harness end hook: remove the session's loaded context (reads JSON on stdin)")
+    end.add_argument('--harness', choices=('claude', 'codex'), default='claude')
     listing = actions.add_parser('list', help='List loadable boards and projects; a name lists its versions')
     listing.add_argument('name', nargs='?')
     listing.add_argument('--kind', choices=('board', 'project'))
@@ -139,6 +141,17 @@ def _session_hook(args) -> int:
         return 0
     if output:
         print(output)
+    return 0
+
+
+def _session_end(args) -> int:
+    from caiman.hooks.service import session_end
+
+    try:
+        session_end(args.harness, json.load(sys.stdin))
+    except Exception:
+        # Harness callbacks must never fail or hold up the end of a session (I-10).
+        pass
     return 0
 
 
@@ -216,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == 'session' and args.action in {'hook', 'start'}:
         return _session_hook(args)
+    if args.command == 'session' and args.action == 'end':
+        return _session_end(args)
 
     interactive = args.command in (None, "ingest", "little") or getattr(args, "action", None) in {"configure", "new-version"}
     if interactive and (not sys.stdin.isatty() or not sys.stdout.isatty()):

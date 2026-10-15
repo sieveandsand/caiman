@@ -1,4 +1,4 @@
-"""Reviewed, additive harness setup and the session start hook."""
+"""Reviewed, additive harness setup, the session start hook, and the optional end hook."""
 
 from dataclasses import dataclass
 import difflib
@@ -16,6 +16,9 @@ from caiman.hooks.skill import SKILL
 
 HARNESS_NAMES = {'claude': 'Claude Code', 'codex': 'Codex'}
 CAIMAN_HANDLER = re.compile(r'-m caiman\b.*\bsession (?:start|hook)\b')
+CAIMAN_END_HANDLER = re.compile(r'-m caiman\b.*\bsession end\b')
+# Harnesses with a session end event; Codex's `Stop` fires after every turn instead.
+END_HOOK_HARNESSES = {'claude'}
 
 
 def settings_path(harness: str, directory: Path) -> Path:
@@ -73,7 +76,46 @@ def prepare_skill(harness: str, home: Path) -> HookPlan:
     return HookPlan(path, _read(path), SKILL.encode('utf-8'), 'Caiman skill already installed.')
 
 
-def prepare_hook(harness: str, directory: Path, store_root: Path) -> HookPlan:
+def _groups(hooks: dict, event: str) -> list:
+    groups = hooks.setdefault(event, [])
+    if not isinstance(groups, list) or any(not isinstance(g, dict) or not isinstance(g.get('hooks'), list)
+                                         or any(not isinstance(h, dict) for h in g['hooks']) for g in groups):
+        raise ValueError(f'{event} must contain hook groups')
+    return groups
+
+
+def _place(groups: list, pattern: re.Pattern, handler: dict | None) -> None:
+    """Upgrade an earlier Caiman handler in place rather than running two; None removes it."""
+    placed = handler is None
+    for group in groups:
+        kept = []
+        for entry in group['hooks']:
+            if not pattern.search(str(entry.get('command', ''))):
+                kept.append(entry)
+            elif not placed and group.get('matcher', '') in ('', '*'):
+                kept.append(handler)
+                placed = True
+        group['hooks'] = kept
+    groups[:] = [group for group in groups if group['hooks']]
+    if not placed:
+        groups.append({'hooks': [handler]})
+
+
+def end_hook_installed(harness: str, directory: Path) -> bool:
+    """Whether the project's settings hold Caiman's end hook now; unreadable settings hold none."""
+    try:
+        before = _read(settings_path(harness, directory.expanduser().absolute()))
+        groups = _groups(json.loads(before or b'{}').get('hooks', {}), 'SessionEnd')
+    except (AttributeError, OSError, ValueError):
+        return False
+    return any(CAIMAN_END_HANDLER.search(str(entry.get('command', '')))
+               for group in groups for entry in group['hooks'])
+
+
+def prepare_hook(harness: str, directory: Path, store_root: Path, *, end: bool = False) -> HookPlan:
+    """The start hook always; the end hook added when `end`, removed when not (S-43)."""
+    if end and harness not in END_HOOK_HARNESSES:
+        raise ValueError(f'{HARNESS_NAMES[harness]} has no session end hook')
     directory = directory.expanduser().absolute()
     if not directory.is_dir():
         raise ValueError('Choose an existing project directory')
@@ -85,26 +127,14 @@ def prepare_hook(harness: str, directory: Path, store_root: Path) -> HookPlan:
     hooks = data.setdefault('hooks', {})
     if not isinstance(hooks, dict):
         raise ValueError('hooks must be a JSON object')
-    groups = hooks.setdefault('SessionStart', [])
-    if not isinstance(groups, list) or any(not isinstance(g, dict) or not isinstance(g.get('hooks'), list)
-                                         or any(not isinstance(h, dict) for h in g['hooks']) for g in groups):
-        raise ValueError('SessionStart must contain hook groups')
     command = _cli(store_root) + f' session hook --harness {harness} 2>/dev/null || true'
-    handler = {'type': 'command', 'command': command, 'timeout': 5}
-    # Upgrade an earlier Caiman handler in place rather than running two.
-    placed = False
-    for group in groups:
-        kept = []
-        for entry in group['hooks']:
-            if not CAIMAN_HANDLER.search(str(entry.get('command', ''))):
-                kept.append(entry)
-            elif not placed and group.get('matcher', '') in ('', '*'):
-                kept.append(handler)
-                placed = True
-        group['hooks'] = kept
-    groups[:] = [group for group in groups if group['hooks']]
-    if not placed:
-        groups.append({'hooks': [handler]})
+    _place(_groups(hooks, 'SessionStart'), CAIMAN_HANDLER, {'type': 'command', 'command': command, 'timeout': 5})
+    if end or (harness in END_HOOK_HARNESSES and 'SessionEnd' in hooks):
+        groups = _groups(hooks, 'SessionEnd')
+        command = _cli(store_root) + f' session end --harness {harness} 2>/dev/null || true'
+        _place(groups, CAIMAN_END_HANDLER, {'type': 'command', 'command': command, 'timeout': 5} if end else None)
+        if not groups:
+            del hooks['SessionEnd']
     after = (json.dumps(data, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
     if before is not None and json.loads(before) == data:
         return HookPlan(path, before, before)
@@ -187,3 +217,21 @@ def session_hook(store_root: Path, harness: str, event: dict, env=os.environ) ->
     return json.dumps({'hookSpecificOutput': {
         'hookEventName': 'SessionStart',
         'additionalContext': session_context(store_root, folder, read_state(folder))}})
+
+
+def session_end(harness: str, event: dict, env=os.environ) -> bool:
+    """Remove the ending session's loaded context (S-43). True if there was one.
+
+    Never creates `.caiman/` or registers a session, never reads document content,
+    and never delays the harness beyond the lock an install in progress holds (I-10).
+    """
+    from caiman.sessions.service import find_workspace, is_registered, session_folder, session_name, unload_context
+
+    if not isinstance(event, dict):
+        return False
+    cwd = event.get('cwd') if isinstance(event.get('cwd'), str) else os.getcwd()
+    root = find_workspace(Path(env.get('CLAUDE_PROJECT_DIR') or cwd))
+    if root is None:
+        return False
+    folder = session_folder(root, session_name(harness, event.get('session_id')))
+    return is_registered(folder) and unload_context(folder)

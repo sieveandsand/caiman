@@ -16,8 +16,8 @@ from caiman.cli.commands import main
 from caiman.configurations.service import ConfigurationService
 from caiman.documents.ingest import prepare_document
 from caiman.hooks.service import session_hook
-from caiman.sessions.service import (load_context, prune_sessions, read_state, recover,
-                                     register_session, search_hint)
+from caiman.sessions.service import (is_registered, load_context, prune_sessions, read_state, recover,
+                                     register_session, search_hint, unload_context)
 from caiman.storage.store import Store
 
 
@@ -121,8 +121,21 @@ def test_load_project_without_boards_installs_its_documents(library):
     state = load_context(root, folder(worktree), 'project', 'kestrel', 'concept')
     assert state['documents'] == 1
     files = tree(folder(worktree) / 'context')
-    assert 'documents/customer/kestrel/spec@R1/spec.pdf' in files
+    assert 'documents/customer/kestrel/spec/R1/spec.pdf' in files
     assert '## Boards\n\n- None pinned.\n' in files['project.md'].decode()
+
+
+def test_unloading_removes_the_context_and_keeps_the_session(library):
+    root, worktree, *_ = library
+    start(root, worktree)
+    session = folder(worktree)
+    load_context(root, session, 'project', 'kestrel', 'dvt-1')
+    assert unload_context(session)
+    assert not (session / 'context').exists() and read_state(session) is None
+    assert is_registered(session) and not list(session.glob('.previous-*'))
+    assert 'No board or project is loaded' in start(root, worktree)
+    assert not unload_context(session)
+    assert load_context(root, session, 'project', 'kestrel', 'dvt-1')['documents'] == 2
 
 
 def test_load_project_installs_the_complete_read_only_set_with_a_metadata_only_brief(library):
@@ -132,11 +145,11 @@ def test_load_project_installs_the_complete_read_only_set_with_a_metadata_only_b
     assert (state['revision'], state['documents'], state['pod']) == (1, 2, 'alpha')
     context = folder(worktree) / 'context'
     files = tree(context)
-    assert files['documents/example/mcu/manual@Rev%201/manual.md'] == MANUAL
-    assert files['documents/customer/kestrel/spec@R1/spec.pdf'].endswith(SECRET.encode())
+    assert files['documents/example/mcu/manual/Rev%201/manual.md'] == MANUAL
+    assert files['documents/customer/kestrel/spec/R1/spec.pdf'].endswith(SECRET.encode())
     assert set(files) == {'.ignore', 'project.md', 'project.json', 'documents/_index.md',
-                          'documents/example/mcu/manual@Rev%201/manual.md',
-                          'documents/customer/kestrel/spec@R1/spec.pdf'}
+                          'documents/example/mcu/manual/Rev%201/manual.md',
+                          'documents/customer/kestrel/spec/R1/spec.pdf'}
     assert files['.ignore'] == b'!*\n'
     for path in context.rglob('*'):
         assert not path.is_symlink()
@@ -225,7 +238,7 @@ def test_ripgrep_finds_only_the_named_sessions_documents_in_a_git_worktree(libra
     assert rg('Serial port') == rg('--hidden', 'Serial port') == []
     # Naming a session's folder searches that session and no other.
     documents = folder(worktree, 's1') / 'context' / 'documents'
-    assert rg('Serial port', str(documents)) == [(documents / 'example/mcu/manual@Rev%201/manual.md').resolve()]
+    assert rg('Serial port', str(documents)) == [(documents / 'example/mcu/manual/Rev%201/manual.md').resolve()]
     assert rg('REQ-SECRET', str(documents)) == []
 
 
